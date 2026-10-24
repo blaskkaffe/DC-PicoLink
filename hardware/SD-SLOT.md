@@ -16,6 +16,14 @@ The same pins exist on all supported boards, so one firmware fits all of them.
 Avoided: Pico GP23–25 and GP29 (on-board use), RP2040-Zero GP16 (LED) and GP20–23
 (pads underneath only). The Dreamcast side keeps GPIO2–7 (see WIRING.md).
 
+## Example: 6-pin 3.3 V micro-SD module
+
+Pin order on the module: GND, MISO, CLK, MOSI, CS, 3V3 (no card-detect pin).
+
+| Module | GND | MISO | CLK | MOSI | CS | 3V3 |
+|---|---|---|---|---|---|---|
+| Board | GND | 28 | 26 | 27 | 9 | 3V3 |
+
 ## Which VCC
 
 * **Module with a regulator and a level shifter** (the common blue AliExpress "Micro SD
