@@ -2,6 +2,9 @@
 
 ## 1. Validate the current firmware (v0.8)
 
+* Run `tools/dctest` (serial baud sweep, ramps, switching, W5500 net/soak) on hardware first;
+  compile `dctest.c` in a real KOS environment (never built against KOS yet).
+
 * Test the net8f state on hardware (see TESTING.md): DreamShell boot, openMenu, long
   W5500 sessions (RX resyncs should stay rare), serial PPP.
 * Test `dcusb0-vpn` with Quake 3, Unreal Tournament, AFO, Worms World Party.

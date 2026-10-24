@@ -1,0 +1,6 @@
+dctest-host
+dctest-*.log
+dctest-*.jsonl
+__pycache__/
+*.elf
+*.o

@@ -15,8 +15,12 @@ directory it also runs the PIO simulations on that build's assembled W5500 progr
 | `test_baud.c` | the wire rate equals the rate dcload really sets on the Dreamcast, for every request 115201–4000000 |
 | `pio_sim.py` | the W5500 PIO program cycle by cycle against KOS-like waveforms (56 checks) |
 | `kos_replay.py` | the KOS W5500 probe sequence through the PIO program |
+| `tools/dctest` | the dctest host tool against its own Dreamcast program (selftest, no hardware) |
 
 ## On hardware
+
+`tools/dctest` (see its README) automates most of the serial and W5500 items below: baud sweeps,
+traffic ramps, protocol switching, soak runs, all logged to one file.
 
 Keep `journalctl -fu dcsd` open on the Pi; the cable's status lines appear there. Check
 the first line after flashing: `cable: DC-PicoLink firmware <version> ... ready`.

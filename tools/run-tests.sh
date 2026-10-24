@@ -13,6 +13,10 @@ for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_baud;
         echo "FAIL $t"; tail -20 "$out/$t.log" 2>/dev/null; fail=1
     fi
 done
+# dctest: Dreamcast test tool: syntax check of the KOS path against stub headers, then the Python
+# host tool against the host build of the DC program (serial, baud switching, UDP, TCP; ~1 min)
+if gcc -fsyntax-only -Wall -I../tools/dctest/stub ../tools/dctest/dctest.c 2> "$out/dc.log"; then echo "PASS dctest KOS-path syntax"; else echo "FAIL dctest syntax"; cat "$out/dc.log"; fail=1; fi
+if python3 -I ../tools/dctest/dctest.py selftest --log "$out/dctest.log" --tmp "$out" > "$out/dctest.out" 2>&1; then echo "PASS dctest selftest: $(grep -m1 'tests,' "$out/dctest.out" | sed 's/^\[[^]]*\] //')"; else echo "FAIL dctest selftest"; tail -20 "$out/dctest.out"; fail=1; fi
 if [ -n "${1:-}" ]; then
     hdr="$1/w5500_spi.pio.h"
     [ -f "$hdr" ] || { echo "no $hdr: build the firmware first"; exit 1; }
