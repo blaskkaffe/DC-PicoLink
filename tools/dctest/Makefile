@@ -8,7 +8,7 @@ all: $(TARGET)
 include $(KOS_BASE)/Makefile.rules
 
 $(TARGET): $(OBJS)
-	kos-cc -o $(TARGET) $(OBJS) -lkosutils
+	kos-cc -o $(TARGET) $(OBJS)
 
 clean:
 	-rm -f $(TARGET) $(OBJS)

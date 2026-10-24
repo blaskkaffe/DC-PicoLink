@@ -61,7 +61,16 @@ selftest runs both against each other.
 
 ## Status
 
-Selftest passes (87 tests clean; injected errors reported). The Dreamcast build has **not been
-compiled against a real KOS yet**: `tools/run-tests.sh` only syntax-checks it against
-stub headers (`stub/kos.h`, written from memory of the KOS 2.x API). Expect to fix a name or two
-(`scif_*`, `net_init`, controller read) on the first `make`.
+Selftest passes (87 tests clean; injected errors reported). The Dreamcast program **compiles
+cleanly against the headers of current KallistiOS master** (checked here), which exposed and
+fixed real API differences (`net_init(0)`, `scif_set_parameters` only stores the rate and
+`scif_init` applies it, and under dcload-serial KOS neither inits the SCIF nor allows the SPI
+driver, so `dctest` sets `dcload_type = DCLOAD_TYPE_NONE` before using the port). It has **not been
+linked or run**: this environment only has Debian's GCC 13 / unpatched newlib, which current KOS
+rejects at link time. Build `dctest.elf` in your own KOS environment (`make`). If the link or the
+first run shows a KOS difference, send me the output.
+
+Known limits on the Dreamcast side, worth keeping in mind when reading results: KOS receives
+on the SCIF through a 1 KB interrupt ring buffer with no hardware flow control, so an
+overrun at very high rates under full duplex load can be the Dreamcast, not the cable
+(compare `lost` with `dc_crc_bad`/`dc_gap` and the rates below it).

@@ -53,11 +53,13 @@ static void hal_sleep_ms(int ms) { thd_sleep(ms); }
 static int hal_getc(void) { return scif_read(); }
 static void hal_write(const uint8_t *b, int n) { scif_write_buffer(b, n, 1); }
 static void hal_flush(void) { scif_flush(); }
-static void hal_serial_init(int baud) { scif_init(); scif_set_irq_usage(1); scif_set_parameters(baud, 1); }
-static void hal_serial_baud(int baud) { scif_set_parameters(baud, 1); }
+/* scif_set_parameters only stores the rate; scif_init applies it (and clears the IRQ enables). */
+static void hal_serial_init(int baud) { scif_set_parameters(baud, 1); scif_init(); scif_set_irq_usage(1); }
+static void hal_serial_baud(int baud) { hal_serial_init(baud); }
 static void hal_serial_shutdown(void) { scif_shutdown(); }
 static int hal_net_up(void) {
-    if (net_init() < 0 || !net_default_dev) return -1;
+    net_init(0);                                    /* detects the W5500, then DHCP; failure leaves no address */
+    if (!net_default_dev) return -1;
     for (int i = 0; i < 300 && !net_default_dev->ip_addr[0]; i++) thd_sleep(100);   /* DHCP, up to 30 s */
     if (!net_default_dev->ip_addr[0]) return -1;
     hal_log("net: %d.%d.%d.%d", net_default_dev->ip_addr[0], net_default_dev->ip_addr[1],
@@ -267,6 +269,9 @@ static void check_revert(void) {
 
 int main(void) {
 #ifndef DCTEST_HOST
+    /* Loaded by dc-tool-ser, KOS leaves the SCIF to dcload: scif_init does nothing and the SPI
+       (W5500) driver refuses to start. We drive the port ourselves. */
+    dcload_type = DCLOAD_TYPE_NONE;
     dbgio_dev_select("fb");
 #endif
     t_start = hal_ms();
