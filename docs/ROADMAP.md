@@ -10,8 +10,8 @@
 
 ## 2. SD card on a physical slot
 
-* Wire an SD/microSD slot to free GPIOs on the RP2040's own SPI (SPI1), card powered
-  from the board's 3.3 V.
+* Wire an SD/microSD slot to the RP2040's own SPI (SPI1): GPIO26/27/28 + CS GPIO9,
+  the same pins on Pro Micro RP2040, RP2040-Zero and Pico (hardware/SD-SLOT.md).
 * Firmware: the SD emulation's block source becomes the card (it already handles a slow
   source); remove the host image link (`dcsd`, USB vendor interface) and move the status
   lines to a small second USB serial port.
@@ -51,7 +51,3 @@
 * Experimental, later: an I2S audio codec + software modem on the Pi Zero instead of a
   USB modem (realistically V.32bis-class speeds).
 
-## Repository
-
-* Pick a license.
-* Rename the GitHub repository to DC-PicoLink.

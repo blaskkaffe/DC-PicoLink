@@ -49,7 +49,7 @@ Logs: `journalctl -fu dcsd` (the cable's own status lines), `journalctl -u dcusb
 |---|---|
 | [`firmware/`](firmware) | RP2040 firmware (Pico SDK, PIO) and its host-side tests (`firmware/tests`) |
 | [`host/`](host) | software for the computer side: `dreampi/` today; `linux/`, `macos/`, `windows/` planned |
-| [`hardware/`](hardware) | wiring and build notes |
+| [`hardware/`](hardware) | wiring and build notes, [SD slot](hardware/SD-SLOT.md) |
 | [`docs/`](docs) | [architecture](docs/ARCHITECTURE.md), [technical reference](docs/REFERENCE.md), [roadmap](docs/ROADMAP.md), [testing](docs/TESTING.md), [development log](docs/DEVLOG.md) |
 | [`tools/`](tools) | test runner, DreamPi installer builder |
 
@@ -60,4 +60,4 @@ Part of a family of `DC-` Dreamcast projects.
 
 ## License
 
-To be decided.
+MIT, see [LICENSE](LICENSE).
