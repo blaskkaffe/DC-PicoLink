@@ -41,6 +41,10 @@
 
 * Internal Raspberry Pi Zero 2W running DreamPi, with a regular modem (small USB modem
   + line voltage) inside the console.
+* PicoLink ↔ Pi Zero over GPIO instead of USB, freeing the Zero's single USB port for the
+  modem: serial on the Pi's UART (with RTS/CTS), the network as framed packets over SPI
+  with a small Pi-side program presenting a TUN interface (it can carry the status log
+  too). The RP2040 stays: the Pi can't answer the Dreamcast's SPI within ~250 ns.
 * A GPIO-switched line switch to turn the modem "off" (no dial tone) so games that try
   the modem first (AFO) fall back to serial; priority W5500 → serial → modem.
 * Per-game choice from openMenu's "last played game" file on the SD card.
