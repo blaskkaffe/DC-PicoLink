@@ -3,8 +3,8 @@
 TARGET = dctest.elf
 OBJS = dctest.o
 
-DT_BUILD ?= $(shell date +'%b %d %Y %H:%M:%S')
-KOS_CFLAGS += -DDT_BUILD='"$(DT_BUILD)"'
+DT_BUILD ?= $(shell date +%Y%m%d-%H%M%S)
+KOS_CFLAGS += -DDT_BUILD_ID=$(shell printf %s '$(DT_BUILD)' | tr -c 'A-Za-z0-9._-' _)
 
 all: $(TARGET)
 

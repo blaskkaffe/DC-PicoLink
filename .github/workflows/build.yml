@@ -85,6 +85,18 @@ jobs:
             bash tools/dctest/ci-build.sh /work/kos /work/dist-dctest "$ver"
           sudo chown -R "$(id -u):$(id -g)" dist-dctest
 
+      # A bootable disc image (CDI) for ODE/SD loaders and emulators, from the same ELF. A console
+      # that boots it does not need dc-tool at all. Failure here does not stop the ELF being published.
+      - name: CDI image
+        continue-on-error: true
+        run: |
+          ver=$(git describe --tags --always --dirty)
+          sudo apt-get install -y meson ninja-build pkg-config libisofs-dev binutils-sh-elf
+          git clone https://github.com/Nold360/mkdcdisc.git
+          meson setup mkdcdisc/build mkdcdisc && ninja -C mkdcdisc/build
+          mkdcdisc/build/mkdcdisc -e dist-dctest/dctest-$ver.elf -o dist-dctest/dctest-$ver.cdi -n "DCTEST"
+          ls -l dist-dctest
+
       - uses: actions/upload-artifact@v4
         with:
           name: dctest

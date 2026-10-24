@@ -15,7 +15,11 @@
 #include "proto.h"
 
 #define DT_VERSION "1"
-#ifndef DT_BUILD
+#define DT_STR2(x) #x
+#define DT_STR(x) DT_STR2(x)
+#ifdef DT_BUILD_ID                    /* -DDT_BUILD_ID=v0.8-3-gabc (no quotes: they do not survive kos-cc) */
+#define DT_BUILD DT_STR(DT_BUILD_ID)
+#else
 #define DT_BUILD __DATE__ " " __TIME__
 #endif
 #define BAUD_START 115200
