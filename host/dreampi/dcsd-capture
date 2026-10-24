@@ -1,0 +1,7 @@
+#!/bin/sh
+# dcsd-capture - arm the cable's logic-analyzer capture (CLK/MOSI/MISO/CS).
+# The capture starts at the next SPI clock from the Dreamcast and keeps the last 1.3 ms (50 MHz);
+# dcsd then logs the decoded SPI frames (journalctl -u dcsd) and saves
+# capture-<time>.txt / .vcd (open in PulseView) / .bin next to the mode file.
+D=$(dirname "${DCSD_MODE_FILE:-/var/lib/dcsd/mode}")
+mkdir -p "$D" && touch "$D/capture-request" && echo "capture requested (see journalctl -fu dcsd)"

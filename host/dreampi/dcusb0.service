@@ -1,0 +1,15 @@
+[Unit]
+Description=Dreamcast W5500-over-USB network (dcusb0)
+BindsTo=sys-subsystem-net-devices-dcusb0.device
+After=sys-subsystem-net-devices-dcusb0.device network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/sbin/dcusb0-up.sh start
+ExecStart=/usr/local/sbin/dcusb0-dnsmasq.sh
+ExecStopPost=/usr/local/sbin/dcusb0-up.sh stop
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=sys-subsystem-net-devices-dcusb0.device

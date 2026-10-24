@@ -1,0 +1,104 @@
+#!/bin/bash
+# dcusb0-vpn - give the W5500 Dreamcast (dcusb0) its own Dreamcast Live VPN
+# address, the way DreamPi does for a modem Dreamcast.
+#
+# DreamPi with the VPN up: tun0 has the Pi's VPN address T, and a modem
+# Dreamcast gets T+1 as its own address, so servers and other players reach it
+# directly on every port. Without this script, dcusb0 is masqueraded behind T
+# and DreamPi's firewall drops new incoming connections to T: hosting, peers
+# joining (AFO, Worms World Party, Quake 3, Unreal Tournament) can't reach it.
+#
+# Here: T+1 is mapped 1:1 to the W5500 Dreamcast's address on dcusb0 (all
+# ports, both directions), and TCP MSS is clamped to the VPN's smaller MTU.
+# The script follows changes by itself every few seconds: the VPN coming up or
+# reconnecting with a new address, the Dreamcast getting a new DHCP lease (each
+# game may use its own MAC). While DreamPi has a modem Dreamcast online (ppp0),
+# T+1 is that one's, and the mapping is taken down.
+#
+# Run by dcusb0-vpn.service. "dcusb0-vpn stop" removes everything.
+set -u
+[ -f /etc/dcusb0.conf ] && . /etc/dcusb0.conf
+VPN_IF=${VPN_IF:-tun0}
+VPN_MAP=${VPN_MAP:-yes}
+IF=dcusb0
+LEASES=/run/dcusb0.leases
+
+log() { echo "dcusb0-vpn: $*"; }
+
+chains() {      # create our chains and hook them in once
+    iptables -t nat -N DCUSB0_PRE 2>/dev/null
+    iptables -t nat -N DCUSB0_POST 2>/dev/null
+    iptables -N DCUSB0_FWD 2>/dev/null
+    iptables -t mangle -N DCUSB0_MSS 2>/dev/null
+    iptables -t nat -C PREROUTING -j DCUSB0_PRE 2>/dev/null || iptables -t nat -I PREROUTING 1 -j DCUSB0_PRE
+    iptables -t nat -C POSTROUTING -j DCUSB0_POST 2>/dev/null || iptables -t nat -I POSTROUTING 1 -j DCUSB0_POST
+    iptables -C FORWARD -j DCUSB0_FWD 2>/dev/null || iptables -I FORWARD 1 -j DCUSB0_FWD
+    # mangle POSTROUTING, not FORWARD: DreamPi puts RETURN rules for tun0 at the top of mangle FORWARD
+    iptables -t mangle -C POSTROUTING -j DCUSB0_MSS 2>/dev/null || iptables -t mangle -I POSTROUTING 1 -j DCUSB0_MSS
+}
+
+flush() {
+    iptables -t nat -F DCUSB0_PRE 2>/dev/null
+    iptables -t nat -F DCUSB0_POST 2>/dev/null
+    iptables -F DCUSB0_FWD 2>/dev/null
+    iptables -t mangle -F DCUSB0_MSS 2>/dev/null
+}
+
+remove() {
+    flush
+    iptables -t nat -D PREROUTING -j DCUSB0_PRE 2>/dev/null
+    iptables -t nat -D POSTROUTING -j DCUSB0_POST 2>/dev/null
+    iptables -D FORWARD -j DCUSB0_FWD 2>/dev/null
+    iptables -t mangle -D POSTROUTING -j DCUSB0_MSS 2>/dev/null
+    iptables -t nat -X DCUSB0_PRE 2>/dev/null
+    iptables -t nat -X DCUSB0_POST 2>/dev/null
+    iptables -X DCUSB0_FWD 2>/dev/null
+    iptables -t mangle -X DCUSB0_MSS 2>/dev/null
+}
+
+if [ "${1:-run}" = stop ]; then remove; exit 0; fi
+command -v iptables >/dev/null 2>&1 || { log "iptables not found, nothing to do"; exit 0; }
+[ "$VPN_MAP" = yes ] || { log "VPN_MAP=$VPN_MAP in /etc/dcusb0.conf: not mapping"; remove; exec sleep infinity; }
+
+addr_of() { ip -4 -o addr show dev "$1" 2>/dev/null | awk '{split($4, a, "/"); print a[1]; exit}'; }
+
+plus1() {       # a.b.c.d + 1
+    local IFS=.; set -- $1
+    local n=$(( ($1 << 24 | $2 << 16 | $3 << 8 | $4) + 1 ))
+    echo "$(( n >> 24 & 255 )).$(( n >> 16 & 255 )).$(( n >> 8 & 255 )).$(( n & 255 ))"
+}
+
+dc_addr() {     # the Dreamcast on dcusb0: newest DHCP lease, else a neighbour (set by hand)
+    local ip
+    ip=$(sort -n -r "$LEASES" 2>/dev/null | awk 'NR == 1 {print $3}')
+    [ -n "$ip" ] || ip=$(ip -4 neigh show dev "$IF" 2>/dev/null | awk '$0 !~ /FAILED|INCOMPLETE/ {print $1; exit}')
+    echo "$ip"
+}
+
+state=""
+chains
+while :; do
+    t=$(addr_of "$VPN_IF"); dc=$(dc_addr); want=""
+    if [ -n "$t" ] && [ -n "$dc" ]; then
+        if ip link show ppp0 >/dev/null 2>&1; then want="ppp0"; else want="$(plus1 "$t") $dc"; fi
+    fi
+    if [ "$want" != "$state" ]; then
+        flush
+        case "$want" in
+        "") log "no mapping (VPN $VPN_IF: ${t:-down}, Dreamcast on $IF: ${dc:-none yet})" ;;
+        ppp0) log "a modem Dreamcast is online (ppp0): VPN address $(plus1 "$t") is its, no mapping" ;;
+        *)
+            set -- $want; v=$1; d=$2
+            iptables -t nat -A DCUSB0_PRE -i "$VPN_IF" -d "$v" -j DNAT --to-destination "$d"
+            iptables -t nat -A DCUSB0_POST -o "$VPN_IF" -s "$d" -j SNAT --to-source "$v"
+            iptables -A DCUSB0_FWD -i "$VPN_IF" -o "$IF" -d "$d" -j ACCEPT
+            iptables -A DCUSB0_FWD -i "$IF" -o "$VPN_IF" -s "$d" -j ACCEPT
+            iptables -t mangle -A DCUSB0_MSS -o "$VPN_IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            iptables -t mangle -A DCUSB0_MSS -o "$IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            command -v conntrack >/dev/null 2>&1 && conntrack -D -s "$d" >/dev/null 2>&1   # old masqueraded flows
+            log "Dreamcast $d on $IF = VPN address $v (all ports, both ways; $VPN_IF is $t)" ;;
+        esac
+        state=$want
+    fi
+    sleep 5
+done

@@ -1,0 +1,22 @@
+; SPI mode-0 slave for the SD card emulation: a plain full-duplex byte shifter.
+; Same fixed pins as w5500_spi.pio: GPIO2 SCLK, GPIO3 MOSI (in_base), GPIO4 MISO
+; (out_base), GPIO5 CS. Shift left (MSB first), no autopush/pull.
+; X holds the fill byte (all ones = 0xFF idle, zero = 0x00 busy), sent whenever
+; the CPU/DMA has nothing queued. Every received byte is pushed.
+
+.program sd_spi
+public sync:
+    wait 1 gpio 5           ; entered mid-frame: wait for CS to go idle first
+public start:
+    wait 0 gpio 5
+.wrap_target
+    pull noblock            ; next MISO byte, or X when nothing is queued
+    set y, 7
+bit:
+    out pins, 1             ; right after the rising edge the DC took the last bit on
+    wait 0 gpio 2           ; (see w5500_spi.pio: KOS samples RXD late)
+    wait 1 gpio 2
+    in pins, 1
+    jmp y-- bit
+    push noblock
+.wrap

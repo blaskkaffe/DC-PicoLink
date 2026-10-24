@@ -1,0 +1,6 @@
+# RP2040 Dreamcast coder's cable + W5500 emulator (USB 0xcafe:0x4dc5)
+# Network side: always call it dcusb0 and start dcusb0.service while it is plugged in.
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4dc5", NAME="dcusb0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="dcusb0.service"
+# Serial side: stable name /dev/dccable for dc-tool-ser
+SUBSYSTEM=="tty", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4dc5", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="dccable"
+# The SD card link is a vendor USB interface (no tty), used directly by dcsd.service

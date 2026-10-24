@@ -1,0 +1,11 @@
+#!/bin/bash
+# Mount the Dreamcast SD image on the Pi to add/remove files.
+# While mounted, the Dreamcast sees "no card". Unmount with: sudo dcsd-umount
+set -eu
+[ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
+. /etc/dcsd.conf
+MNT=${1:-/mnt/dcsd}
+mkdir -p "$MNT"
+if mountpoint -q "$MNT"; then echo "already mounted at $MNT"; exit 0; fi
+mount -o loop,offset=$((2048 * 512)),uid="${SUDO_UID:-0}",gid="${SUDO_GID:-0}",umask=022 "$DCSD_IMAGE" "$MNT"
+echo "Mounted at $MNT. Copy files, then: sudo dcsd-umount"

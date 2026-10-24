@@ -1,0 +1,13 @@
+[Unit]
+Description=Dreamcast W5500 (dcusb0) on its own Dreamcast Live VPN address
+After=network.target dcusb0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dcusb0-vpn
+ExecStopPost=/usr/local/sbin/dcusb0-vpn stop
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

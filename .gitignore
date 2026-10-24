@@ -1,0 +1,7 @@
+build*/
+dist/
+*.uf2
+*.elf
+*.o
+__pycache__/
+.DS_Store

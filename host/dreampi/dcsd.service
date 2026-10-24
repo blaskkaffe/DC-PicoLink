@@ -1,0 +1,12 @@
+[Unit]
+Description=Dreamcast emulated SD card (image served to the RP2040 cable)
+After=local-fs.target
+
+[Service]
+EnvironmentFile=/etc/dcsd.conf
+ExecStart=/usr/bin/python3 /usr/local/bin/dcsd.py --image ${DCSD_IMAGE} --size ${DCSD_SIZE} $DCSD_OPTS
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

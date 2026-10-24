@@ -1,0 +1,49 @@
+; 8N1 UART for PIO, 8 PIO clocks per bit.
+
+; TX with CTS: waits for CTS (in pin 0) to be low before each start bit.
+.program uart_tx
+.side_set 1 opt
+    pull       side 1 [7]   ; stop bit / idle high: 8 clocks here + 1 for the wait = 9/8 bit
+    wait 0 pin 0            ; (as before net7; net7r A/B build); flow control: wait for CTS low
+    set x, 7   side 0 [7]   ; start bit
+bitloop:
+    out pins, 1
+    jmp x-- bitloop   [6]
+
+; RX, 16 PIO clocks per bit, FTDI-style robustness:
+;  - a start bit must still be low at its middle (glitches don't start a byte)
+;  - every data bit is sampled 3 times around its centre (clocks 6, 8, 10); the
+;    CPU takes the majority, so a single noisy sample can't flip a bit
+;  - the stop bit is sampled into the word too (CPU counts/drops framing errors)
+;  - then wait for the line to be high: a break (line held low, which some games
+;    do between dial attempts) yields one character, not a flood
+; Pushes one 32-bit word per character: data bit i in bits 7+3i..9+3i, stop in bit 31.
+.program uart_rx
+start:
+    wait 0 pin 0    [7]     ; falling edge, then to the middle of the start bit
+    jmp pin start           ; high again: just a glitch
+    set x, 7        [12]    ; to the first data bit's first sample
+bitloop:
+    in pins, 1      [1]
+    in pins, 1      [1]
+    in pins, 1
+    jmp x-- bitloop [10]    ; 16 clocks per bit
+    in pins, 1              ; stop bit
+    push
+    wait 1 pin 0            ; line idle (or end of a break) before the next start
+
+; Measures every low period on the DC TXD line (in_base = jmp_pin = GPIO3) at full
+; system clock: pushes the number of 2-cycle loop iterations. The CPU derives the
+; bit time from the shortest pulses and follows the Dreamcast's real baud rate.
+.program dc_tx_meter
+.wrap_target
+    wait 1 pin 0
+    wait 0 pin 0
+    mov x, ~null
+lo:
+    jmp pin hi
+    jmp x-- lo
+hi:
+    mov isr, ~x
+    push noblock
+.wrap

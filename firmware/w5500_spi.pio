@@ -1,0 +1,82 @@
+; SPI mode-0 slave for the W5500 emulation (pins are fixed, absolute GPIOs):
+;   GPIO2 = SCLK (DC CTS), GPIO3 = MOSI (DC TXD), GPIO4 = MISO (DC RXD), GPIO5 = CS (DC RTS)
+; in_base = GPIO3, out_base = set_base = GPIO4, jmp_pin = GPIO5 (CS).
+; ISR/OSR shift left (MSB first), no autopush/pull.
+;
+; RX FIFO words, per frame:
+;   [addr16]               after 16 bits  -> the CPU looks up the candidate answers
+;   [bsb5]                 after 21 bits  -> the CPU answers with the first MISO byte
+;   [rwb << 2 | om2]       after 24 bits  -> the CPU queues 3 more MISO bytes
+;   [data8] [data8] ...    one per data byte -> one more MISO byte each
+;   0xFFFFFFFF             end of frame (CS high at a byte boundary, >= ~30 ns)
+;
+; Like the real chip, the end of a frame is CS going high, which the program
+; checks for itself between bytes (while SCLK is low), so back-to-back frames with
+; a very short CS-high gap are never merged. The CPU only has to keep up with the
+; FIFO; it no longer restarts the state machine per frame.
+;
+; MISO timing: every bit is put out right after the rising edge on which the
+; Dreamcast took the previous one, not at the falling edge. KOS samples RXD
+; through the SCIF port register, which lags the pin by tens of ns, and its
+; clock-low phase in scif_spi_read_byte is a single port write (~40 ns): a bit
+; changed after the falling edge is seen one clock late (measured: 0x08 read as
+; 0x04). A mid-high-phase change sits far from where it samples.
+; The pull never stalls: a late answer goes out as 0xFF (the CPU notices, see
+; w5_bsb_done), but the shifter never loses a clock edge. One prefetched byte
+; is pulled past the end of every frame; the CPU drops the stale TX bytes when
+; it sees the marker.
+
+.program w5500_spi
+frame_end:                  ; CS seen high between two bytes
+    mov isr, ~null [3]      ; marker; and re-check CS ~20 ns later: ignore a spike
+    jmp pin marker
+    jmp gap                 ; it was a spike: carry on waiting for the next byte
+marker:
+    push block              ; never drop a frame end; straight on to the next frame
+public start:               ; (the CPU sets MISO high here: it idles high between frames)
+    wait 0 gpio 5           ; CS asserted
+    set x, 23               ; 24 header bits
+    set y, 8                ; first push after 16 bits
+public hdr:
+    wait 0 gpio 2
+    wait 1 gpio 2
+    in pins, 1
+    jmp x!=y hdr_next       ; x == 8: 16 bits in (address); x == 3: 21 bits (block select)
+    push noblock
+    set y, 3
+hdr_next:
+    jmp x-- hdr
+.wrap_target
+    push noblock            ; control bits, then each data byte
+    pull noblock            ; next MISO byte (from the CPU); if it isn't there yet,
+                            ; X = 0xFFFFFFFF (both loops leave it so): send 0xFF and
+                            ; stay in step with the clock instead of stalling
+    out pins, 1             ; its first bit, right after the last rising edge
+    wait 0 gpio 2           ; SCLK low: the previous byte is done
+gap:                        ; wait for SCLK high (next byte) or CS high (frame end)
+    jmp pin frame_end
+    mov y, ::pins           ; one snapshot: bit 0 = SCLK (GPIO2), bit 31 = MOSI (GPIO3)
+    mov isr, y              ; (pins are read rotated from in_base, then bit-reversed)
+    in null, 31             ; ISR = SCLK << 31
+    mov x, isr
+    jmp !x gap
+    mov isr, ::y            ; first MOSI bit from the *same* snapshot that saw SCLK
+                            ; high, so it can't be the next bit even if this loop
+                            ; saw the edge late (KOS's high phase can be 40 ns).
+                            ; Bits 8-31 of the data word are other pins: ignored.
+    set x, 6
+public bits:
+    out pins, 1             ; next MISO bit, right after the DC took the last one
+    wait 0 gpio 2
+    wait 1 gpio 2           ; SCLK high: sample MOSI
+    in pins, 1
+    jmp x-- bits
+.wrap
+
+; Logic-analyzer capture of GPIO2..5 (CLK, MOSI, MISO, CS) for diagnostics.
+; in_base = GPIO2, shift right, autopush 32: 8 samples per word, oldest in bits 3:0.
+; One instruction, so the W5500 program can have the other 31 of pio1's 32.
+.program la_capture
+.wrap_target
+    in pins, 4              ; (the CPU execs 'wait 1 gpio 2' as the trigger)
+.wrap

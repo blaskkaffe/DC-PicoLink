@@ -1,0 +1,18 @@
+#!/bin/sh
+# dcsd-mode - force the RP2040 cable's bus mode (takes effect within a second).
+#   auto    detect serial / SPI by itself (default)
+#   serial  coder's cable only (never switch to SPI)
+#   spi     SPI only, W5500 and SD chosen per frame
+#   w5500   SPI, W5500 only (no SD card)
+#   sd      SPI, SD card only
+# No argument: show the current setting.
+F=${DCSD_MODE_FILE:-/var/lib/dcsd/mode}
+if [ -z "$1" ]; then
+    cat "$F" 2>/dev/null || echo auto
+    exit 0
+fi
+case "$1" in
+    auto|serial|spi|w5500|sd) ;;
+    *) echo "usage: $0 [auto|serial|spi|w5500|sd]" >&2; exit 1 ;;
+esac
+mkdir -p "$(dirname "$F")" && echo "$1" > "$F" && echo "cable mode: $1 (see journalctl -u dcsd)"
