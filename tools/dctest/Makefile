@@ -3,6 +3,9 @@
 TARGET = dctest.elf
 OBJS = dctest.o
 
+DT_BUILD ?= $(shell date +'%b %d %Y %H:%M:%S')
+KOS_CFLAGS += -DDT_BUILD='"$(DT_BUILD)"'
+
 all: $(TARGET)
 
 include $(KOS_BASE)/Makefile.rules

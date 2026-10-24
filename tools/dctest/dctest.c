@@ -15,6 +15,9 @@
 #include "proto.h"
 
 #define DT_VERSION "1"
+#ifndef DT_BUILD
+#define DT_BUILD __DATE__ " " __TIME__
+#endif
 #define BAUD_START 115200
 #define REVERT_MS 5000
 
@@ -45,6 +48,12 @@ static int hal_net_up(void) { return 0; }
 static void hal_net_down(void) {}
 static int hal_start_pressed(void) { return 0; }
 static void hal_log(const char *fmt, ...) { va_list a; va_start(a, fmt); vfprintf(stderr, fmt, a); va_end(a); fputc('\n', stderr); }
+/* Selftest: DCTEST_SIM_HW="nonet" (no W5500), "sd" (an SD card answers) */
+static void hal_probe(uint8_t *w5, uint8_t *sd) {
+    const char *e = getenv("DCTEST_SIM_HW");
+    *w5 = (e && strstr(e, "nonet")) ? 0xFF : 0x04;
+    *sd = (e && strstr(e, "sd")) ? 0x01 : 0xFF;
+}
 #else
 #include <kos.h>
 KOS_INIT_FLAGS(INIT_DEFAULT);                      /* no INIT_NET: the W5500 stays untouched until NETSTART */
@@ -73,6 +82,28 @@ static int hal_start_pressed(void) {
     return s && (s->buttons & CONT_START);
 }
 static void hal_log(const char *fmt, ...) { va_list a; va_start(a, fmt); vprintf(fmt, a); va_end(a); putchar('\n'); }
+
+/* What answers on the serial port's SPI pins, the way the W5500 tester checks it. 0xFF = nothing.
+   The cable (or adapter) sees this as a short SPI session and goes back to serial afterwards. */
+static void hal_probe(uint8_t *w5, uint8_t *sd) {
+    *w5 = *sd = 0xFF;
+    scif_shutdown();
+    if (scif_spi_init() != 0) return;
+    static const uint8_t cmd0[6] = {0x40, 0, 0, 0, 0, 0x95};
+    scif_spi_set_cs(1);
+    for (int i = 0; i < 10; i++) scif_spi_rw_byte(0xFF);
+    scif_spi_set_cs(0);                                      /* low = selected */
+    scif_spi_rw_byte(0xFF); scif_spi_rw_byte(0xFF);
+    for (int i = 0; i < 6; i++) scif_spi_rw_byte(cmd0[i]);
+    for (int i = 0; i < 10; i++) { uint8_t r = scif_spi_rw_byte(0xFF); if (r != 0xFF) { *sd = r; break; } }
+    scif_spi_set_cs(1);
+    scif_spi_rw_byte(0xFF);
+    scif_spi_set_cs(0);                                      /* W5500: VERSIONR, common block, read */
+    scif_spi_rw_byte(0x00); scif_spi_rw_byte(0x39); scif_spi_rw_byte(0x00);
+    *w5 = scif_spi_rw_byte(0x00);
+    scif_spi_set_cs(1);
+    scif_spi_shutdown();                                     /* back to serial registers */
+}
 #endif
 
 static uint32_t hal_ms(void) { return (uint32_t)(hal_us() / 1000); }
@@ -87,7 +118,10 @@ static uint32_t t_start, sink_seed, sink_next;
 static int cur_baud = BAUD_START, prev_baud, revert_at;
 static dt_parser ser_p, net_p, tcp_p;
 
-enum { ACT_NONE, ACT_SETBAUD, ACT_NETSTART, ACT_NETSTOP, ACT_TCPSTART };
+enum { ACT_NONE, ACT_SETBAUD, ACT_NETSTART, ACT_NETSTOP, ACT_TCPSTART, ACT_PROBE };
+static uint8_t probe_w5, probe_sd = 0xFF;
+static int dcload_at_start;
+static uint32_t act_seq;
 static uint32_t act_arg;
 
 typedef struct dt_io {
@@ -120,6 +154,17 @@ static void pack_stats(uint8_t *o) {
     for (int i = 0; i < 13; i++) dt_put32(o + 4 * i, s[i]);
 }
 
+static void probe_reply(dt_io *io, uint32_t seq) {
+    uint8_t p[8] = {probe_w5, probe_sd, (uint8_t)dcload_at_start, 0};
+    dt_put32(p + 4, cur_baud);
+    reply(io, DT_PROBE, 0, seq, p, 8);
+}
+
+static void probe_show(void) {
+    hal_log("hardware: W5500 %s | SD %s | serial: host linked",
+            probe_w5 == 0x04 ? "found (version 4)" : "none", (probe_sd != 0xFF && !(probe_sd & 0x80)) ? "answers" : "none");
+}
+
 /* ---------- frame handler (serial, UDP and TCP share it) ---------- */
 static int handle(dt_io *io, const dt_frame *f) {
     static uint8_t tmp[DT_MAXPAY];
@@ -127,7 +172,7 @@ static int handle(dt_io *io, const dt_frame *f) {
     st.frames_ok++;
     switch (f->type) {
     case DT_HELLO: {
-        static const char v[] = "dctest " DT_VERSION " " __DATE__ " " __TIME__;
+        static const char v[] = "dctest " DT_VERSION " " DT_BUILD;
         reply(io, DT_HELLO, 0, f->seq, (const uint8_t *)v, sizeof v - 1);
         break;
     }
@@ -190,6 +235,11 @@ static int handle(dt_io *io, const dt_frame *f) {
         act_arg = f->pay[0] | f->pay[1] << 8;
         reply(io, DT_TCPSTART, 0, f->seq, f->pay, 2);
         return ACT_TCPSTART;
+    case DT_PROBE: {
+        if (f->len >= 1 && f->pay[0] && io->fd < 0) { act_seq = f->seq; return ACT_PROBE; }   /* rerun: serial only */
+        probe_reply(io, f->seq);
+        break;
+    }
     case DT_NETSTOP:
         reply(io, DT_NETSTOP, 0, f->seq, NULL, 0);
         return ACT_NETSTOP;
@@ -271,12 +321,18 @@ int main(void) {
 #ifndef DCTEST_HOST
     /* Loaded by dc-tool-ser, KOS leaves the SCIF to dcload: scif_init does nothing and the SPI
        (W5500) driver refuses to start. We drive the port ourselves. */
+    dcload_at_start = dcload_type;
     dcload_type = DCLOAD_TYPE_NONE;
     dbgio_dev_select("fb");
 #endif
     t_start = hal_ms();
-    hal_log("dctest " DT_VERSION " " __DATE__ " " __TIME__ " - serial %d, Start quits", cur_baud);
+    hal_log("dctest " DT_VERSION " " DT_BUILD " - serial %d, Start quits", cur_baud);
     hal_serial_init(cur_baud);
+    hal_probe(&probe_w5, &probe_sd);                 /* what is on the SPI pins, like the W5500 tester */
+    hal_serial_init(cur_baud);
+    hal_sleep_ms(500);
+    probe_show();
+    hal_log("probe: W5500 version register %02X, SD CMD0 answer %02X", probe_w5, probe_sd);
     uint32_t last_rx = hal_ms(), last_show = 0, seen = 0;
     int ticks = 0;
     for (;;) {
@@ -306,6 +362,14 @@ int main(void) {
                 prev_baud = cur_baud; cur_baud = act_arg; hal_serial_baud(cur_baud);
                 revert_at = hal_ms() + REVERT_MS;
                 hal_log("baud: %d", cur_baud);
+                break;
+            case ACT_PROBE:
+                hal_flush(); hal_sleep_ms(30);
+                hal_probe(&probe_w5, &probe_sd);
+                hal_serial_init(cur_baud);
+                hal_sleep_ms(500);                  /* the cable needs ~200 ms of released lines to return to serial */
+                probe_reply(&io, act_seq);
+                probe_show();
                 break;
             case ACT_NETSTART:
                 hal_flush(); hal_sleep_ms(30);

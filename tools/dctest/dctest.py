@@ -6,6 +6,8 @@ Every run writes a timestamped log (and a .jsonl with one result per test) that 
 shared as is. See README.md.
 
     dctest.py ports
+    dctest.py detect [--port P]       (what adapter, what the Dreamcast has: W5500, SD)
+    dctest.py auto   [--port P]       (detect, then run every test that fits)
     dctest.py hello  --port P
     dctest.py serial --port P [--bauds common|uncommon|all|1200,...] [--step-seconds 6] [--full]
     dctest.py ramp   --port P --baud 115200
@@ -20,7 +22,7 @@ import threading, time, zlib
 
 # ---------------------------------------------------------------- protocol (mirror of proto.h)
 S0, S1, HDR, MAXPAY = 0xD3, 0x7C, 10, 2048
-HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART = range(1, 12)
+HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART, PROBE = range(1, 13)
 REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
@@ -185,8 +187,9 @@ class SerialChan:
 
 class ProcChan:
     """The host build of dctest.c over pipes, optionally corrupting one bit per `noise` bytes."""
-    def __init__(self, exe, noise=0):
-        self.p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+    def __init__(self, exe, noise=0, env=None):
+        self.p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
+                                  env=dict(os.environ, **(env or {})))
         self.fd = self.p.stdout.fileno()
         self.noise, self.count, self.baud = noise, 0, 0
 
@@ -359,6 +362,7 @@ def pace(deadline):
 class Ctx:
     def __init__(self, link, log, args, tr=None):
         self.link, self.log, self.args, self.tr = link, log, args, tr
+        self.portinfo, self.hw = None, None
         self.baud = args.start_baud if hasattr(args, "start_baud") else 0
         self.echo_seq = 0
         self.rng = random.Random(args.seed)
@@ -532,6 +536,138 @@ def set_baud(c, new):
     raise RuntimeError("lost the DC after trying baud %d (restart dctest on the Dreamcast)" % new)
 
 
+
+# ---------------------------------------------------------------- cables and hardware detection
+PortInfo = collections.namedtuple("PortInfo", "device vid pid product manufacturer description")
+
+# USB ids of common coder's-cable chips: name, highest rate the chip does, note
+CABLES = {
+    (0x0403, 0x6001): ("FTDI FT232R", 3000000, ""),
+    (0x0403, 0x6010): ("FTDI FT2232", 3000000, ""),
+    (0x0403, 0x6011): ("FTDI FT4232", 3000000, ""),
+    (0x0403, 0x6014): ("FTDI FT232H", 12000000, ""),
+    (0x0403, 0x6015): ("FTDI FT231X", 3000000, ""),
+    (0x10C4, 0xEA60): ("Silicon Labs CP210x", 1000000, "CP2102 stops at 1 Mbaud, CP2102N reaches 3 Mbaud: --no-limits to try"),
+    (0x10C4, 0xEA70): ("Silicon Labs CP2105", 2000000, ""),
+    (0x10C4, 0xEA71): ("Silicon Labs CP2108", 2000000, ""),
+    (0x067B, 0x2303): ("Prolific PL2303", 1228800, "older PL2303 chips: 115200 only (--no-limits to try)"),
+    (0x1A86, 0x7523): ("WCH CH340", 2000000, ""),
+    (0x1A86, 0x5523): ("WCH CH341", 2000000, ""),
+    (0x1A86, 0x55D4): ("WCH CH9102", 4000000, ""),
+    (0xCAFE, 0x4DC5): ("DC-PicoLink", 1562500, ""),
+}
+DC_MAX_BAUD = 1562500        # the Dreamcast's SCIF divider does not go faster
+
+
+def identify_cable(vid, pid, product="", manufacturer=""):
+    """-> dict(name, max_baud, picolink, note). Unknown adapters get a conservative 921600 limit."""
+    text = ("%s %s" % (manufacturer or "", product or "")).lower()
+    picolink = (vid, pid) == (0xCAFE, 0x4DC5) or "dreamcast coder" in text or "picolink" in text
+    known = CABLES.get((vid, pid))
+    if picolink:
+        return dict(name="DC-PicoLink", max_baud=DC_MAX_BAUD, picolink=True, follows_dc=True,
+                    note="the cable follows the Dreamcast's real rate")
+    if known:
+        return dict(name=known[0], max_baud=min(known[1], DC_MAX_BAUD), picolink=False, follows_dc=False, note=known[2])
+    return dict(name="unknown USB serial adapter (%04x:%04x)" % (vid or 0, pid or 0), max_baud=921600, picolink=False,
+                follows_dc=False, note="rates above 921600 are skipped unless --no-limits")
+
+
+def list_candidates():
+    """USB serial ports, known cables first."""
+    from serial.tools import list_ports
+    ports = [p for p in list_ports.comports() if p.vid is not None]
+    ports.sort(key=lambda p: (not identify_cable(p.vid, p.pid, p.product, p.manufacturer)["picolink"],
+                              (p.vid, p.pid) not in CABLES, p.device))
+    return ports
+
+
+def pick_port(want):
+    from serial.tools import list_ports
+    if want and want != "auto":
+        for p in list_ports.comports():
+            if p.device == want:
+                return p
+        return PortInfo(want, None, None, "", "", "")
+    cands = list_candidates()
+    if not cands:
+        raise RuntimeError("no USB serial adapter found; plug in the cable or give --port")
+    if len(cands) > 1 and not identify_cable(cands[0].vid, cands[0].pid, cands[0].product, cands[0].manufacturer)["picolink"]:
+        raise RuntimeError("several USB serial adapters, pick one with --port:\n  " +
+                           "\n  ".join("%s  %s" % (p.device, p.description) for p in cands))
+    return cands[0]
+
+
+def rate_note(req):
+    """Cables that do not follow the Dreamcast can only be as good as their divider."""
+    eff = dc_effective(req)
+    err = abs(eff - req) / req
+    return ("DC really runs %.0f (%.1f%% off)" % (eff, err * 100)) if err > 0.025 else ""
+
+
+def detect(c, reprobe=False):
+    """The hardware report: host adapter, what the Dreamcast answers, what sits on its SPI pins."""
+    log, info = c.log, c.portinfo
+    cable = identify_cable(info.vid, info.pid, info.product, info.manufacturer) if info else \
+        dict(name="(direct network)", max_baud=None, picolink=False, follows_dc=False, note="")
+    hw = dict(cable=cable, w5500=False, sd=False, dc_version=None)
+    log.line("---- hardware report")
+    if info:
+        log.line("host adapter : %s  [%s %s, USB %s:%s]" % (info.device, info.manufacturer or "?", info.product or info.description or "?",
+                 "%04x" % info.vid if info.vid is not None else "----", "%04x" % info.pid if info.pid is not None else "----"))
+        log.line("adapter type : %s%s" % (cable["name"], "  - " + cable["note"] if cable["note"] else ""))
+    h = hello(c.link, tries=10, timeout=0.4)
+    if not h:
+        log.line("Dreamcast    : no answer over serial")
+        log.result(dict(name="hardware", ok=False, note="no answer from dctest"))
+        return None
+    hw["dc_version"] = h
+    log.line("Dreamcast    : %s, serial link works at %d baud" % (h, c.baud))
+    f = c.link.request(PROBE, bytes([1 if reprobe else 0]), timeout=6.0, tries=2)
+    if f and len(f.payload) >= 8:
+        w5, sd, dl = f.payload[0], f.payload[1], struct.unpack("b", f.payload[2:3])[0]
+        hw.update(w5500=(w5 == 0x04), w5500_raw=w5, sd=(sd != 0xFF and not sd & 0x80), sd_raw=sd, dcload=dl)
+        log.line("W5500        : %s (version register %02X)" % ("found" if hw["w5500"] else "not found", w5))
+        log.line("SD card      : %s (CMD0 answer %02X)" % ("answers" if hw["sd"] else "no answer", sd))
+        log.line("loaded by    : %s" % {-1: "not dcload", 0: "dcload-serial", 1: "dcload-ip"}.get(dl, str(dl)))
+    else:
+        log.line("W5500/SD     : the Dreamcast did not answer the hardware probe (old dctest?)")
+    max_b = cable["max_baud"]
+    plan = dict(serial=True, hop=True, ramp=True, net=hw["w5500"], switch=hw["w5500"] and cable["picolink"], max_baud=max_b)
+    hw["plan"] = plan
+    log.line("tests that fit: serial sweep up to %s baud, ramp, hop%s%s" % (
+        max_b or "any", ", W5500 network" if plan["net"] else "",
+        ", serial<->W5500 switching" if plan["switch"] else ""))
+    if not plan["net"]:
+        log.line("  (no W5500 answered: network tests skipped)")
+    elif not cable["picolink"]:
+        log.line("  (switching between serial and W5500 needs one cable that does both: skipped)")
+    log.result(dict(name="hardware", ok=True, adapter=cable["name"], w5500=hw["w5500"], sd=hw["sd"]))
+    c.hw = hw
+    return hw
+
+
+def usable_bauds(c, bauds):
+    """Drop rates the adapter chip cannot do (unless --no-limits / --force)."""
+    hw = getattr(c, "hw", None)
+    lim = hw["plan"]["max_baud"] if hw and not c.args.no_limits else None
+    keep = []
+    for b in bauds:
+        if lim and b > lim:
+            c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: adapter limit %d baud" % lim))
+        else:
+            keep.append(b)
+    return keep
+
+
+def need(c, what):
+    """True if the detected hardware allows test group `what` (net / switch)."""
+    hw = getattr(c, "hw", None)
+    if c.args.force or hw is None or hw["plan"].get(what):
+        return True
+    c.log.result(dict(name=what, ok=False, expected=True, note="skipped: hardware not found (use --force to try anyway)"))
+    return False
+
 # ---------------------------------------------------------------- test suites
 COMMON = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 500000, 921600, 1000000, 1500000]
 UNCOMMON = [14400, 28800, 31250, 76800, 153600, 200000, 250000, 256000, 312500, 614400, 750000, 1562500, 1600000, 2000000]
@@ -565,10 +701,13 @@ def serial_step(c, baud, full):
 
 
 def cmd_serial(c):
-    bauds = parse_bauds(c.args.bauds)
+    bauds = usable_bauds(c, parse_bauds(c.args.bauds))
     c.log.line("baud list: %s" % bauds)
     for b in bauds:
-        c.log.line("---- %d baud (DC runs %.0f)%s" % (b, dc_effective(b), "  [divider wraps: expected 6103]" if b > 1562500 else ""))
+        hw = getattr(c, "hw", None)
+        note = rate_note(b) if hw and not hw["cable"]["follows_dc"] else ""
+        c.log.line("---- %d baud (DC runs %.0f)%s%s" % (b, dc_effective(b), "  [divider wraps: expected 6103]" if b > 1562500 else "",
+                                                        "  [" + note + ": errors expected, this adapter does not follow the DC]" if note else ""))
         try:
             ok = set_baud(c, b)
         except RuntimeError as e:
@@ -584,6 +723,8 @@ def cmd_serial(c):
 def cmd_ramp(c):
     """Offered load stepped up and down; duplex echo, host->DC and DC->host."""
     b = c.args.baud
+    if not usable_bauds(c, [b]):
+        return
     if b != c.baud and not set_baud(c, b):
         c.log.result(dict(name="baud", ok=False, baud=b, note="DC did not answer at this rate"))
         return
@@ -606,7 +747,7 @@ def cmd_ramp(c):
 
 
 def cmd_hop(c):
-    bauds = parse_bauds(c.args.bauds)
+    bauds = usable_bauds(c, parse_bauds(c.args.bauds))
     for i in range(c.args.cycles):
         b = bauds[i % len(bauds)]
         if not set_baud(c, b):
@@ -703,6 +844,8 @@ def net_down(c, ulink, baud):
 
 
 def cmd_net(c):
+    if c.args.port and not need(c, "net"):
+        return
     if c.args.port:
         ul = net_up(c, c.args.udp_port)
         if not ul:
@@ -723,7 +866,9 @@ def cmd_net(c):
 
 def cmd_switch(c):
     """Serial <-> W5500 cycles at different baud rates."""
-    bauds = parse_bauds(c.args.bauds)
+    if not need(c, "switch"):
+        return
+    bauds = usable_bauds(c, parse_bauds(c.args.bauds))
     for i in range(c.args.cycles):
         b = bauds[i % len(bauds)]
         c.log.line("---- cycle %d: serial at %d, then W5500" % (i + 1, b))
@@ -749,7 +894,7 @@ def cmd_switch(c):
 
 def cmd_soak(c):
     end = time.time() + c.args.minutes * 60
-    bauds = parse_bauds(c.args.bauds)
+    bauds = usable_bauds(c, parse_bauds(c.args.bauds))
     n = 0
     while time.time() < end:
         n += 1
@@ -776,6 +921,24 @@ def cmd_soak(c):
             time.sleep(r.choice([0.05, 0.5, 3.0]))
 
 
+
+def cmd_auto(c):
+    """Detect, then run what fits: serial sweep, ramp, hop, and W5500 / switching if present."""
+    a = c.args
+    a.bauds, a.full = "common", False
+    cmd_serial(c)
+    a.baud, a.length, a.modes = 115200, 512, "echo,sink,src"
+    cmd_ramp(c)
+    a.bauds, a.cycles = "115200,1500000,57600,921600", 20
+    cmd_hop(c)
+    hw = getattr(c, "hw", None)
+    if hw and hw["plan"]["net"]:
+        a.quick = True
+        cmd_net(c)
+    if hw and hw["plan"]["switch"]:
+        a.bauds, a.cycles = "115200,1500000", 6
+        cmd_switch(c)
+
 # ---------------------------------------------------------------- selftest (against the host build of dctest.c)
 def selftest(args, log):
     here = os.path.dirname(os.path.abspath(__file__))
@@ -783,19 +946,36 @@ def selftest(args, log):
     subprocess.check_call(["gcc", "-O1", "-Wall", "-DDCTEST_HOST", os.path.join(here, "dctest.c"), "-o", exe])
     args.step_seconds, args.full, args.seed = 0.3, False, 1
     args.dc_ip, args.udp_port, args.tcp_port, args.quick, args.port = "127.0.0.1", 17777, 17778, True, "x"
-    args.start_baud = 115200
+    args.start_baud, args.no_limits, args.force = 115200, False, False
+    picolink = PortInfo("selftest", 0xCAFE, 0x4DC5, "Dreamcast Coder's Cable + W5500 (RP2040)", "DIY", "")
+    checks = []
 
-    def session(noise):
-        ch = ProcChan(exe, noise)
+    def check(what, cond):
+        log.line("%s %s" % ("ok  " if cond else "FAIL", what))
+        checks.append(cond)
+
+    def session(noise, info=picolink, env=None):
+        ch = ProcChan(exe, noise, env)
         ch.baud = 115200
         c = Ctx(Link(ch), log, args, ch)
-        c.baud = 115200
+        c.baud, c.portinfo = 115200, info
         if not hello(c.link):
             raise RuntimeError("selftest: DC process does not answer")
         return c
 
-    log.line("selftest 1/2: clean link, everything must pass")
+    log.line("selftest 1/3: cable identification")
+    check("PicoLink by USB id", identify_cable(0xCAFE, 0x4DC5)["picolink"])
+    check("PicoLink by name", identify_cable(1, 2, "Dreamcast Coder's Cable + W5500 (RP2040)")["picolink"])
+    check("FTDI known, not PicoLink", identify_cable(0x0403, 0x6001)["name"].startswith("FTDI") and not identify_cable(0x0403, 0x6001)["picolink"])
+    check("CP210x limited to 1 Mbaud", identify_cable(0x10C4, 0xEA60)["max_baud"] == 1000000)
+    check("CH340 capped at the Dreamcast's 1562500", identify_cable(0x1A86, 0x55D4)["max_baud"] == 1562500)
+    check("unknown adapter gets a conservative limit", identify_cable(0x1234, 0x5678)["max_baud"] == 921600)
+
+    log.line("selftest 2/3: clean link, PicoLink with W5500: detection, then everything must pass")
     c = session(0)
+    hw = detect(c)
+    check("detect: W5500 found, switching planned", bool(hw and hw["w5500"] and hw["plan"]["switch"] and hw["plan"]["net"]))
+    check("detect: no SD card", bool(hw and not hw["sd"]))
     args.bauds = "115200,1500000"
     cmd_serial(c)
     args.baud, args.modes, args.length = 115200, "echo,sink,src", 128
@@ -806,7 +986,26 @@ def selftest(args, log):
     c.link.chan.close()
     clean = log.summary()
     n_clean = len(log.results)
-    log.line("selftest 2/2: 1 bit flip per 3000 bytes, the tool must report failures")
+
+    log.line("selftest 3/3: generic cables and missing hardware")
+    log.results.clear()
+    c = session(0, PortInfo("selftest", 0x0403, 0x6001, "FT232R USB UART", "FTDI", ""), {"DCTEST_SIM_HW": "nonet,sd"})
+    hw = detect(c)
+    check("FTDI cable without W5500: net and switch not planned", bool(hw and not hw["plan"]["net"] and not hw["plan"]["switch"]))
+    check("SD card answer seen", bool(hw and hw["sd"]))
+    cmd_net(c)
+    cmd_switch(c)
+    skipped = [r["name"] for r in log.results if r.get("expected")]
+    check("net and switch skipped, not failed", skipped.count("net") == 1 and skipped.count("switch") == 1)
+    c.link.chan.close()
+    c = session(0, PortInfo("selftest", 0x10C4, 0xEA60, "CP2102", "Silicon Labs", ""))
+    detect(c)
+    kept = usable_bauds(c, [115200, 921600, 1500000])
+    check("CP210x: 1500000 dropped, 921600 kept", kept == [115200, 921600])
+    c.link.chan.close()
+    n_info = sum(1 for r in log.results if r.get("expected"))
+
+    log.line("selftest: 1 bit flip per 3000 bytes, the tool must report failures")
     log.results.clear()
     c = session(3000)
     args.bauds = "115200"
@@ -817,7 +1016,7 @@ def selftest(args, log):
     c.link.chan.close()
     failed = [r for r in log.results if not r["ok"]]
     log.line("noisy run: %d of %d tests reported errors" % (len(failed), len(log.results)))
-    good = clean and n_clean > 20 and len(failed) > 0
+    good = clean and n_clean > 20 and len(failed) > 0 and all(checks)
     log.line("SELFTEST " + ("PASS" if good else "FAIL"))
     return good
 
@@ -831,6 +1030,10 @@ def main():
             p.add_argument("--port", help="serial port of the cable (e.g. /dev/cu.usbmodemXXXX or /dev/dccable)")
             p.add_argument("--start-baud", type=int, default=115200, help="rate dctest starts at on the Dreamcast")
             p.add_argument("--rtscts", action="store_true", help="hardware flow control on the host port")
+            p.add_argument("--no-detect", action="store_true", help="skip the hardware report")
+            p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
+            p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
+            p.add_argument("--no-limits", action="store_true", help="try baud rates above the adapter chip's known limit")
         p.add_argument("--log", help="log file (default dctest-<time>.log)")
         p.add_argument("--fw-log-cmd", help="command whose output joins the log, e.g. 'journalctl -fu dcsd -n0' "
                                             "or \"ssh pi@dreampi 'journalctl -fu dcsd -n0'\"")
@@ -838,10 +1041,15 @@ def main():
         p.add_argument("--step-seconds", type=float, default=6.0, help="time budget per baud / load step")
 
     sub.add_parser("ports")
-    for name, fn in (("hello", None), ("serial", cmd_serial), ("ramp", cmd_ramp), ("hop", cmd_hop),
-                     ("net", cmd_net), ("switch", cmd_switch), ("soak", cmd_soak)):
+    for name in ("hello", "detect", "auto", "serial", "ramp", "hop", "net", "switch", "soak"):
         p = sub.add_parser(name)
         common(p)
+        if name == "auto":
+            p.add_argument("--bauds", default="common")
+            p.add_argument("--full", action="store_true")
+            for a, d in (("--baud", 115200), ("--length", 512), ("--cycles", 20)):
+                p.add_argument(a, type=int, default=d)
+            p.add_argument("--modes", default="echo,sink,src")
         if name == "serial":
             p.add_argument("--bauds", default="common", help="common | uncommon | all | comma list")
             p.add_argument("--full", action="store_true", help="all patterns, more sizes, longer idle gaps")
@@ -855,7 +1063,7 @@ def main():
         if name == "soak":
             p.add_argument("--minutes", type=float, default=30)
             p.add_argument("--bauds", default="common")
-        if name in ("net", "switch"):
+        if name in ("net", "switch", "auto"):
             p.add_argument("--dc-ip", help="DC address (default: learn it from the DC's beacon)")
             p.add_argument("--udp-port", type=int, default=7777)
             p.add_argument("--tcp-port", type=int, default=7778)
@@ -877,21 +1085,26 @@ def main():
         if args.cmd == "selftest":
             ok = selftest(args, log)
         else:
-            if not args.port and not (args.cmd == "net" and args.dc_ip):
-                ap.error("--port is required")
-            chan = SerialChan(args.port, args.start_baud, args.rtscts) if args.port else None
+            direct = args.cmd == "net" and args.dc_ip and not args.port
+            info = None if direct else pick_port(args.port)
+            chan = None if direct else SerialChan(info.device, args.start_baud, args.rtscts)
+            args.port = None if direct else info.device
             c = Ctx(Link(chan) if chan else None, log, args, chan)
-            c.baud = args.start_baud
-            if chan:
+            c.baud, c.portinfo = args.start_baud, info
+            if chan and args.no_detect:
                 h = hello(c.link, tries=20, timeout=0.5)
                 if not h:
                     log.line("No answer from dctest on %s at %d baud. Start dctest.elf on the Dreamcast (and quit dc-tool)." % (args.port, args.start_baud))
                     return 2
                 log.line("DC: " + h)
-            if args.cmd != "hello":
-                {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net,
+            elif chan:
+                if not detect(c, args.reprobe):
+                    log.line("No answer from dctest on %s at %d baud. Start dctest.elf on the Dreamcast (and quit dc-tool)." % (args.port, args.start_baud))
+                    return 2
+            if args.cmd not in ("hello", "detect"):
+                {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
                  "switch": cmd_switch, "soak": cmd_soak}[args.cmd](c)
-            ok = log.summary() if args.cmd != "hello" else True
+            ok = log.summary() if args.cmd not in ("hello", "detect") else True
     except KeyboardInterrupt:
         log.line("interrupted")
         log.summary()

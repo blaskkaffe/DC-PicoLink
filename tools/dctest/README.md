@@ -15,6 +15,7 @@ Every run prints its `--seed`; pass it again to repeat the exact traffic.
 | `net` | W5500: UDP round-trip times, echo by frame size (1..1400), sink/source load ramp up and down (250 kbit/s..8 Mbit/s), TCP echo and 8 MB sink/source |
 | `switch` | N cycles of serial at baud X → W5500 session → back to serial, with echo checks on each side and the time the cable needs to come back |
 | `soak` | random mix of all of the above for `--minutes` |
+| `detect` / `auto` | hardware report / report + every test that fits |
 | `selftest` | the host tool against a host build of the DC program (no hardware); also checks that injected bit errors are reported |
 
 Data patterns: random, all 0x00, all 0xFF, 0x55/0xAA, ramp, walking bit, PPP-like (lots of
@@ -24,10 +25,43 @@ lost, corrupted, duplicated and skipped bytes are told apart; the DC reports its
 Rates above 115200 follow dcload's divider (`baud_model.h`): the log shows `dc_rate` when the
 Dreamcast really runs a different rate than requested (e.g. 500000 → 520833, 1600000 → 6103).
 
+## Hardware check first
+
+Like the W5500 tester, `dctest` looks at what is there before running anything. On start the
+Dreamcast program probes the SPI pins (W5500 version register, SD `CMD0`) and shows the result
+on screen; the host adds what it knows about the adapter. `python3 dctest.py detect` prints:
+
+    host adapter : /dev/cu.usbmodem1101  [DIY Dreamcast Coder's Cable + W5500 (RP2040), USB cafe:4dc5]
+    adapter type : DC-PicoLink  - the cable follows the Dreamcast's real rate
+    Dreamcast    : dctest 1 v0.8-3-gabc, serial link works at 115200 baud
+    W5500        : found (version register 04)
+    SD card      : no answer (CMD0 answer FF)
+    tests that fit: serial sweep up to 1562500 baud, ramp, hop, W5500 network, serial<->W5500 switching
+
+Every command does this first and only runs what fits (skipped groups show as `INFO`);
+`--force` runs W5500/switching anyway, `--no-limits` tries rates above the adapter's limit,
+`--no-detect` skips the report. `dctest.py auto` = detect + everything that fits.
+`--port` can be left out when only one USB serial adapter is plugged in.
+
+**Other coder's cables work too** (FTDI, CP210x, CH340/CH341/CH9102, PL2303, unknown ones): the
+serial tests need nothing from the firmware. They get the adapter chip's rate limit
+(unknown adapters: 921600; `--no-limits` overrides) and a note when the Dreamcast's real rate
+differs from the requested one by more than 2.5 % (e.g. `-b 500000` really is 520833 on the
+Dreamcast, which a plain FTDI cannot follow; the DC-PicoLink measures and follows it).
+W5500 tests need a W5500 found by the probe; serial↔W5500 switching needs the DC-PicoLink.
+
 ## Setup
 
+
     pip install pyserial                 # macOS / Linux / DreamPi
-    cd tools/dctest && make              # in a KOS environment (source environ.sh): dctest.elf
+
+`dctest.elf` is built by GitHub Actions (workflow `build`, job `dctest`; no KOS install needed):
+Actions tab → build → latest run → Artifacts → `dctest`, or the GitHub release of a `v*` tag.
+Run it manually on any branch with *Run workflow*. The job uses the toolchain image the KOS project
+publishes for its own CI (`pcercuei/dreamcast-toolchain:stable`) and a pinned KOS commit; the
+same script works locally: `tools/dctest/ci-build.sh <KallistiOS checkout> <out dir> <version>`
+inside that image, or `make` in your own KOS environment. The firmware UF2s and the DreamPi
+installer come from the same workflow (artifact `dc-picolink`).
 
 Load it with `dc-tool-ser -t <port> -b 115200 -x dctest.elf`, then **quit dc-tool** (the
 program takes over the serial port; only one program may hold the port). The screen shows
@@ -61,16 +95,13 @@ selftest runs both against each other.
 
 ## Status
 
-Selftest passes (87 tests clean; injected errors reported). The Dreamcast program **compiles
-cleanly against the headers of current KallistiOS master** (checked here), which exposed and
-fixed real API differences (`net_init(0)`, `scif_set_parameters` only stores the rate and
-`scif_init` applies it, and under dcload-serial KOS neither inits the SCIF nor allows the SPI
-driver, so `dctest` sets `dcload_type = DCLOAD_TYPE_NONE` before using the port). It has **not been
-linked or run**: this environment only has Debian's GCC 13 / unpatched newlib, which current KOS
-rejects at link time. Build `dctest.elf` in your own KOS environment (`make`). If the link or the
-first run shows a KOS difference, send me the output.
+Selftest passes (88 tests clean; injected errors reported; cable identification and the
+skip logic for missing hardware are checked too). The Dreamcast program compiles cleanly against
+the headers of current KallistiOS master (checked here). It has **not been linked or run**
+yet: the CI job builds it, but no `dctest.elf` has been tried on a console. If the first run shows a KOS
+difference, send me the log. Things I could not check without hardware: the W5500/SD probe
+bit-banging, and how the cable reacts to the probe at start.
 
-Known limits on the Dreamcast side, worth keeping in mind when reading results: KOS receives
-on the SCIF through a 1 KB interrupt ring buffer with no hardware flow control, so an
-overrun at very high rates under full duplex load can be the Dreamcast, not the cable
-(compare `lost` with `dc_crc_bad`/`dc_gap` and the rates below it).
+Known limit on the Dreamcast side: KOS receives on the SCIF through a 1 KB interrupt ring
+buffer with no hardware flow control, so an overrun at very high rates under full duplex load can
+be the Dreamcast, not the cable (compare `lost` with `dc_crc_bad`/`dc_gap`).

@@ -13,7 +13,7 @@ int scif_read(void);
 int scif_write_buffer(const uint8 *data, int len, int xmit);
 void scif_flush(void);
 int scif_init(void);
-void scif_shutdown(void);
+int scif_shutdown(void);
 void scif_set_irq_usage(int on);
 void scif_set_parameters(int baud, int fifo);
 typedef struct { uint8_t ip_addr[4]; } netif_t;
@@ -29,3 +29,7 @@ void *maple_dev_status(maple_device_t *d);
 extern int dcload_type;
 #define DCLOAD_TYPE_NONE (-1)
 int dbgio_dev_select(const char *name);
+void scif_spi_set_cs(int v);
+uint8_t scif_spi_rw_byte(uint8_t b);
+int scif_spi_init(void);
+int scif_spi_shutdown(void);
