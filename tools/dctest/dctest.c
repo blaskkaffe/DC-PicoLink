@@ -29,6 +29,7 @@
 
 /* ---------- hardware layer ---------- */
 static void hal_log(const char *fmt, ...);
+static uint32_t rxq_drop;               /* bytes lost because our own receive queue was full */
 #ifdef DCTEST_HOST
 #include <poll.h>
 #include <time.h>
@@ -68,13 +69,35 @@ KOS_INIT_FLAGS(INIT_DEFAULT);                      /* no INIT_NET: the W5500 sta
 static uint64_t hal_us(void) { return timer_us_gettime64(); }
 static void hal_sleep_ms(int ms) { thd_sleep(ms); }
 static void hal_yield(void) { thd_pass(); }
-static int hal_getc(void) { return scif_read(); }
+/* KOS's own receive ring holds 1 KB and drops the rest silently. Sending a frame blocks us for as long as
+   it takes on the wire (90 ms for 1 KB at 115200), and the host keeps sending (duplex echo), so the ring
+   would overflow at every baud rate. Our queue is drained between 16-byte chunks of every transmission. */
+#define RXQ 16384
+static uint8_t rxq[RXQ];
+static uint32_t rxq_w, rxq_r;
+static void rx_pump(void) {
+    int c;
+    while ((c = scif_read()) >= 0) {
+        if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = (uint8_t)c; else rxq_drop++;
+    }
+}
+static int hal_getc(void) {
+    if (rxq_r == rxq_w) rx_pump();
+    return rxq_r != rxq_w ? rxq[rxq_r++ & (RXQ - 1)] : -1;
+}
 /* xlat must be 0: with 1 KOS writes "\r" before every 0x0A byte, which corrupts binary frames */
 static int tx_fail;
-static void hal_write(const uint8_t *b, int n) { if (scif_write_buffer(b, n, 0) < 0) tx_fail++; }
+static void hal_write(const uint8_t *b, int n) {
+    while (n > 0) {
+        int k = n > 16 ? 16 : n;
+        if (scif_write_buffer(b, k, 0) < 0) tx_fail++;
+        b += k; n -= k;
+        rx_pump();
+    }
+}
 static void hal_flush(void) { scif_flush(); }
 /* scif_set_parameters only stores the rate; scif_init applies it (and clears the IRQ enables). */
-static void hal_serial_init(int baud) { scif_set_parameters(baud, 1); scif_init(); scif_set_irq_usage(1); }
+static void hal_serial_init(int baud) { scif_set_parameters(baud, 1); scif_init(); scif_set_irq_usage(1); rxq_r = rxq_w = 0; }
 static void hal_serial_baud(int baud) { hal_serial_init(baud); }
 static void hal_serial_shutdown(void) { scif_shutdown(); }
 static int hal_net_up(void) {
@@ -180,7 +203,7 @@ static void probe_reply(dt_io *io, uint32_t seq) {
 }
 
 static void probe_show(void) {
-    hal_log("hardware: W5500 %s | SD %s | serial: host linked",
+    hal_log("hardware: W5500 %s | SD %s",
             probe_w5 == 0x04 ? "found (version 4)" : "none", (probe_sd != 0xFF && !(probe_sd & 0x80)) ? "answers" : "none");
 }
 
@@ -389,6 +412,7 @@ int main(void) {
         if (c < 0) {
             check_revert();
             uint32_t now = hal_ms();
+            if (linked && now - last_rx > 3000) { linked = 0; beacons = 0; last_beacon = 0; }   /* host gone quiet (or restarted): announce again */
             if (!linked && now - last_beacon >= 300) {         /* nobody has talked to us yet at this rate: announce ourselves. */
                 last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
                 if (tx_fail && !(tx_fail & 7)) hal_log("serial: KOS refuses to transmit (SCIF disabled after a write timeout)");
@@ -399,12 +423,13 @@ int main(void) {
                 last_show = now; seen = st.frames_ok;
                 hal_log("%u frames, %u crc bad, %u skipped, %u rx / %u tx bytes%s", st.frames_ok,
                         ser_p.crc_bad, ser_p.resync, st.bytes_rx, st.bytes_tx, tx_fail ? "  SERIAL TX FAILED" : "");
+                if (rxq_drop) hal_log("DC receive queue overflowed: %u bytes lost on the Dreamcast", rxq_drop);
             }
             if (!(++ticks & 0xFFF) && hal_start_pressed()) break;
             continue;
         }
-        last_rx = hal_ms();                       /* cheap enough: one timer read per byte */
         st.bytes_rx++;
+        if (!(st.bytes_rx & 15)) last_rx = hal_ms();
         if (!(st.bytes_rx & 0xFF)) check_revert();
         dt_frame f;
         dt_io io = {ser_tx, -1, {0}};
@@ -418,6 +443,7 @@ int main(void) {
                 prev_baud = cur_baud; cur_baud = act_arg; hal_serial_baud(cur_baud);
                 revert_at = hal_ms() + REVERT_MS;
                 linked = 0; last_beacon = hal_ms();
+                ser_p.n = ser_p.pending = 0;
                 hal_log("baud: %d", cur_baud);
                 break;
             case ACT_PROBE:

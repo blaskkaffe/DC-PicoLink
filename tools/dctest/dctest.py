@@ -180,7 +180,10 @@ class SerialChan:
         self.baud = baud
 
     def set_baud(self, b):
-        self.s.baudrate = b
+        try:
+            self.s.baudrate = b
+        except (ValueError, OSError) as e:
+            raise RuntimeError("the OS refused %d baud on %s (%s); try --nominal-baud" % (b, self.s.port, e))
         self.baud = b
 
     def write(self, b):
@@ -338,10 +341,12 @@ class Link:
                 return None
             self.pump(min(left, 0.05))
 
-    def quiesce(self, quiet=0.15):
-        """Throw away whatever is still arriving (late replies of an earlier test)."""
+    def quiesce(self, quiet=0.15, limit=2.0):
+        """Throw away whatever is still arriving (late replies of an earlier test). Bounded: the Dreamcast's
+        announce frames can keep arriving every 300 ms."""
+        t_end = time.perf_counter() + limit
         end = time.perf_counter() + quiet
-        while time.perf_counter() < end:
+        while time.perf_counter() < min(end, t_end):
             if self.chan.read(0.02):
                 end = time.perf_counter() + quiet
         self.q.clear()
@@ -873,8 +878,9 @@ def cmd_net(c):
             return
     else:
         udp = UdpChan(c.args.udp_port, c.args.dc_ip)
-        if not c.args.dc_ip:
-            udp.discover(60)
+        if not c.args.dc_ip and not udp.discover(60):
+            c.log.result(dict(name="netstart", ok=False, note="no beacon from a Dreamcast in 60 s (use --dc-ip)"))
+            return
         ul = Link(udp)
     nc = Ctx(ul, c.log, c.args)
     run_net_suite(nc, c.args.quick)
@@ -1108,6 +1114,11 @@ def selftest(args, log):
     time.sleep(0.5)
     c.link.quiesce(0.2)
     check("no beacon once the host has talked to it", not [f for f in (c.link.q or [])])
+    time.sleep(3.6)                           # the host has been quiet: a later run of the tool must hear the Dreamcast again
+    again = []
+    for _ in range(8):
+        again += [f for f in c.link.parser.feed(c.link.chan.read(0.2)) if f.type == HELLO | REPLY]
+    check("Dreamcast announces itself again after 3 s of silence", len(again) >= 1)
     ul = net_up(c, args.udp_port)
     check("network mode up", ul is not None)
     if ul:
@@ -1271,7 +1282,7 @@ def main():
         log.line("interrupted")
         log.summary()
         ok = False
-    except RuntimeError as e:
+    except (RuntimeError, OSError) as e:
         log.line("STOPPED: %s" % e)
         log.summary()
         ok = False

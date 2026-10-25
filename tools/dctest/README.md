@@ -31,6 +31,9 @@ like dc-tool does, to see what such a setup would suffer.
 The host tool is silent at start: it listens (up to `--wait`, 20 s) and sends nothing until the Dreamcast
 program announces itself, so it can be started before the console is switched on. `--send-anyway` skips that.
 
+The Dreamcast announces itself again after 3 s without any host frame, so the tool can be started again
+against a program that is already running.
+
 Until a host frame arrives at a new rate, the Dreamcast sends a small announce frame every 300 ms; the
 DC-PicoLink only learns the Dreamcast's real rate from what the Dreamcast transmits. In network mode the
 Dreamcast returns to serial by itself after 30 s without a frame (or Start); 1200 baud is skipped on a
@@ -113,6 +116,7 @@ yet: the CI job builds it, but no `dctest.elf` has been tried on a console. If t
 difference, send me the log. Things I could not check without hardware: the W5500/SD probe
 bit-banging, and how the cable reacts to the probe at start.
 
-Known limit on the Dreamcast side: KOS receives on the SCIF through a 1 KB interrupt ring
-buffer with no hardware flow control, so an overrun at very high rates under full duplex load can
-be the Dreamcast, not the cable (compare `lost` with `dc_crc_bad`/`dc_gap`).
+Known limit on the Dreamcast side: KOS receives on the SCIF through a 1 KB interrupt ring with no hardware flow
+control. `dctest` drains it into its own 16 KB queue between 16-byte chunks of every transmission, and the
+Dreamcast screen reports "receive queue overflowed" if even that is not enough, so a lost byte can be told
+apart from a cable problem (compare `lost` with `dc_crc_bad`/`dc_gap`).
