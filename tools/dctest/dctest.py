@@ -616,7 +616,7 @@ def detect(c, reprobe=False):
         log.line("host adapter : %s  [%s %s, USB %s:%s]" % (info.device, info.manufacturer or "?", info.product or info.description or "?",
                  "%04x" % info.vid if info.vid is not None else "----", "%04x" % info.pid if info.pid is not None else "----"))
         log.line("adapter type : %s%s" % (cable["name"], "  - " + cable["note"] if cable["note"] else ""))
-    h = hello(c.link, tries=10, timeout=0.4)
+    h = hello(c.link, tries=30, timeout=0.4)     # ~12 s: the program spends a few seconds on its own start-up probe
     if not h:
         log.line("Dreamcast    : no answer over serial")
         log.result(dict(name="hardware", ok=False, note="no answer from dctest"))
@@ -1021,6 +1021,13 @@ def selftest(args, log):
     return good
 
 
+NO_ANSWER = ("No answer from dctest on %s at %d baud. Check, in this order:\n"
+             "  1. The TV shows the dctest banner (and a 'hardware:' line). Black screen = the program did not start.\n"
+             "  2. The cable is plugged into the Dreamcast's serial port and the console is on.\n"
+             "  3. Nothing else has the port open (dc-tool, screen, another terminal).\n"
+             "  4. Started with dc-tool-ser? Quit dc-tool first; dctest takes over the port.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1094,12 +1101,12 @@ def main():
             if chan and args.no_detect:
                 h = hello(c.link, tries=20, timeout=0.5)
                 if not h:
-                    log.line("No answer from dctest on %s at %d baud. Start dctest.elf on the Dreamcast (and quit dc-tool)." % (args.port, args.start_baud))
+                    log.line(NO_ANSWER % (args.port, args.start_baud))
                     return 2
                 log.line("DC: " + h)
             elif chan:
                 if not detect(c, args.reprobe):
-                    log.line("No answer from dctest on %s at %d baud. Start dctest.elf on the Dreamcast (and quit dc-tool)." % (args.port, args.start_baud))
+                    log.line(NO_ANSWER % (args.port, args.start_baud))
                     return 2
             if args.cmd not in ("hello", "detect"):
                 {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
