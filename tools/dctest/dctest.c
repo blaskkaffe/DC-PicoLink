@@ -46,6 +46,7 @@ static int hal_getc(void) {
     }
     return in_buf[in_pos++];
 }
+static int tx_fail;
 static void hal_write(const uint8_t *b, int n) { while (n > 0) { int k = write(1, b, n); if (k <= 0) exit(0); b += k; n -= k; } }
 static void hal_flush(void) {}
 static void hal_serial_init(int baud) { (void)baud; }
@@ -68,7 +69,9 @@ static uint64_t hal_us(void) { return timer_us_gettime64(); }
 static void hal_sleep_ms(int ms) { thd_sleep(ms); }
 static void hal_yield(void) { thd_pass(); }
 static int hal_getc(void) { return scif_read(); }
-static void hal_write(const uint8_t *b, int n) { scif_write_buffer(b, n, 1); }
+/* xlat must be 0: with 1 KOS writes "\r" before every 0x0A byte, which corrupts binary frames */
+static int tx_fail;
+static void hal_write(const uint8_t *b, int n) { if (scif_write_buffer(b, n, 0) < 0) tx_fail++; }
 static void hal_flush(void) { scif_flush(); }
 /* scif_set_parameters only stores the rate; scif_init applies it (and clears the IRQ enables). */
 static void hal_serial_init(int baud) { scif_set_parameters(baud, 1); scif_init(); scif_set_irq_usage(1); }
@@ -376,7 +379,7 @@ int main(void) {
     probe_show();
     hal_log("probe: W5500 version register %02X, SD CMD0 answer %02X", probe_w5, probe_sd);
     uint32_t last_rx = hal_ms(), last_show = 0, seen = 0, last_beacon = 0;
-    int ticks = 0, linked = 0;
+    int ticks = 0, linked = 0, beacons = 0;
     dt_io sio = {ser_tx, -1, {0}};
 #ifdef DCTEST_HOST
     if (getenv("DCTEST_NET_IDLE_MS")) net_idle_ms = atoi(getenv("DCTEST_NET_IDLE_MS"));
@@ -388,12 +391,14 @@ int main(void) {
             uint32_t now = hal_ms();
             if (!linked && now - last_beacon >= 300) {         /* nobody has talked to us yet at this rate: announce ourselves. */
                 last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
+                if (tx_fail && !(tx_fail & 7)) hal_log("serial: KOS refuses to transmit (SCIF disabled after a write timeout)");
+                if (++beacons == 1 || beacons % 20 == 0) hal_log("waiting for dctest.py at %d baud (%d announce frames sent)", cur_baud, beacons);
                 reply(&sio, DT_HELLO, 0, 0, (const uint8_t *)"dctest", 6);
             }
             if (now - last_rx > 300 && now - last_show > 2000 && st.frames_ok != seen) {   /* idle: show progress */
                 last_show = now; seen = st.frames_ok;
-                hal_log("%u frames, %u crc bad, %u skipped, %u rx / %u tx bytes", st.frames_ok,
-                        ser_p.crc_bad, ser_p.resync, st.bytes_rx, st.bytes_tx);
+                hal_log("%u frames, %u crc bad, %u skipped, %u rx / %u tx bytes%s", st.frames_ok,
+                        ser_p.crc_bad, ser_p.resync, st.bytes_rx, st.bytes_tx, tx_fail ? "  SERIAL TX FAILED" : "");
             }
             if (!(++ticks & 0xFFF) && hal_start_pressed()) break;
             continue;

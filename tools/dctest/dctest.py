@@ -8,6 +8,7 @@ shared as is. See README.md.
     dctest.py ports
     dctest.py detect [--port P]       (what adapter, what the Dreamcast has: W5500, SD)
     dctest.py auto   [--port P]       (detect, then run every test that fits)
+    dctest.py listen [--port P] [--send-hello]   (passive look at the line: which direction is dead?)
     dctest.py hello  --port P
     dctest.py serial --port P [--bauds common|uncommon|all|1200,...] [--step-seconds 6] [--full]
     dctest.py ramp   --port P --baud 115200
@@ -959,6 +960,47 @@ def cmd_auto(c):
         a.bauds, a.cycles = "115200,1500000", 6
         cmd_switch(c)
 
+
+def cmd_listen(args, log):
+    """Passive look at the line: does the Dreamcast program talk, and does it reach this computer?"""
+    info = pick_port(args.port)
+    ch = SerialChan(info.device, host_rate(args.start_baud, args.nominal_baud), args.rtscts)
+    cable = identify_cable(info.vid, info.pid, info.product, info.manufacturer)
+    log.line("listening on %s (%s) at %d baud for %.0f s%s" % (info.device, cable["name"], ch.baud, args.seconds,
+                                                              ", sending HELLO every 0.5 s" if args.send_hello else ""))
+    p, total, kinds, shown = Parser(), 0, collections.Counter(), 0
+    t0 = nxt = time.time()
+    first = None
+    while time.time() - t0 < args.seconds:
+        if args.send_hello and time.time() >= nxt:
+            ch.write(encode(HELLO, seq=0x7000 + int((time.time() - t0) * 2)))
+            nxt += 0.5
+        data = ch.read(0.1)
+        if not data:
+            continue
+        total += len(data)
+        first = first or time.time() - t0
+        if shown < 6:
+            shown += 1
+            log.line("rx %3d bytes: %s" % (len(data), data[:32].hex(" ")))
+        for f in p.feed(data):
+            kinds["HELLO announce" if f.type == HELLO | REPLY and f.seq == 0 else "type 0x%02x" % f.type] += 1
+    ch.close()
+    log.line("received %d bytes, %d valid frames %s, %d bad-CRC, %d skipped bytes" % (total, sum(kinds.values()), dict(kinds), p.crc_bad, p.resync))
+    if kinds:
+        log.line("=> The Dreamcast program is running and its output reaches this computer (first frame after %.1f s)." % first)
+        if args.send_hello and not kinds.get("type 0x81"):
+            log.line("   But it never answered our HELLO: the computer -> Dreamcast direction is the problem (cable TX, wrong rate on that side).")
+        else:
+            log.line("   If 'detect' still gets no answer, the computer -> Dreamcast direction is the problem.")
+        return True
+    if total:
+        log.line("=> Bytes arrive but they are not dctest frames: wrong rate (the cable has not matched the Dreamcast), or another program is talking.")
+    else:
+        log.line("=> Nothing arrives. dctest is not running (black screen?), or the cable does not see the Dreamcast as up, or the")
+        log.line("   Dreamcast's output is not reaching USB. Check the cable's own log on the Pi: journalctl -fu dcsd")
+    return False
+
 # ---------------------------------------------------------------- selftest (against the host build of dctest.c)
 class _PL:
     """Minimal context: a detected DC-PicoLink, for usable_bauds."""
@@ -1044,6 +1086,16 @@ def selftest(args, log):
     c.link.chan.close()
     n_info = sum(1 for r in log.results if r.get("expected"))
 
+    log.line("selftest: the host stays silent until the Dreamcast announces itself")
+    ch = ProcChan(exe)
+    sent = []
+    real_write = ch.write
+    ch.write = lambda b: (sent.append(len(b)), real_write(b))
+    quiet = Ctx(Link(ch), log, args, ch)
+    check("wait_for_dc hears the announce frames", wait_for_dc(quiet, 5))
+    check("...without transmitting anything", not sent)
+    ch.close()
+
     log.line("selftest: beacon, and the Dreamcast leaving network mode by itself")
     ch = ProcChan(exe)
     raw, end = b"", time.time() + 1.5
@@ -1086,7 +1138,37 @@ NO_ANSWER = ("No answer from dctest on %s at %d baud. Check, in this order:\n"
              "  1. The TV shows the dctest banner (and a 'hardware:' line). Black screen = the program did not start.\n"
              "  2. The cable is plugged into the Dreamcast's serial port and the console is on.\n"
              "  3. Nothing else has the port open (dc-tool, screen, another terminal).\n"
-             "  4. Started with dc-tool-ser? Quit dc-tool first; dctest takes over the port.")
+             "  4. Started with dc-tool-ser? Quit dc-tool first; dctest takes over the port.\n"
+             "  Then run:  python3 dctest.py listen --port %s --send-hello   (shows which direction is dead)")
+
+
+
+NO_BEACON = ("Heard nothing from the Dreamcast in %.0f s. Nothing was transmitted to it.\n"
+             "  - Is dctest running? The TV shows its banner. (Builds before the announce change are silent: use --send-anyway.)\n"
+             "  - Run:  python3 dctest.py listen --port %s    for a passive look at the line.")
+
+
+def wait_for_dc(c, seconds):
+    """Listen without transmitting a single byte until the Dreamcast program announces itself. The program
+    sends an announce frame every 300 ms while nobody talks to it, so this is safe to start before the
+    console is switched on (nothing reaches the Dreamcast's serial port while it boots)."""
+    c.log.line("listening for the Dreamcast, up to %.0f s; nothing is transmitted until it announces itself" % seconds)
+    end, noted, raw = time.time() + seconds, False, 0
+    while time.time() < end:
+        got = c.link.chan.read(0.2)
+        if not got:
+            continue
+        raw += len(got)
+        c.link.q.extend(c.link.parser.feed(got))
+        if c.link.q:
+            c.link.q.clear()                       # (not quiesce(): the announce frames never stop until we speak)
+            c.link.parser.buf.clear()
+            c.log.line("the Dreamcast program is announcing itself")
+            return True
+        if not noted and raw > 16:
+            noted = True
+            c.log.line("bytes arrive but they are not dctest frames yet (wrong rate, or another program is talking)")
+    return False
 
 
 def main():
@@ -1099,6 +1181,8 @@ def main():
             p.add_argument("--start-baud", type=int, default=115200, help="rate dctest starts at on the Dreamcast")
             p.add_argument("--rtscts", action="store_true", help="hardware flow control on the host port")
             p.add_argument("--no-detect", action="store_true", help="skip the hardware report")
+            p.add_argument("--wait", type=float, default=20, help="seconds to listen for the Dreamcast before giving up (nothing is sent meanwhile)")
+            p.add_argument("--send-anyway", action="store_true", help="do not wait for the Dreamcast's announce frames; send HELLO at once")
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
             p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
             p.add_argument("--no-limits", action="store_true", help="try baud rates above the adapter chip's known limit")
@@ -1111,9 +1195,12 @@ def main():
         p.add_argument("--step-seconds", type=float, default=6.0, help="time budget per baud / load step")
 
     sub.add_parser("ports")
-    for name in ("hello", "detect", "auto", "serial", "ramp", "hop", "net", "switch", "soak"):
+    for name in ("hello", "detect", "listen", "auto", "serial", "ramp", "hop", "net", "switch", "soak"):
         p = sub.add_parser(name)
         common(p)
+        if name == "listen":
+            p.add_argument("--seconds", type=float, default=10)
+            p.add_argument("--send-hello", action="store_true", help="also send a HELLO every 0.5 s (tests both directions)")
         if name == "auto":
             p.add_argument("--bauds", default="common")
             p.add_argument("--full", action="store_true")
@@ -1154,6 +1241,8 @@ def main():
     try:
         if args.cmd == "selftest":
             ok = selftest(args, log)
+        elif args.cmd == "listen":
+            ok = cmd_listen(args, log)
         else:
             direct = args.cmd == "net" and args.dc_ip and not args.port
             info = None if direct else pick_port(args.port)
@@ -1161,15 +1250,18 @@ def main():
             args.port = None if direct else info.device
             c = Ctx(Link(chan) if chan else None, log, args, chan)
             c.baud, c.portinfo = args.start_baud, info
+            if chan and not args.send_anyway and not wait_for_dc(c, args.wait):
+                log.line(NO_BEACON % (args.wait, args.port))
+                return 2
             if chan and args.no_detect:
                 h = hello(c.link, tries=20, timeout=0.5)
                 if not h:
-                    log.line(NO_ANSWER % (args.port, args.start_baud))
+                    log.line(NO_ANSWER % (args.port, args.start_baud, args.port))
                     return 2
                 log.line("DC: " + h)
             elif chan:
                 if not detect(c, args.reprobe):
-                    log.line(NO_ANSWER % (args.port, args.start_baud))
+                    log.line(NO_ANSWER % (args.port, args.start_baud, args.port))
                     return 2
             if args.cmd not in ("hello", "detect"):
                 {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,

@@ -28,6 +28,9 @@ differs from the request, and **the host port is set to the Dreamcast's real rat
 one), so cable and Dreamcast agree from the first byte. `--nominal-baud` sets the requested rate instead,
 like dc-tool does, to see what such a setup would suffer.
 
+The host tool is silent at start: it listens (up to `--wait`, 20 s) and sends nothing until the Dreamcast
+program announces itself, so it can be started before the console is switched on. `--send-anyway` skips that.
+
 Until a host frame arrives at a new rate, the Dreamcast sends a small announce frame every 300 ms; the
 DC-PicoLink only learns the Dreamcast's real rate from what the Dreamcast transmits. In network mode the
 Dreamcast returns to serial by itself after 30 s without a frame (or Start); 1200 baud is skipped on a
