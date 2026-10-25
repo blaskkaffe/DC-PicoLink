@@ -30,6 +30,57 @@
 /* ---------- hardware layer ---------- */
 static void hal_log(const char *fmt, ...);
 static uint32_t rxq_drop;               /* bytes lost because our own receive queue was full */
+static char ui_net[40];                 /* "" = network off, else the Dreamcast's address */
+static int linked, beacons;             /* host state for the screen */
+
+/* ---------- screen model ----------
+   A fixed 48 x 18 text grid (inside the TV's safe area with the 12 x 24 BIOS font). Rows are rewritten in
+   place, long text is cut (never wrapped), only changed rows are redrawn. Host-testable: --dump-screen. */
+#define SCR_COLS 48
+#define SCR_ROWS 18
+#define LOG_FIRST 11
+#define LOG_LAST 16
+#define COL_TITLE 0x07FF       /* RGB565 */
+#define COL_TEXT  0xFFFF
+#define COL_DIM   0x7BEF
+#define COL_GOOD  0x07E0
+#define COL_WARN  0xFFE0
+#define COL_BAD   0xF800
+static char scr[SCR_ROWS][SCR_COLS + 1];
+static uint16_t scr_col[SCR_ROWS];
+static uint8_t scr_dirty[SCR_ROWS];
+static void scr_draw_row(int row);       /* platform */
+static void hal_idle_pump(void);         /* platform: keep draining the serial port while drawing */
+static void ui_update(void);             /* status rows, defined below */
+
+static void scr_set(int row, uint16_t col, const char *fmt, ...) {
+    char t[200], o[SCR_COLS + 1];
+    va_list a;
+    va_start(a, fmt); vsnprintf(t, sizeof t, fmt, a); va_end(a);
+    int n = (int)strlen(t);
+    if (n > SCR_COLS) n = SCR_COLS;                       /* cut, never wrap */
+    for (int i = 0; i < n; i++) o[i] = (t[i] >= 0x20 && t[i] < 0x7F) ? t[i] : '?';
+    memset(o + n, ' ', SCR_COLS - n);
+    o[SCR_COLS] = 0;
+    if (row < 0 || row >= SCR_ROWS) return;
+    if (memcmp(scr[row], o, SCR_COLS + 1) || scr_col[row] != col) {
+        memcpy(scr[row], o, SCR_COLS + 1);
+        scr_col[row] = col;
+        scr_dirty[row] = 1;
+    }
+}
+static void scr_log(const char *msg) {                    /* event log: newest at the bottom, older lines scroll up */
+    for (int r = LOG_FIRST; r < LOG_LAST; r++) {
+        char t[SCR_COLS + 1];
+        memcpy(t, scr[r + 1], SCR_COLS + 1);
+        scr_set(r, scr_col[r + 1] == COL_TEXT ? COL_DIM : scr_col[r + 1], "%s", t);
+    }
+    scr_set(LOG_LAST, COL_TEXT, "%s", msg);
+}
+static void scr_render(void) {
+    for (int r = 0; r < SCR_ROWS; r++)
+        if (scr_dirty[r]) { scr_dirty[r] = 0; scr_draw_row(r); hal_idle_pump(); }
+}
 #ifdef DCTEST_HOST
 #include <poll.h>
 #include <time.h>
@@ -56,7 +107,15 @@ static void hal_serial_shutdown(void) {}
 static int hal_net_up(void) { return 0; }
 static void hal_net_down(void) {}
 static int hal_start_pressed(void) { return 0; }
-static void hal_log(const char *fmt, ...) { va_list a; va_start(a, fmt); vfprintf(stderr, fmt, a); va_end(a); fputc('\n', stderr); }
+static void hal_log(const char *fmt, ...) {
+    char t[200]; va_list a;
+    va_start(a, fmt); vsnprintf(t, sizeof t, fmt, a); va_end(a);
+    fprintf(stderr, "%s\n", t);
+    scr_log(t);
+}
+static void scr_draw_row(int row) { (void)row; }
+static void hal_idle_pump(void) {}
+static void scr_dump(void) { for (int r = 0; r < SCR_ROWS; r++) printf("%s|\n", scr[r]); }
 /* Selftest: DCTEST_SIM_HW="nonet" (no W5500), "sd" (an SD card answers) */
 static void hal_probe(uint8_t *w5, uint8_t *sd) {
     const char *e = getenv("DCTEST_SIM_HW");
@@ -105,8 +164,10 @@ static int hal_net_up(void) {
     if (!net_default_dev) return -1;
     for (int i = 0; i < 300 && !net_default_dev->ip_addr[0]; i++) thd_sleep(100);   /* DHCP, up to 30 s */
     if (!net_default_dev->ip_addr[0]) return -1;
-    hal_log("net: %d.%d.%d.%d", net_default_dev->ip_addr[0], net_default_dev->ip_addr[1],
-            net_default_dev->ip_addr[2], net_default_dev->ip_addr[3]);
+    snprintf(ui_net, sizeof ui_net, "%d.%d.%d.%d", net_default_dev->ip_addr[0], net_default_dev->ip_addr[1],
+             net_default_dev->ip_addr[2], net_default_dev->ip_addr[3]);
+    hal_log("net up %s", ui_net);
+    ui_update();
     return 0;
 }
 static void hal_net_down(void) { net_shutdown(); }
@@ -115,7 +176,19 @@ static int hal_start_pressed(void) {
     cont_state_t *s = d ? (cont_state_t *)maple_dev_status(d) : NULL;
     return s && (s->buttons & CONT_START);
 }
-static void hal_log(const char *fmt, ...) { va_list a; va_start(a, fmt); vprintf(fmt, a); va_end(a); putchar('\n'); }
+static void hal_log(const char *fmt, ...) {
+    char t[200]; va_list a;
+    va_start(a, fmt); vsnprintf(t, sizeof t, fmt, a); va_end(a);
+    scr_log(t);
+    scr_render();                                   /* events show at once, also while the main loop is not running */
+}
+#define SCR_X 32            /* 48 columns x 12 px = 576 px; 32 px margins keep it inside a TV's visible area */
+#define SCR_Y 24            /* 18 rows x 24 px = 432 px */
+static void scr_draw_row(int row) {
+    int stride = vid_mode ? vid_mode->width : 640;
+    bfont_draw_str_ex(vram_s + (SCR_Y + row * BFONT_HEIGHT) * stride + SCR_X, stride, scr_col[row], 0x0000, 16, true, scr[row]);
+}
+static void hal_idle_pump(void) { rx_pump(); }
 
 /* What answers on the serial port's SPI pins, the way the W5500 tester checks it. 0xFF = nothing.
    The cable (or adapter) sees this as a short SPI session and goes back to serial afterwards. */
@@ -203,8 +276,34 @@ static void probe_reply(dt_io *io, uint32_t seq) {
 }
 
 static void probe_show(void) {
-    hal_log("hardware: W5500 %s | SD %s",
-            probe_w5 == 0x04 ? "found (version 4)" : "none", (probe_sd != 0xFF && !(probe_sd & 0x80)) ? "answers" : "none");
+    scr_set(7, probe_w5 == 0x04 ? COL_GOOD : COL_DIM, "W5500   %s", probe_w5 == 0x04 ? "found, version register 04" : "none (read FF)");
+    int sd = probe_sd != 0xFF && !(probe_sd & 0x80);
+    scr_set(8, sd ? COL_GOOD : COL_DIM, "SD      %s", sd ? "answers CMD0" : "no answer");
+}
+
+/* the status rows; cheap, called a few times a second */
+static void ui_update(void) {
+    scr_set(0, COL_TITLE, "dctest %s  %s", DT_VERSION, DT_BUILD);
+    scr_set(1, COL_DIM, "------------------------------------------------");
+    double real = 0;
+    { int b = cur_baud; int n; if (b > 9600) { n = (50000000 / (32 * b) - 1) & 255; real = 50000000.0 / (32 * (n + 1)); }
+      else if (b > 4800) { n = (50000000 / (128 * b) - 1) & 255; real = 50000000.0 / (128 * (n + 1)); }
+      else if (b > 600) { n = (50000000 / (512 * b) - 1) & 255; real = 50000000.0 / (512 * (n + 1)); }
+      else { n = (50000000 / (2048 * b) - 1) & 255; real = 50000000.0 / (2048 * (n + 1)); } }
+    scr_set(2, COL_TEXT, "Serial  %d baud (DC runs %.0f)", cur_baud, real);
+    if (ui_net[0]) scr_set(3, COL_DIM, "Host    network mode");
+    else if (linked) scr_set(3, COL_GOOD, "Host    linked");
+    else scr_set(3, COL_WARN, "Host    waiting for dctest.py (%d)", beacons);
+    scr_set(4, COL_TEXT, "Frames  ok %u  bad %u  skip %u", st.frames_ok, ser_p.crc_bad + net_p.crc_bad + tcp_p.crc_bad,
+            ser_p.resync + net_p.resync + tcp_p.resync);
+    scr_set(5, COL_TEXT, "Bytes   rx %u  tx %u", st.bytes_rx, st.bytes_tx);
+    if (rxq_drop || tx_fail) scr_set(6, COL_BAD, "Errors  rx queue lost %u  tx failed %d", rxq_drop, tx_fail);
+    else scr_set(6, COL_GOOD, "Errors  none");
+    if (ui_net[0]) scr_set(9, COL_GOOD, "Network %s  UDP/TCP", ui_net);
+    else scr_set(9, COL_DIM, "Network off");
+    scr_set(10, COL_DIM, "------------------------------------------------");
+    scr_set(SCR_ROWS - 1, COL_DIM, "Start button = quit");
+    scr_render();
 }
 
 /* ---------- frame handler (serial, UDP and TCP share it) ---------- */
@@ -336,7 +435,7 @@ static void tcp_run(int port) {
 
 static int net_run(int port) {
     hal_serial_shutdown();
-    if (hal_net_up()) { hal_log("net: no link / no address"); hal_net_down(); hal_serial_init(cur_baud); return -1; }
+    if (hal_net_up()) { hal_log("net: no link or no DHCP address"); hal_net_down(); hal_serial_init(cur_baud); return -1; }
     int u = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in a = {0};
     a.sin_family = AF_INET; a.sin_port = htons(port); a.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -348,15 +447,16 @@ static int net_run(int port) {
     hal_log("net: UDP %d ready", port);
     uint8_t buf[DT_MAXFRAME];
     set_nonblock(u);
-    uint32_t last = hal_ms();
+    uint32_t last = hal_ms(), last_ui = 0;
     int spin = 0;
     for (int stop = 0; !stop;) {
         socklen_t sl = sizeof io.peer;
         int n = recvfrom(u, buf, sizeof buf, 0, (struct sockaddr *)&io.peer, &sl);
         if (n <= 0) {
             /* nothing waiting: never block here, or a vanished host leaves the DC (and the cable) stuck in SPI mode */
-            if (hal_ms() - last > (uint32_t)net_idle_ms) { hal_log("net: no frame for %d s, back to serial", net_idle_ms / 1000); break; }
+            if (hal_ms() - last > (uint32_t)net_idle_ms) { hal_log("net: idle %d s, back to serial", net_idle_ms / 1000); break; }
             if (!(++spin & 63) && hal_start_pressed()) break;
+            if (hal_ms() - last_ui > 500) { last_ui = hal_ms(); ui_update(); }
             if (hal_ms() - last > 200) hal_sleep_ms(1); else hal_yield();
             continue;
         }
@@ -373,6 +473,7 @@ static int net_run(int port) {
     }
     close(u);
     hal_net_down();
+    ui_net[0] = 0;
     hal_serial_init(cur_baud);                   /* the cable returns to serial once the DC releases the SPI pins */
     return 0;
 }
@@ -381,28 +482,40 @@ static int net_run(int port) {
 static void check_revert(void) {
     if (revert_at && (int32_t)(hal_ms() - revert_at) >= 0) {
         cur_baud = prev_baud; hal_serial_baud(cur_baud); revert_at = 0; st.reverts++;
-        hal_log("baud: no frame after the switch, back to %d", cur_baud);
+        hal_log("no host at new baud, back to %d", cur_baud);
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    (void)argc; (void)argv;
 #ifndef DCTEST_HOST
     /* Loaded by dc-tool-ser, KOS leaves the SCIF to dcload: scif_init does nothing and the SPI
        (W5500) driver refuses to start. We drive the port ourselves. */
     dcload_at_start = dcload_type;
     dcload_type = DCLOAD_TYPE_NONE;
-    dbgio_dev_select("fb");
+    dbgio_disable();                        /* KOS's own messages would scribble over our screen */
+    bfont_set_encoding(BFONT_CODE_ISO8859_1);
+    vid_empty();
+    for (int r = 0; r < SCR_ROWS; r++) scr_dirty[r] = 1;   /* first ui_update draws every row */
+#else
+    if (argc > 1 && !strcmp(argv[1], "--dump-screen")) {   /* layout test: worst-case contents, no hardware */
+        probe_w5 = 4; probe_sd = 1; st.frames_ok = 4000000000u; st.bytes_rx = st.bytes_tx = 4000000000u;
+        ser_p.crc_bad = 123456789; ser_p.resync = 987654321; rxq_drop = 99999; tx_fail = 12;
+        snprintf(ui_net, sizeof ui_net, "255.255.255.255"); cur_baud = 1500000;
+        for (int i = 0; i < 9; i++) hal_log("event %d: a very long message that must be cut to the screen width, not wrapped", i);
+        probe_show(); ui_update(); scr_dump();
+        return 0;
+    }
 #endif
     t_start = hal_ms();
-    hal_log("dctest " DT_VERSION " " DT_BUILD " - serial %d, Start quits", cur_baud);
     hal_serial_init(cur_baud);
     hal_probe(&probe_w5, &probe_sd);                 /* what is on the SPI pins, like the W5500 tester */
     hal_serial_init(cur_baud);
     hal_sleep_ms(500);
     probe_show();
-    hal_log("probe: W5500 version register %02X, SD CMD0 answer %02X", probe_w5, probe_sd);
-    uint32_t last_rx = hal_ms(), last_show = 0, seen = 0, last_beacon = 0;
-    int ticks = 0, linked = 0, beacons = 0;
+    ui_update();
+    uint32_t last_rx = hal_ms(), last_show = 0, last_beacon = 0;
+    int ticks = 0;
     dt_io sio = {ser_tx, -1, {0}};
 #ifdef DCTEST_HOST
     if (getenv("DCTEST_NET_IDLE_MS")) net_idle_ms = atoi(getenv("DCTEST_NET_IDLE_MS"));
@@ -415,22 +528,18 @@ int main(void) {
             if (linked && now - last_rx > 3000) { linked = 0; beacons = 0; last_beacon = 0; }   /* host gone quiet (or restarted): announce again */
             if (!linked && now - last_beacon >= 300) {         /* nobody has talked to us yet at this rate: announce ourselves. */
                 last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
-                if (tx_fail && !(tx_fail & 7)) hal_log("serial: KOS refuses to transmit (SCIF disabled after a write timeout)");
-                if (++beacons == 1 || beacons % 20 == 0) hal_log("waiting for dctest.py at %d baud (%d announce frames sent)", cur_baud, beacons);
+                if (tx_fail && !(tx_fail & 7)) hal_log("TX failed: KOS disabled the SCIF");
+                beacons++;
                 reply(&sio, DT_HELLO, 0, 0, (const uint8_t *)"dctest", 6);
             }
-            if (now - last_rx > 300 && now - last_show > 2000 && st.frames_ok != seen) {   /* idle: show progress */
-                last_show = now; seen = st.frames_ok;
-                hal_log("%u frames, %u crc bad, %u skipped, %u rx / %u tx bytes%s", st.frames_ok,
-                        ser_p.crc_bad, ser_p.resync, st.bytes_rx, st.bytes_tx, tx_fail ? "  SERIAL TX FAILED" : "");
-                if (rxq_drop) hal_log("DC receive queue overflowed: %u bytes lost on the Dreamcast", rxq_drop);
-            }
+            if (now - last_show > 250) { last_show = now; ui_update(); }
             if (!(++ticks & 0xFFF) && hal_start_pressed()) break;
             continue;
         }
         st.bytes_rx++;
         if (!(st.bytes_rx & 15)) last_rx = hal_ms();
         if (!(st.bytes_rx & 0xFF)) check_revert();
+        if (!(st.bytes_rx & 0xFFFF)) ui_update();            /* every 64 KB even if the line never goes idle */
         dt_frame f;
         dt_io io = {ser_tx, -1, {0}};
         int r = dt_feed(&ser_p, c, &f);
@@ -444,7 +553,7 @@ int main(void) {
                 revert_at = hal_ms() + REVERT_MS;
                 linked = 0; last_beacon = hal_ms();
                 ser_p.n = ser_p.pending = 0;
-                hal_log("baud: %d", cur_baud);
+                hal_log("baud -> %d", cur_baud);
                 break;
             case ACT_PROBE:
                 hal_flush(); hal_sleep_ms(30);

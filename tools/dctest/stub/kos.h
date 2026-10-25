@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #define KOS_INIT_FLAGS(x)
 #define INIT_DEFAULT 0
 typedef uint8_t uint8;
@@ -34,3 +35,13 @@ void scif_spi_set_cs(int v);
 uint8_t scif_spi_rw_byte(uint8_t b);
 int scif_spi_init(void);
 int scif_spi_shutdown(void);
+
+typedef struct { int width, height; } vid_mode_t;
+extern vid_mode_t *vid_mode;
+extern uint16_t *vram_s;
+void vid_empty(void);
+void dbgio_disable(void);
+#define BFONT_HEIGHT 24
+#define BFONT_CODE_ISO8859_1 0
+void bfont_set_encoding(int enc);
+void bfont_draw_str_ex(void *b, uint32_t width, uint32_t fg, uint32_t bg, uint8_t bpp, _Bool opaque, const char *str);

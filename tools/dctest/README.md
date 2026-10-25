@@ -28,6 +28,9 @@ differs from the request, and **the host port is set to the Dreamcast's real rat
 one), so cable and Dreamcast agree from the first byte. `--nominal-baud` sets the requested rate instead,
 like dc-tool does, to see what such a setup would suffer.
 
+The Dreamcast screen is a fixed 48 x 18 status panel (serial rate, host link, frame/byte counters, errors, W5500 / SD
+probe, network address) with a six-line event log at the bottom; rows are rewritten in place, nothing wraps or scrolls.
+
 The host tool is silent at start: it listens (up to `--wait`, 20 s) and sends nothing until the Dreamcast
 program announces itself, so it can be started before the console is switched on. `--send-anyway` skips that.
 

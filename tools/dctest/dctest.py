@@ -1047,6 +1047,16 @@ def selftest(args, log):
     check("CH340 capped at the Dreamcast's 1562500", identify_cable(0x1A86, 0x55D4)["max_baud"] == 1562500)
     check("unknown adapter gets a conservative limit", identify_cable(0x1234, 0x5678)["max_baud"] == 921600)
 
+    log.line("selftest 1a/3: Dreamcast screen layout (worst-case contents)")
+    out = subprocess.run([exe, "--dump-screen"], capture_output=True, text=True, timeout=10).stdout.splitlines()
+    rows = [r[:-1] for r in out if r.endswith("|")]
+    check("screen is 18 rows", len(rows) == 18)
+    check("every row is exactly 48 columns (nothing wraps)", all(len(r) == 48 for r in rows))
+    check("only printable ASCII", all(32 <= ord(ch) < 127 for r in rows for ch in r))
+    text = "\n".join(rows)
+    check("status rows present", all(k in text for k in ("Serial", "Host", "Frames", "Bytes", "Errors", "W5500", "SD", "Network", "Start button")))
+    check("event log keeps the newest messages", "event 8" in text and "event 0" not in text)
+
     log.line("selftest 1b/3: Dreamcast baud model (KOS scif_init) and the host rate")
     check("KOS: 115200 really is 120192", abs(dc_effective(115200) - 120192.3) < 1)
     check("KOS: 9600 -> 9766, 38400 -> 39062", round(dc_effective(9600)) == 9766 and round(dc_effective(38400)) == 39062)
