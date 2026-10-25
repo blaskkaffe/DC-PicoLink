@@ -96,10 +96,27 @@ class Parser:
 
 
 def dc_effective(req):
-    """The rate the DC really runs for a baud request (dcload / KOS divider, see baud_model.h)."""
-    if req > 115200:
-        return 1562500.0 / (((1562500 // req) - 1) % 256 + 1)
-    return float(req)
+    """The rate the Dreamcast really runs for a baud request in KOS's scif_init (dctest uses it):
+    SCBRR = 50 MHz / (32 * bps) - 1 in integer maths, with slower prescalers at 9600 and below.
+    115200 really is 120192 (+4.3 %); above 1562500 the 8-bit divider wraps (see baud_model.h)."""
+    if req > 9600:
+        n = (50000000 // (32 * req) - 1) & 0xFF
+        return 50000000.0 / (32 * (n + 1))
+    if req > 4800:
+        n = (50000000 // (128 * req) - 1) & 0xFF
+        return 50000000.0 / (128 * (n + 1))
+    if req > 600:
+        n = (50000000 // (512 * req) - 1) & 0xFF
+        return 50000000.0 / (512 * (n + 1))
+    n = (50000000 // (2048 * req) - 1) & 0xFF
+    return 50000000.0 / (2048 * (n + 1))
+
+
+def host_rate(req, nominal=False):
+    """Rate to set on the host's serial port. Default: the Dreamcast's real rate (rounded down, which
+    the cable's own divider model maps back to the same rate), so cable and Dreamcast agree from the
+    first byte. nominal=True sets the requested rate, like dc-tool does."""
+    return int(req) if nominal else int(dc_effective(req))
 
 
 # ---------------------------------------------------------------- logging
@@ -519,7 +536,7 @@ def set_baud(c, new):
         c.log.line("baud %d: DC did not acknowledge the switch" % new)
         return False
     time.sleep(0.15)
-    c.tr.set_baud(new)
+    c.tr.set_baud(host_rate(new, getattr(c.args, "nominal_baud", False)))
     link.chan.drain() if hasattr(link.chan, "drain") else None
     link.q.clear(); link.parser.buf.clear()
     c.baud = new
@@ -527,7 +544,7 @@ def set_baud(c, new):
     if h:
         return True
     c.log.line("baud %d: no answer; DC reverts to %d in 5 s" % (new, old))
-    c.tr.set_baud(old)
+    c.tr.set_baud(host_rate(old, getattr(c.args, "nominal_baud", False)))
     c.baud = old
     time.sleep(6.0)
     link.quiesce(0.3)
@@ -653,7 +670,9 @@ def usable_bauds(c, bauds):
     lim = hw["plan"]["max_baud"] if hw and not c.args.no_limits else None
     keep = []
     for b in bauds:
-        if lim and b > lim:
+        if b == 1200 and hw and hw["cable"]["picolink"]:
+            c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: 1200 baud makes a Pico reboot into its bootloader"))
+        elif lim and b > lim:
             c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: adapter limit %d baud" % lim))
         else:
             keep.append(b)
@@ -705,7 +724,7 @@ def cmd_serial(c):
     c.log.line("baud list: %s" % bauds)
     for b in bauds:
         hw = getattr(c, "hw", None)
-        note = rate_note(b) if hw and not hw["cable"]["follows_dc"] else ""
+        note = rate_note(b) if hw and not hw["cable"]["follows_dc"] and getattr(c.args, "nominal_baud", False) else ""
         c.log.line("---- %d baud (DC runs %.0f)%s%s" % (b, dc_effective(b), "  [divider wraps: expected 6103]" if b > 1562500 else "",
                                                         "  [" + note + ": errors expected, this adapter does not follow the DC]" if note else ""))
         try:
@@ -767,15 +786,16 @@ def run_net_suite(c, quick):
     c.log.line("DC: " + h)
     c.tr = None
     rtts = []
-    for i in range(100 if quick else 300):                     # latency: one frame at a time
+    sent = 100 if quick else 300
+    for i in range(sent):                                      # latency: one frame at a time
         t = time.perf_counter()
         f = link.request(ECHO, os.urandom(64), timeout=0.5)
         if f:
             rtts.append((time.perf_counter() - t) * 1000)
     if rtts:
         rtts.sort()
-        c.log.result(dict(name="udp-rtt", ok=len(rtts) >= len(rtts) * 0.99 and len(rtts) > (90 if quick else 290),
-                          n=len(rtts), min_ms=round(rtts[0], 2), med_ms=round(rtts[len(rtts) // 2], 2),
+        c.log.result(dict(name="udp-rtt", ok=len(rtts) >= 0.99 * sent,
+                          sent=sent, n=len(rtts), min_ms=round(rtts[0], 2), med_ms=round(rtts[len(rtts) // 2], 2),
                           p99_ms=round(rtts[int(len(rtts) * .99) - 1], 2), max_ms=round(rtts[-1], 2)))
     for ln in (1, 64, 512, 1000, 1400):
         echo_run(c, "udp-echo", 100 if quick else 400, ln, c.rng.randrange(8), c.rng.getrandbits(32), window=4)
@@ -940,6 +960,14 @@ def cmd_auto(c):
         cmd_switch(c)
 
 # ---------------------------------------------------------------- selftest (against the host build of dctest.c)
+class _PL:
+    """Minimal context: a detected DC-PicoLink, for usable_bauds."""
+    def __init__(self):
+        self.hw = dict(plan=dict(max_baud=1562500), cable=identify_cable(0xCAFE, 0x4DC5))
+        self.args = argparse.Namespace(no_limits=False)
+        self.log = Log(os.devnull)
+
+
 def selftest(args, log):
     here = os.path.dirname(os.path.abspath(__file__))
     exe = os.path.join(args.tmp or here, "dctest-host")
@@ -970,6 +998,17 @@ def selftest(args, log):
     check("CP210x limited to 1 Mbaud", identify_cable(0x10C4, 0xEA60)["max_baud"] == 1000000)
     check("CH340 capped at the Dreamcast's 1562500", identify_cable(0x1A86, 0x55D4)["max_baud"] == 1562500)
     check("unknown adapter gets a conservative limit", identify_cable(0x1234, 0x5678)["max_baud"] == 921600)
+
+    log.line("selftest 1b/3: Dreamcast baud model (KOS scif_init) and the host rate")
+    check("KOS: 115200 really is 120192", abs(dc_effective(115200) - 120192.3) < 1)
+    check("KOS: 9600 -> 9766, 38400 -> 39062", round(dc_effective(9600)) == 9766 and round(dc_effective(38400)) == 39062)
+    check("KOS: 1500000 -> 1562500, 1600000 wraps to 6103", dc_effective(1500000) == 1562500 and int(dc_effective(1600000)) == 6103)
+
+    def cable_wire(h):                      # what the DC-PicoLink drives for a host rate (baud_model.h)
+        return 1562500.0 / ((1562500 // h - 1) % 256 + 1) if h > 115200 else float(h)
+    worst = max(abs(cable_wire(host_rate(b)) / dc_effective(b) - 1) for b in COMMON + UNCOMMON + [115200, 57600, 9600, 4800])
+    check("cable divider maps host_rate(b) back to the Dreamcast's rate (worst %.4f%%)" % (worst * 100), worst < 0.001)
+    check("nominal 115200 would be 4.3%% off", abs(dc_effective(115200) / 115200 - 1) > 0.04)
 
     log.line("selftest 2/3: clean link, PicoLink with W5500: detection, then everything must pass")
     c = session(0)
@@ -1004,6 +1043,28 @@ def selftest(args, log):
     check("CP210x: 1500000 dropped, 921600 kept", kept == [115200, 921600])
     c.link.chan.close()
     n_info = sum(1 for r in log.results if r.get("expected"))
+
+    log.line("selftest: beacon, and the Dreamcast leaving network mode by itself")
+    ch = ProcChan(exe)
+    raw, end = b"", time.time() + 1.5
+    while time.time() < end:
+        raw += ch.read(0.2)
+    seen = [f for f in Parser().feed(raw) if f.type == HELLO | REPLY]
+    check("Dreamcast announces itself before anyone talks to it", len(seen) >= 2)
+    ch.close()
+    c = session(0, picolink, {"DCTEST_NET_IDLE_MS": "1500"})
+    time.sleep(0.5)
+    c.link.quiesce(0.2)
+    check("no beacon once the host has talked to it", not [f for f in (c.link.q or [])])
+    ul = net_up(c, args.udp_port)
+    check("network mode up", ul is not None)
+    if ul:
+        ul.chan.close()                       # the host vanishes without NETSTOP
+        t = time.time()
+        back = hello(c.link, tries=20, timeout=0.5)
+        check("Dreamcast returns to serial after the idle timeout (%.1f s)" % (time.time() - t), bool(back))
+    c.link.chan.close()
+    check("1200 baud is never used on a PicoLink", usable_bauds(_PL(), [1200, 9600]) == [9600])
 
     log.line("selftest: 1 bit flip per 3000 bytes, the tool must report failures")
     log.results.clear()
@@ -1041,6 +1102,8 @@ def main():
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
             p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
             p.add_argument("--no-limits", action="store_true", help="try baud rates above the adapter chip's known limit")
+            p.add_argument("--nominal-baud", action="store_true", help="set the requested rate on the host port (like dc-tool) instead of the "
+                                                                          "Dreamcast's real rate; 115200 is then 4.3%% off")
         p.add_argument("--log", help="log file (default dctest-<time>.log)")
         p.add_argument("--fw-log-cmd", help="command whose output joins the log, e.g. 'journalctl -fu dcsd -n0' "
                                             "or \"ssh pi@dreampi 'journalctl -fu dcsd -n0'\"")
@@ -1094,7 +1157,7 @@ def main():
         else:
             direct = args.cmd == "net" and args.dc_ip and not args.port
             info = None if direct else pick_port(args.port)
-            chan = None if direct else SerialChan(info.device, args.start_baud, args.rtscts)
+            chan = None if direct else SerialChan(info.device, host_rate(args.start_baud, args.nominal_baud), args.rtscts)
             args.port = None if direct else info.device
             c = Ctx(Link(chan) if chan else None, log, args, chan)
             c.baud, c.portinfo = args.start_baud, info

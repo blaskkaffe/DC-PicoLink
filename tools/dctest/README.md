@@ -22,8 +22,16 @@ Data patterns: random, all 0x00, all 0xFF, 0x55/0xAA, ramp, walking bit, PPP-lik
 0x7E/0x7D/0x11/0x13), and edge values. Every frame has a CRC32 and a sequence number, so
 lost, corrupted, duplicated and skipped bytes are told apart; the DC reports its own counts
 (`dc_crc_bad`, `dc_skipped`, `dc_pat_bad`, `dc_gap`) so you can see which direction broke.
-Rates above 115200 follow dcload's divider (`baud_model.h`): the log shows `dc_rate` when the
-Dreamcast really runs a different rate than requested (e.g. 500000 → 520833, 1600000 → 6103).
+The Dreamcast side programs the port with KOS's `scif_init`, whose divider rounds: 115200 really is
+120192 (+4.3 %), 38400 is 39062, 500000 is 520833, 1600000 wraps to 6103. The log shows `dc_rate` when it
+differs from the request, and **the host port is set to the Dreamcast's real rate** (not the nominal
+one), so cable and Dreamcast agree from the first byte. `--nominal-baud` sets the requested rate instead,
+like dc-tool does, to see what such a setup would suffer.
+
+Until a host frame arrives at a new rate, the Dreamcast sends a small announce frame every 300 ms; the
+DC-PicoLink only learns the Dreamcast's real rate from what the Dreamcast transmits. In network mode the
+Dreamcast returns to serial by itself after 30 s without a frame (or Start); 1200 baud is never used on a
+PicoLink (it makes a Pico reboot into its bootloader).
 
 ## Hardware check first
 

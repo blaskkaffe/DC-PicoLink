@@ -9,6 +9,7 @@
 typedef uint8_t uint8;
 uint64_t timer_us_gettime64(void);
 void thd_sleep(int ms);
+void thd_pass(void);
 int scif_read(void);
 int scif_write_buffer(const uint8 *data, int len, int xmit);
 void scif_flush(void);

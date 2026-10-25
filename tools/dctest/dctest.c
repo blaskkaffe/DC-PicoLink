@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -32,6 +34,7 @@ static void hal_log(const char *fmt, ...);
 #include <time.h>
 static uint64_t hal_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000000ull + t.tv_nsec / 1000; }
 static void hal_sleep_ms(int ms) { usleep(ms * 1000); }
+static void hal_yield(void) { usleep(100); }
 static uint8_t in_buf[4096]; static int in_pos, in_len;
 static int hal_getc(void) {
     if (in_pos == in_len) {
@@ -63,6 +66,7 @@ static void hal_probe(uint8_t *w5, uint8_t *sd) {
 KOS_INIT_FLAGS(INIT_DEFAULT);                      /* no INIT_NET: the W5500 stays untouched until NETSTART */
 static uint64_t hal_us(void) { return timer_us_gettime64(); }
 static void hal_sleep_ms(int ms) { thd_sleep(ms); }
+static void hal_yield(void) { thd_pass(); }
 static int hal_getc(void) { return scif_read(); }
 static void hal_write(const uint8_t *b, int n) { scif_write_buffer(b, n, 1); }
 static void hal_flush(void) { scif_flush(); }
@@ -138,9 +142,17 @@ static void ser_tx(dt_io *io, const uint8_t *b, int n) { (void)io; hal_write(b, 
 static void udp_tx(dt_io *io, const uint8_t *b, int n) {
     sendto(io->fd, b, n, 0, (struct sockaddr *)&io->peer, sizeof io->peer); st.bytes_tx += n;
 }
+static int would_block(void) { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static void set_nonblock(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK); }
 static void tcp_tx(dt_io *io, const uint8_t *b, int n) {
     int off = 0;
-    while (off < n) { int k = send(io->fd, b + off, n - off, 0); if (k <= 0) return; off += k; }
+    uint32_t t0 = hal_ms();
+    while (off < n) {
+        int k = send(io->fd, b + off, n - off, 0);
+        if (k > 0) { off += k; t0 = hal_ms(); continue; }
+        if (k < 0 && would_block() && hal_ms() - t0 < 5000) { hal_yield(); continue; }   /* send buffer full */
+        return;
+    }
     st.bytes_tx += n;
 }
 
@@ -252,23 +264,39 @@ static int handle(dt_io *io, const dt_frame *f) {
 }
 
 /* ---------- network ---------- */
+#define TCP_ACCEPT_MS 20000
+static int net_idle_ms = 30000;          /* no frame for this long: give up and return to serial */
+
 static void tcp_run(int port) {
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in a = {0};
     a.sin_family = AF_INET; a.sin_port = htons(port); a.sin_addr.s_addr = htonl(INADDR_ANY);
     int one = 1; setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     if (bind(ls, (struct sockaddr *)&a, sizeof a) < 0 || listen(ls, 1) < 0) { hal_log("tcp: bind/listen failed"); close(ls); return; }
+    set_nonblock(ls);
     hal_log("tcp: waiting on %d", port);
-    int c = accept(ls, NULL, NULL);
+    uint32_t t0 = hal_ms();
+    int c;
+    while ((c = accept(ls, NULL, NULL)) < 0) {
+        if (!would_block() || hal_ms() - t0 > TCP_ACCEPT_MS || hal_start_pressed()) { hal_log("tcp: nobody connected"); close(ls); return; }
+        hal_sleep_ms(1);
+    }
     close(ls);
-    if (c < 0) return;
+    set_nonblock(c);
     dt_io io = {tcp_tx, c, {0}};
     uint8_t buf[1500];
     tcp_p.n = tcp_p.pending = 0;
     int stop = 0;
+    uint32_t last = hal_ms();
     while (!stop) {
         int n = recv(c, buf, sizeof buf, 0);
-        if (n <= 0) break;
+        if (n < 0 && would_block()) {
+            if (hal_ms() - last > (uint32_t)net_idle_ms || hal_start_pressed()) { hal_log("tcp: idle, closing"); break; }
+            if (hal_ms() - last > 200) hal_sleep_ms(1); else hal_yield();
+            continue;
+        }
+        if (n <= 0) break;                           /* closed or failed */
+        last = hal_ms();
         st.bytes_rx += n;
         for (int i = 0; i < n && !stop; i++) {
             dt_frame f;
@@ -293,10 +321,20 @@ static int net_run(int port) {
     for (int i = 0; i < 5; i++) { reply(&io, DT_HELLO, 0, 0, (const uint8_t *)"dctest", 6); hal_sleep_ms(300); }   /* beacon */
     hal_log("net: UDP %d ready", port);
     uint8_t buf[DT_MAXFRAME];
+    set_nonblock(u);
+    uint32_t last = hal_ms();
+    int spin = 0;
     for (int stop = 0; !stop;) {
         socklen_t sl = sizeof io.peer;
         int n = recvfrom(u, buf, sizeof buf, 0, (struct sockaddr *)&io.peer, &sl);
-        if (n <= 0) continue;
+        if (n <= 0) {
+            /* nothing waiting: never block here, or a vanished host leaves the DC (and the cable) stuck in SPI mode */
+            if (hal_ms() - last > (uint32_t)net_idle_ms) { hal_log("net: no frame for %d s, back to serial", net_idle_ms / 1000); break; }
+            if (!(++spin & 63) && hal_start_pressed()) break;
+            if (hal_ms() - last > 200) hal_sleep_ms(1); else hal_yield();
+            continue;
+        }
+        last = hal_ms();
         st.bytes_rx += n;
         net_p.n = net_p.pending = 0;
         for (int i = 0; i < n; i++) {
@@ -304,7 +342,7 @@ static int net_run(int port) {
             if (!dt_feed(&net_p, buf[i], &f)) continue;
             int act = handle(&io, &f);
             if (act == ACT_NETSTOP) stop = 1;
-            else if (act == ACT_TCPSTART) tcp_run(act_arg);
+            else if (act == ACT_TCPSTART) { tcp_run(act_arg); last = hal_ms(); }
         }
     }
     close(u);
@@ -337,13 +375,21 @@ int main(void) {
     hal_sleep_ms(500);
     probe_show();
     hal_log("probe: W5500 version register %02X, SD CMD0 answer %02X", probe_w5, probe_sd);
-    uint32_t last_rx = hal_ms(), last_show = 0, seen = 0;
-    int ticks = 0;
+    uint32_t last_rx = hal_ms(), last_show = 0, seen = 0, last_beacon = 0;
+    int ticks = 0, linked = 0;
+    dt_io sio = {ser_tx, -1, {0}};
+#ifdef DCTEST_HOST
+    if (getenv("DCTEST_NET_IDLE_MS")) net_idle_ms = atoi(getenv("DCTEST_NET_IDLE_MS"));
+#endif
     for (;;) {
         int c = hal_getc();
         if (c < 0) {
             check_revert();
             uint32_t now = hal_ms();
+            if (!linked && now - last_beacon >= 300) {         /* nobody has talked to us yet at this rate: announce ourselves. */
+                last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
+                reply(&sio, DT_HELLO, 0, 0, (const uint8_t *)"dctest", 6);
+            }
             if (now - last_rx > 300 && now - last_show > 2000 && st.frames_ok != seen) {   /* idle: show progress */
                 last_show = now; seen = st.frames_ok;
                 hal_log("%u frames, %u crc bad, %u skipped, %u rx / %u tx bytes", st.frames_ok,
@@ -360,11 +406,13 @@ int main(void) {
         int r = dt_feed(&ser_p, c, &f);
         while (r) {
             revert_at = 0;                        /* a good frame at the new rate confirms it */
+            linked = 1;
             switch (handle(&io, &f)) {
             case ACT_SETBAUD:
                 hal_flush(); hal_sleep_ms(30);
                 prev_baud = cur_baud; cur_baud = act_arg; hal_serial_baud(cur_baud);
                 revert_at = hal_ms() + REVERT_MS;
+                linked = 0; last_beacon = hal_ms();
                 hal_log("baud: %d", cur_baud);
                 break;
             case ACT_PROBE:
@@ -379,6 +427,7 @@ int main(void) {
                 hal_flush(); hal_sleep_ms(30);
                 net_run(act_arg);
                 ser_p.n = ser_p.pending = 0;
+                linked = 0; last_beacon = hal_ms();
                 break;
             }
             r = (ser_p.n || ser_p.pending) ? dt_poll(&ser_p, &f) : 0;
