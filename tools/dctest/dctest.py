@@ -1013,7 +1013,7 @@ class _PL:
     def __init__(self):
         self.hw = dict(plan=dict(max_baud=1562500), cable=identify_cable(0xCAFE, 0x4DC5))
         self.args = argparse.Namespace(no_limits=False)
-        self.log = Log(os.devnull)
+        self.log = type("_NoLog", (), {"result": lambda self, r: None, "line": lambda self, m, p="": None})()
 
 
 def selftest(args, log):
