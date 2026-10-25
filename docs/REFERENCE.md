@@ -387,4 +387,5 @@ Release files (GitHub releases, built by CI): `dc-picolink-<version>-250mhz.uf2`
 All work with or without the sense wire. The first log line after connecting
 (`cable: DC-PicoLink firmware <version> (<date> <time>) ready; ...; power sense ...`)
 shows which build is running and whether the wire is in use.
-Setting the serial port to 1200 baud and closing it reboots the board into BOOTSEL.
+There is no 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate and never reboots the board. To
+reflash, hold the BOOTSEL button while plugging in.

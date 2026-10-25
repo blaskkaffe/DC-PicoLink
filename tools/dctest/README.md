@@ -30,8 +30,8 @@ like dc-tool does, to see what such a setup would suffer.
 
 Until a host frame arrives at a new rate, the Dreamcast sends a small announce frame every 300 ms; the
 DC-PicoLink only learns the Dreamcast's real rate from what the Dreamcast transmits. In network mode the
-Dreamcast returns to serial by itself after 30 s without a frame (or Start); 1200 baud is never used on a
-PicoLink (it makes a Pico reboot into its bootloader).
+Dreamcast returns to serial by itself after 30 s without a frame (or Start); 1200 baud is skipped on a
+PicoLink (firmware from before the "no 1200-baud touch" change reboots into BOOTSEL at that rate).
 
 ## Hardware check first
 

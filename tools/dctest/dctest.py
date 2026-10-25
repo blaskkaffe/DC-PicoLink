@@ -671,7 +671,7 @@ def usable_bauds(c, bauds):
     keep = []
     for b in bauds:
         if b == 1200 and hw and hw["cable"]["picolink"]:
-            c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: 1200 baud makes a Pico reboot into its bootloader"))
+            c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: firmware older than the no-touch change reboots into BOOTSEL at 1200 baud"))
         elif lim and b > lim:
             c.log.result(dict(name="baud", ok=False, expected=True, baud=b, note="skipped: adapter limit %d baud" % lim))
         else:
