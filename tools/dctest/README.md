@@ -67,6 +67,22 @@ differs from the requested one by more than 2.5 % (e.g. `-b 500000` really is 52
 Dreamcast, which a plain FTDI cannot follow; the DC-PicoLink measures and follows it).
 W5500 tests need a W5500 found by the probe; serial↔W5500 switching needs the DC-PicoLink.
 
+## Seeing the cable's own log (DC-PicoLink)
+
+The cable reports what it thinks is going on (`mode: serial -> offline`, `DC transmits at ~120192 baud`, framing
+errors, firmware version) as status lines on its vendor USB interface; on a DreamPi `dcsd` reads them into
+`journalctl`. On a Mac or PC `dctest.py` reads them itself and merges them into the log as `cable| ...` lines
+(on by default for a DC-PicoLink, `--no-cable-log` to skip):
+
+    brew install libusb && pip3 install pyusb       # macOS; Linux: libusb + pyusb from your package manager
+    python3 dctest.py cablelog                      # just the cable's lines for 10 s
+
+While it runs the cable treats the computer like `dcsd` with no card image (the Dreamcast sees no SD card). Do not run
+it on a machine where the `dcsd` service is running (it owns that interface): read `journalctl -fu dcsd` there.
+
+The W5500 / SD probe is **not** run at start-up (it makes the cable switch to SPI mode and back): the Dreamcast
+announces itself on serial first, and probes when `detect` asks for it.
+
 ## Setup
 
 

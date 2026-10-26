@@ -8,6 +8,7 @@ shared as is. See README.md.
     dctest.py ports
     dctest.py detect [--port P]       (what adapter, what the Dreamcast has: W5500, SD)
     dctest.py auto   [--port P]       (detect, then run every test that fits)
+    dctest.py cablelog [--port P]     (only the cable's own status lines; needs pyusb + libusb)
     dctest.py listen [--port P] [--send-hello]   (passive look at the line: which direction is dead?)
     dctest.py hello  --port P
     dctest.py serial --port P [--bauds common|uncommon|all|1200,...] [--step-seconds 6] [--full]
@@ -646,7 +647,8 @@ def detect(c, reprobe=False):
         return None
     hw["dc_version"] = h
     log.line("Dreamcast    : %s, serial link works at %d baud" % (h, c.baud))
-    f = c.link.request(PROBE, bytes([1 if reprobe else 0]), timeout=6.0, tries=2)
+    log.line("probing the Dreamcast's SPI pins (W5500 / SD): the cable switches mode for a moment ...")
+    f = c.link.request(PROBE, bytes([1 if reprobe else 0]), timeout=8.0, tries=2)
     if f and len(f.payload) >= 8:
         w5, sd, dl = f.payload[0], f.payload[1], struct.unpack("b", f.payload[2:3])[0]
         hw.update(w5500=(w5 == 0x04), w5500_raw=w5, sd=(sd != 0xFF and not sd & 0x80), sd_raw=sd, dcload=dl)
@@ -1047,6 +1049,15 @@ def selftest(args, log):
     check("CH340 capped at the Dreamcast's 1562500", identify_cable(0x1A86, 0x55D4)["max_baud"] == 1562500)
     check("unknown adapter gets a conservative limit", identify_cable(0x1234, 0x5678)["max_baud"] == 921600)
 
+    log.line("selftest 1c/3: cable status stream parser")
+    got = []
+    cb = bytearray(b"H" + b"S" + bytes([5]) + b"mode:" + b"\xff" + b"S" + bytes([3]) + b"ab")   # partial last message
+    CableLog.parse(cb, got.append)
+    check("status line parsed, noise skipped, partial kept", got == ["mode:"] and bytes(cb) == b"S" + bytes([3]) + b"ab")
+    cb += b"c" + b"R" + bytes(6) + b"S" + bytes([2]) + b"ok"
+    CableLog.parse(cb, got.append)
+    check("message completed, block request skipped", got == ["mode:", "abc", "ok"] and not cb)
+
     log.line("selftest 1a/3: Dreamcast screen layout (worst-case contents)")
     out = subprocess.run([exe, "--dump-screen"], capture_output=True, text=True, timeout=10).stdout.splitlines()
     rows = [r[:-1] for r in out if r.endswith("|")]
@@ -1164,6 +1175,116 @@ NO_ANSWER = ("No answer from dctest on %s at %d baud. Check, in this order:\n"
 
 
 
+# ---------------------------------------------------------------- the cable's own status lines (vendor USB interface)
+class CableLog:
+    """Reads the DC-PicoLink's status lines ("mode: serial -> offline", "DC transmits at ~120192 baud", framing
+    errors ...) over its vendor USB interface, the way dcsd does on the Pi, so they appear in the same log.
+    Needs pyusb + libusb (pip install pyusb; brew install libusb). The Pi's dcsd service owns that interface
+    there: on the Pi read `journalctl -fu dcsd` instead (--fw-log-cmd). The cable treats this like dcsd with
+    no card image: the Dreamcast sees no SD card."""
+    VID, PID = 0xCAFE, 0x4DC5
+
+    @staticmethod
+    def parse(buf, emit):
+        """Consume complete messages from the bytearray `buf`; emit() gets each status line."""
+        while buf:
+            t = buf[0]
+            if t == ord("S"):
+                if len(buf) < 2 or len(buf) < 2 + buf[1]:
+                    return
+                n = buf[1]
+                emit(bytes(buf[2:2 + n]).decode("ascii", "replace"))
+                del buf[:2 + n]
+            elif t == ord("H"):
+                del buf[:1]
+            elif t == ord("R"):
+                if len(buf) < 7:
+                    return
+                del buf[:7]
+            elif t == ord("W"):
+                if len(buf) < 517:
+                    return
+                del buf[:517]
+            elif t == ord("L"):
+                if len(buf) < 3:
+                    return
+                n = buf[1] | buf[2] << 8
+                need = 7 if n == 0 else 3 + n
+                if len(buf) < need:
+                    return
+                del buf[:need]
+            else:
+                del buf[:1]                                   # resync
+
+    def __init__(self, log):
+        self.log, self.stop, self.thread, self.dev = log, threading.Event(), None, None
+
+    def start(self):
+        """-> None if it runs, else a string saying why not."""
+        try:
+            import usb.core, usb.util, usb.backend.libusb1 as be
+        except ImportError:
+            return "install pyusb and libusb to see the cable's own log (pip install pyusb; brew install libusb)"
+        backend = be.get_backend()
+        for path in ("/opt/homebrew/lib/libusb-1.0.dylib", "/usr/local/lib/libusb-1.0.dylib"):
+            if backend is None and os.path.exists(path):
+                backend = be.get_backend(find_library=lambda _n, p=path: p)
+        if backend is None:
+            return "libusb not found (brew install libusb)"
+        dev = usb.core.find(idVendor=self.VID, idProduct=self.PID, backend=backend)
+        if dev is None:
+            return "cable's USB device not found"
+        try:
+            cfg = dev.get_active_configuration()
+            intf = next(i for i in cfg if i.bInterfaceClass == 0xFF)
+            ep_in = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
+                                             and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK)
+            ep_out = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
+                                              and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK)
+            usb.util.claim_interface(dev, intf.bInterfaceNumber)
+        except (StopIteration, usb.core.USBError, NotImplementedError, ValueError) as e:
+            return "cannot open the cable's vendor interface (%s); is dcsd running on this machine?" % e
+        self.dev, self.usb = dev, usb
+        self.thread = threading.Thread(target=self._run, args=(ep_in, ep_out), daemon=True)
+        self.thread.start()
+        return None
+
+    def _run(self, ep_in, ep_out):
+        usb, buf, last_hb = self.usb, bytearray(), 0.0
+        emit = lambda m: self.log.line(m, "cable| ")
+        while not self.stop.is_set():
+            try:
+                if time.time() - last_hb > 2.0:                 # dcsd's heartbeat: "image with 0 blocks" keeps the link up
+                    ep_out.write(b"I" + struct.pack("<IB", 0, 1))
+                    last_hb = time.time()
+                data = ep_in.read(64, timeout=500)
+            except usb.core.USBError as e:
+                if getattr(e, "errno", None) in (60, 110) or "timed out" in str(e).lower():
+                    continue
+                self.log.line("cable log stopped: %s" % e, "cable| ")
+                return
+            buf += bytes(data)
+            CableLog.parse(buf, emit)
+
+    def close(self):
+        self.stop.set()
+
+
+def start_cable_log(args, log, info):
+    """Start the cable-log reader for a DC-PicoLink unless --no-cable-log; returns it or None."""
+    if getattr(args, "no_cable_log", False) or info is None or info.vid is None:
+        return None
+    if not identify_cable(info.vid, info.pid, info.product, info.manufacturer)["picolink"]:
+        return None
+    cl = CableLog(log)
+    why = cl.start()
+    if why:
+        log.line("cable's own log not available: " + why)
+        return None
+    log.line("reading the cable's own status lines (lines marked 'cable|')")
+    return cl
+
+
 NO_BEACON = ("Heard nothing from the Dreamcast in %.0f s. Nothing was transmitted to it.\n"
              "  - Is dctest running? The TV shows its banner. (Builds before the announce change are silent: use --send-anyway.)\n"
              "  - Run:  python3 dctest.py listen --port %s    for a passive look at the line.")
@@ -1203,6 +1324,7 @@ def main():
             p.add_argument("--rtscts", action="store_true", help="hardware flow control on the host port")
             p.add_argument("--no-detect", action="store_true", help="skip the hardware report")
             p.add_argument("--wait", type=float, default=20, help="seconds to listen for the Dreamcast before giving up (nothing is sent meanwhile)")
+            p.add_argument("--no-cable-log", action="store_true", help="do not read the DC-PicoLink's own status lines over USB (needs pyusb + libusb)")
             p.add_argument("--send-anyway", action="store_true", help="do not wait for the Dreamcast's announce frames; send HELLO at once")
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
             p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
@@ -1216,10 +1338,10 @@ def main():
         p.add_argument("--step-seconds", type=float, default=6.0, help="time budget per baud / load step")
 
     sub.add_parser("ports")
-    for name in ("hello", "detect", "listen", "auto", "serial", "ramp", "hop", "net", "switch", "soak"):
+    for name in ("hello", "detect", "listen", "cablelog", "auto", "serial", "ramp", "hop", "net", "switch", "soak"):
         p = sub.add_parser(name)
         common(p)
-        if name == "listen":
+        if name in ("listen", "cablelog"):
             p.add_argument("--seconds", type=float, default=10)
             p.add_argument("--send-hello", action="store_true", help="also send a HELLO every 0.5 s (tests both directions)")
         if name == "auto":
@@ -1262,8 +1384,18 @@ def main():
     try:
         if args.cmd == "selftest":
             ok = selftest(args, log)
+        elif args.cmd == "cablelog":
+            cl = start_cable_log(args, log, pick_port(args.port))
+            if cl:
+                time.sleep(args.seconds)
+                cl.close()
+            ok = cl is not None
         elif args.cmd == "listen":
+            cl = start_cable_log(args, log, pick_port(args.port))
             ok = cmd_listen(args, log)
+            if cl:
+                time.sleep(1.0)                  # let the cable's last lines in
+                cl.close()
         else:
             direct = args.cmd == "net" and args.dc_ip and not args.port
             info = None if direct else pick_port(args.port)
@@ -1271,6 +1403,7 @@ def main():
             args.port = None if direct else info.device
             c = Ctx(Link(chan) if chan else None, log, args, chan)
             c.baud, c.portinfo = args.start_baud, info
+            cl = start_cable_log(args, log, info) if chan else None
             if chan and not args.send_anyway and not wait_for_dc(c, args.wait):
                 log.line(NO_BEACON % (args.wait, args.port))
                 return 2

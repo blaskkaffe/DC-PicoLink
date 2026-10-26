@@ -227,6 +227,7 @@ static dt_parser ser_p, net_p, tcp_p;
 
 enum { ACT_NONE, ACT_SETBAUD, ACT_NETSTART, ACT_NETSTOP, ACT_TCPSTART, ACT_PROBE };
 static uint8_t probe_w5, probe_sd = 0xFF;
+static int probed;                     /* the SPI probe runs on request (dctest.py detect), not at start-up */
 static int dcload_at_start;
 static uint32_t act_seq;
 static uint32_t act_arg;
@@ -276,6 +277,11 @@ static void probe_reply(dt_io *io, uint32_t seq) {
 }
 
 static void probe_show(void) {
+    if (!probed) {
+        scr_set(7, COL_DIM, "W5500   not probed yet (dctest.py asks)");
+        scr_set(8, COL_DIM, "SD      not probed yet");
+        return;
+    }
     scr_set(7, probe_w5 == 0x04 ? COL_GOOD : COL_DIM, "W5500   %s", probe_w5 == 0x04 ? "found, version register 04" : "none (read FF)");
     int sd = probe_sd != 0xFF && !(probe_sd & 0x80);
     scr_set(8, sd ? COL_GOOD : COL_DIM, "SD      %s", sd ? "answers CMD0" : "no answer");
@@ -377,7 +383,7 @@ static int handle(dt_io *io, const dt_frame *f) {
         reply(io, DT_TCPSTART, 0, f->seq, f->pay, 2);
         return ACT_TCPSTART;
     case DT_PROBE: {
-        if (f->len >= 1 && f->pay[0] && io->fd < 0) { act_seq = f->seq; return ACT_PROBE; }   /* rerun: serial only */
+        if (io->fd < 0 && ((f->len >= 1 && f->pay[0]) || !probed)) { act_seq = f->seq; return ACT_PROBE; }   /* first request or rerun: serial only */
         probe_reply(io, f->seq);
         break;
     }
@@ -499,7 +505,7 @@ int main(int argc, char **argv) {
     for (int r = 0; r < SCR_ROWS; r++) scr_dirty[r] = 1;   /* first ui_update draws every row */
 #else
     if (argc > 1 && !strcmp(argv[1], "--dump-screen")) {   /* layout test: worst-case contents, no hardware */
-        probe_w5 = 4; probe_sd = 1; st.frames_ok = 4000000000u; st.bytes_rx = st.bytes_tx = 4000000000u;
+        probe_w5 = 4; probe_sd = 1; probed = 1; st.frames_ok = 4000000000u; st.bytes_rx = st.bytes_tx = 4000000000u;
         ser_p.crc_bad = 123456789; ser_p.resync = 987654321; rxq_drop = 99999; tx_fail = 12;
         snprintf(ui_net, sizeof ui_net, "255.255.255.255"); cur_baud = 1500000;
         for (int i = 0; i < 9; i++) hal_log("event %d: a very long message that must be cut to the screen width, not wrapped", i);
@@ -508,10 +514,7 @@ int main(int argc, char **argv) {
     }
 #endif
     t_start = hal_ms();
-    hal_serial_init(cur_baud);
-    hal_probe(&probe_w5, &probe_sd);                 /* what is on the SPI pins, like the W5500 tester */
-    hal_serial_init(cur_baud);
-    hal_sleep_ms(500);
+    hal_serial_init(cur_baud);                       /* serial first: the SPI probe waits until the host asks (it makes the cable switch mode) */
     probe_show();
     ui_update();
     uint32_t last_rx = hal_ms(), last_show = 0, last_beacon = 0;
@@ -557,9 +560,11 @@ int main(int argc, char **argv) {
                 break;
             case ACT_PROBE:
                 hal_flush(); hal_sleep_ms(30);
+                hal_log("probing SPI pins (cable blips)");
                 hal_probe(&probe_w5, &probe_sd);
+                probed = 1;
                 hal_serial_init(cur_baud);
-                hal_sleep_ms(500);                  /* the cable needs ~200 ms of released lines to return to serial */
+                hal_sleep_ms(1500);                 /* the cable needs ~200 ms of released lines to return to serial */
                 probe_reply(&io, act_seq);
                 probe_show();
                 break;
