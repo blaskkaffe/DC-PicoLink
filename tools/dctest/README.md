@@ -31,7 +31,7 @@ like dc-tool does, to see what such a setup would suffer.
 The Dreamcast screen is a fixed 48 x 18 status panel (serial rate, host link, frame/byte counters, errors, W5500 / SD
 probe, network address) with a six-line event log at the bottom; rows are rewritten in place, nothing wraps or scrolls.
 
-The host tool is silent at start: it listens (up to `--wait`, 20 s) and sends nothing until the Dreamcast
+The host tool is silent at start: it listens (up to `--wait`, 60 s) and sends nothing until the Dreamcast
 program announces itself, so it can be started before the console is switched on. `--send-anyway` skips that.
 
 The Dreamcast announces itself again after 3 s without any host frame, so the tool can be started again

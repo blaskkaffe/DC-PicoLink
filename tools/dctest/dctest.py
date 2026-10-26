@@ -1407,7 +1407,11 @@ def wait_for_dc(c, seconds):
     console is switched on (nothing reaches the Dreamcast's serial port while it boots)."""
     c.log.line("listening for the Dreamcast, up to %.0f s; nothing is transmitted until it announces itself" % seconds)
     end, noted, raw = time.time() + seconds, False, 0
+    next_note = time.time() + 10
     while time.time() < end:
+        if time.time() >= next_note:
+            next_note += 10
+            c.log.line("still listening (%d s left); the Dreamcast takes ~15 s to boot the disc and start; nothing heard yet" % max(0, end - time.time()))
         got = c.link.chan.read(0.2)
         if not got:
             continue
@@ -1434,7 +1438,7 @@ def main():
             p.add_argument("--start-baud", type=int, default=115200, help="rate dctest starts at on the Dreamcast")
             p.add_argument("--rtscts", action="store_true", help="hardware flow control on the host port")
             p.add_argument("--no-detect", action="store_true", help="skip the hardware report")
-            p.add_argument("--wait", type=float, default=20, help="seconds to listen for the Dreamcast before giving up (nothing is sent meanwhile)")
+            p.add_argument("--wait", type=float, default=60, help="seconds to listen for the Dreamcast before giving up (nothing is sent meanwhile)")
             p.add_argument("--no-cable-log", action="store_true", help="do not read the DC-PicoLink's own status lines over USB (needs pyusb + libusb)")
             p.add_argument("--send-anyway", action="store_true", help="do not wait for the Dreamcast's announce frames; send HELLO at once")
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")

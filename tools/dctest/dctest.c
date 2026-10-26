@@ -171,16 +171,19 @@ static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {
     SCSCR2_R &= ~0x08; SCSCR2_R |= 0x08;              /* acknowledge, as KOS's handler does */
 }
 /* Receive: our own interrupt handler and queue instead of KOS's ring (1 KB, shared counter without locking).
-   The handler clears the RDF/DR flags BEFORE draining the FIFO: a byte arriving afterwards raises them again,
-   so nothing is left behind without an interrupt. The main loop also looks into the FIFO itself (interrupts off
+   The handler drains the FIFO, clears RDF/DR, and looks again (a byte that arrived in between is taken in the
+   next pass). The main loop also looks into the FIFO itself (interrupts off
    while it does, so there is one producer at a time); bytes it finds there with no RDF/DR pending were not going
    to be delivered by an interrupt: counted in fifo_polled and traced. */
 static void drain_fifo(int polled) {
-    SCFSR2_R &= ~0x03;
-    while (SCFDR2_R & 0x1f) {
-        uint8_t b = SCFRDR2_R;
-        if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = b; else rxq_drop++;
-        if (polled) fifo_polled++;
+    for (int pass = 0; pass < 4; pass++) {
+        while (SCFDR2_R & 0x1f) {
+            uint8_t b = SCFRDR2_R;
+            if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = b; else rxq_drop++;
+            if (polled) fifo_polled++;
+        }
+        SCFSR2_R &= ~0x03;                              /* clear RDF/DR only once the FIFO is empty, like KOS: clearing them first can leave */
+        if (!(SCFDR2_R & 0x1f)) break;                  /* the flag latched (interrupt storm); a byte that slipped in meanwhile: go round again */
     }
 }
 static void dt_scif_rx(irq_t src, irq_context_t *cxt, void *data) {
@@ -610,7 +613,9 @@ int main(int argc, char **argv) {
     }
 #endif
     t_start = hal_ms();
+    hal_log("starting serial at %d baud ...", cur_baud);     /* visible on the TV: if the screen stops here, serial start-up hung */
     hal_serial_init(cur_baud);                       /* serial first: the SPI probe waits until the host asks (it makes the cable switch mode) */
+    hal_log("serial running");
     probe_show();
     ui_update();
     uint32_t last_rx = hal_ms(), last_show = 0, last_beacon = 0;
