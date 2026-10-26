@@ -731,7 +731,7 @@ def rate_note(req):
     return ("DC really runs %.0f (%.1f%% off)" % (eff, err * 100)) if err > 0.025 else ""
 
 
-def detect(c, reprobe=False):
+def detect(c, reprobe=False, probe=True):
     """The hardware report: host adapter, what the Dreamcast answers, what sits on its SPI pins."""
     log, info = c.log, c.portinfo
     cable = identify_cable(info.vid, info.pid, info.product, info.manufacturer) if info else \
@@ -749,15 +749,27 @@ def detect(c, reprobe=False):
         return None
     hw["dc_version"] = h
     log.line("Dreamcast    : %s, serial link works at %d baud" % (h, c.baud))
-    log.line("probing the Dreamcast's SPI pins (W5500 / SD): the cable switches mode for a moment ...")
-    f = c.link.request(PROBE, bytes([1 if reprobe else 0]), timeout=8.0, tries=2)
+    f = None
+    if probe:
+        log.line("probing the Dreamcast's SPI pins (W5500 / SD): the cable switches mode for a moment ...")
+        f = c.link.request(PROBE, bytes([1 if reprobe else 0]), timeout=8.0, tries=2)
+        if f is None:                                         # the cable can stay in SPI mode after a probe: free it and check
+            log.line("no answer to the probe; asking the cable to go back to serial")
+            cable_mode(log, "serial")
+            time.sleep(2.0)
+            if hello(c.link, tries=8, timeout=0.5):
+                log.line("serial works again (the cable had stayed in SPI mode after the probe)")
+            else:
+                log.line("still no answer; unplug and replug the cable's USB, then run again")
+    else:
+        log.line("W5500/SD     : not probed (serial-only test; run `detect` or `net` to probe)")
     if f and len(f.payload) >= 8:
         w5, sd, dl = f.payload[0], f.payload[1], struct.unpack("b", f.payload[2:3])[0]
         hw.update(w5500=(w5 == 0x04), w5500_raw=w5, sd=(sd != 0xFF and not sd & 0x80), sd_raw=sd, dcload=dl)
         log.line("W5500        : %s (version register %02X)" % ("found" if hw["w5500"] else "not found", w5))
         log.line("SD card      : %s (CMD0 answer %02X)" % ("answers" if hw["sd"] else "no answer", sd))
         log.line("loaded by    : %s" % {-1: "not dcload", 0: "dcload-serial", 1: "dcload-ip"}.get(dl, str(dl)))
-    else:
+    elif probe:
         log.line("W5500/SD     : the Dreamcast did not answer the hardware probe (old dctest?)")
     max_b = cable["max_baud"]
     plan = dict(serial=True, hop=True, ramp=True, net=hw["w5500"], switch=hw["w5500"] and cable["picolink"], max_baud=max_b)
@@ -1062,6 +1074,8 @@ def cmd_auto(c):
     cmd_ramp(c)
     a.bauds, a.cycles = "115200,1500000,57600,921600", 20
     cmd_hop(c)
+    cable_mode(c.log, "auto")                                  # SPI allowed again for the probe and the network tests
+    detect(c, probe=True)
     hw = getattr(c, "hw", None)
     if hw and hw["plan"]["net"]:
         a.quick = True
@@ -1151,6 +1165,8 @@ def selftest(args, log):
     check("CH340 capped at the Dreamcast's 1562500", identify_cable(0x1A86, 0x55D4)["max_baud"] == 1562500)
     check("unknown adapter gets a conservative limit", identify_cable(0x1234, 0x5678)["max_baud"] == 921600)
 
+    log.line("selftest 1d/3: cable mode message")
+    check("mode messages match dcsd-mode", CableLog.mode_message("serial") == b"M\x01" and CableLog.mode_message("auto") == b"M\x00")
     log.line("selftest 1c/3: cable status stream parser")
     got = []
     cb = bytearray(b"H" + b"S" + bytes([5]) + b"mode:" + b"\xff" + b"S" + bytes([3]) + b"ab")   # partial last message
@@ -1320,8 +1336,29 @@ class CableLog:
             else:
                 del buf[:1]                                   # resync
 
+    MODES = {"auto": 0, "serial": 1, "spi": 2, "w5500": 3, "sd": 4}      # same numbers as dcsd-mode
+
+    @staticmethod
+    def mode_message(name):
+        return b"M" + bytes([CableLog.MODES[name]])
+
     def __init__(self, log):
         self.log, self.stop, self.thread, self.dev = log, threading.Event(), None, None
+        self.lock, self.ep_out, self.mode = threading.Lock(), None, None
+
+    def set_mode(self, name):
+        """Tell the cable which bus mode to use (what `dcsd-mode` does on the Pi). 'serial' = never switch to SPI. The cable
+        keeps the setting until it is told otherwise or loses power, so the tool puts 'auto' back when it exits."""
+        self.mode = name
+        if self.ep_out is None:
+            return False
+        try:
+            with self.lock:
+                self.ep_out.write(CableLog.mode_message(name))
+        except Exception as e:                           # the link going away is reported by the reader thread
+            self.log.line("could not set the cable's mode: %s" % e, "cable| ")
+            return False
+        return True
 
     def start(self):
         """-> None if it runs, else a string saying why not."""
@@ -1348,7 +1385,7 @@ class CableLog:
             usb.util.claim_interface(dev, intf.bInterfaceNumber)
         except (StopIteration, usb.core.USBError, NotImplementedError, ValueError) as e:
             return "cannot open the cable's vendor interface (%s); is dcsd running on this machine?" % e
-        self.dev, self.usb = dev, usb
+        self.dev, self.usb, self.ep_out = dev, usb, ep_out
         self.thread = threading.Thread(target=self._run, args=(ep_in, ep_out), daemon=True)
         self.thread.start()
         return None
@@ -1359,7 +1396,10 @@ class CableLog:
         while not self.stop.is_set():
             try:
                 if time.time() - last_hb > 2.0:                 # dcsd's heartbeat: "image with 0 blocks" keeps the link up
-                    ep_out.write(b"I" + struct.pack("<IB", 0, 1))
+                    with self.lock:
+                        ep_out.write(b"I" + struct.pack("<IB", 0, 1))
+                        if self.mode:                          # and the mode we asked for, in case the link had dropped
+                            ep_out.write(CableLog.mode_message(self.mode))
                     last_hb = time.time()
                 data = ep_in.read(64, timeout=500)
             except usb.core.USBError as e:
@@ -1378,6 +1418,15 @@ class CableLog:
 
 
 _CABLE_LOGS = []
+
+
+def cable_mode(log, name):
+    """Set the DC-PicoLink's bus mode via the vendor link if we have one. True if sent."""
+    for cl in _CABLE_LOGS:
+        if cl.set_mode(name):
+            log.line("cable set to %s mode" % {"serial": "serial-only (never switches to SPI)", "auto": "automatic"}.get(name, name))
+            return True
+    return False
 
 
 def start_cable_log(args, log, info):
@@ -1516,6 +1565,11 @@ def main():
             c = Ctx(Link(chan) if chan else None, log, args, chan)
             c.baud, c.portinfo = args.start_baud, info
             cl = start_cable_log(args, log, info) if chan else None
+            serial_only = args.cmd in ("serial", "ramp", "hop", "soak", "hello")
+            if cl and (serial_only or args.cmd == "auto"):
+                cable_mode(log, "serial")                      # no SPI blips while testing serial; undone at exit
+            elif cl:
+                cable_mode(log, "auto")
             if chan and not args.send_anyway and not wait_for_dc(c, args.wait):
                 log.line(NO_BEACON % (args.wait, args.port))
                 return 2
@@ -1526,7 +1580,7 @@ def main():
                     return 2
                 log.line("DC: " + h)
             elif chan:
-                if not detect(c, args.reprobe):
+                if not detect(c, args.reprobe, probe=not (serial_only or args.cmd == "auto")):
                     log.line(NO_ANSWER % (args.port, args.start_baud, args.port))
                     return 2
             if args.cmd not in ("hello", "detect"):
@@ -1543,6 +1597,9 @@ def main():
         ok = False
     finally:
         if _CABLE_LOGS:
+            for cl in _CABLE_LOGS:
+                if cl.mode and cl.mode != "auto":
+                    cl.set_mode("auto")                         # leave the cable as we found it
             time.sleep(0.7)                                     # the cable's last lines (mode changes at the end of a run)
             for cl in _CABLE_LOGS:
                 cl.close()

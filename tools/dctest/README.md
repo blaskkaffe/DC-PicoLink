@@ -80,6 +80,13 @@ errors, firmware version) as status lines on its vendor USB interface; on a Drea
 While it runs the cable treats the computer like `dcsd` with no card image (the Dreamcast sees no SD card). Do not run
 it on a machine where the `dcsd` service is running (it owns that interface): read `journalctl -fu dcsd` there.
 
+**Bus mode.** With the cable log on, the tool pins a DC-PicoLink to *serial-only* mode (what `dcsd-mode serial` does on
+the Pi) for the serial tests (`serial`, `ramp`, `hop`, `soak`, and the serial part of `auto`), so a stray SPI session can never
+take the serial path away; it puts the cable back to *automatic* when it exits (also on Ctrl-C). If the tool is killed hard the
+cable stays serial-only until the tool runs again, `dcsd` connects, or the cable is replugged. The SPI probe (W5500 / SD) only
+runs for `detect`, `net`, `switch` and the network part of `auto`; if the cable does not come back from it, the tool forces it to
+serial and says so.
+
 The W5500 / SD probe is **not** run at start-up (it makes the cable switch to SPI mode and back): the Dreamcast
 announces itself on serial first, and probes when `detect` asks for it.
 
