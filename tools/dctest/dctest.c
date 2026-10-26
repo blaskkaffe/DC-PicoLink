@@ -34,7 +34,8 @@ static uint32_t rxq_drop;               /* bytes lost because our own receive qu
 enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5, TR_POLL = 6 };
 static void trace(int ev, int arg);
 static uint32_t fifo_polled, rts_high;   /* bytes the main loop found in the SCIF FIFO itself; samples with the Dreamcast's RTS pin high */
-static uint32_t scif_err, scif_ovr, flow_fix;   /* SCIF receive errors, overruns, times hardware flow control had to be switched off again */
+static uint32_t scif_err, scif_ovr, flow_fix;
+static int flow_on;                    /* SCIF hardware flow control wanted (DT_FLOW); off by default */   /* SCIF receive errors, overruns, times hardware flow control had to be switched off again */
 static char ui_net[40];                 /* "" = network off, else the Dreamcast's address */
 static int linked, beacons;             /* host state for the screen */
 
@@ -106,6 +107,7 @@ static int hal_getc(void) {
 static int tx_fail;
 static void hal_write(const uint8_t *b, int n) { while (n > 0) { int k = write(1, b, n); if (k <= 0) exit(0); b += k; n -= k; } }
 static void hal_flush(void) {}
+static void hal_set_flow(int on) { flow_on = on; }
 static void hal_serial_init(int baud) { (void)baud; }
 static void hal_serial_baud(int baud) { (void)baud; }
 static void hal_serial_shutdown(void) {}
@@ -161,6 +163,7 @@ static int hal_getc(void) {
 #define SCFDR2_R (*(volatile uint16_t *)0xffe8001C)
 #define SCFRDR2_R (*(volatile uint8_t *)0xffe80014)
 #define SCFCR2_RUN 0x40                 /* what scif_init writes: FIFO triggers, no hardware flow control */
+#define SCFCR2_FLOW 0x88                /* receive trigger 8 bytes + MCE: RTS goes high when the FIFO holds 8, the cable then stops sending */
 static int tx_fail;
 static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {
     (void)src; (void)cxt; (void)data;
@@ -192,13 +195,12 @@ static void dt_scif_rx(irq_t src, irq_context_t *cxt, void *data) {
     drain_fifo(0);
 }
 static void rx_pump(void) {
-    if (SCFCR2_R & 0x08) { SCFCR2_R = SCFCR2_RUN; flow_fix++; }      /* hardware flow control on: off again */
+    if ((SCFCR2_R & 0x08) && !flow_on) { SCFCR2_R = SCFCR2_RUN; flow_fix++; }      /* hardware flow control on and not wanted: off again */
     if (SCSPTR2_R & 0x40) rts_high++;                  /* the Dreamcast's RTS pin (the cable only sends while it is low) */
     if (SCFDR2_R & 0x1f) {
         irq_mask_t m = irq_disable();
         int n = SCFDR2_R & 0x1f;
         if (n) {
-            if (!(SCFSR2_R & 0x03)) trace(TR_POLL, n);   /* bytes in the FIFO and no interrupt pending for them */
             drain_fifo(1);
         }
         irq_restore(m);
@@ -230,9 +232,10 @@ static void hal_serial_init(int baud) {
     irq_set_handler(EXC_SCIF_RXI, dt_scif_rx, NULL);    /* and its receive handler */
     irq_set_handler(EXC_SCIF_ERI, dt_scif_err, NULL);   /* replace KOS's error handlers (see above) */
     irq_set_handler(EXC_SCIF_BRI, dt_scif_err, NULL);
-    SCFCR2_R = SCFCR2_RUN;
+    SCFCR2_R = flow_on ? SCFCR2_FLOW : SCFCR2_RUN;
     rxq_r = rxq_w = 0;
 }
+static void hal_set_flow(int on) { flow_on = on; SCFCR2_R = on ? SCFCR2_FLOW : SCFCR2_RUN; }
 static void hal_serial_baud(int baud) { hal_serial_init(baud); }
 static void hal_serial_shutdown(void) { scif_shutdown(); }
 static int hal_net_up(void) {
@@ -382,13 +385,13 @@ static void ui_update(void) {
       else if (b > 4800) { n = (50000000 / (128 * b) - 1) & 255; real = 50000000.0 / (128 * (n + 1)); }
       else if (b > 600) { n = (50000000 / (512 * b) - 1) & 255; real = 50000000.0 / (512 * (n + 1)); }
       else { n = (50000000 / (2048 * b) - 1) & 255; real = 50000000.0 / (2048 * (n + 1)); } }
-    scr_set(2, COL_TEXT, "Serial  %d baud (DC runs %.0f)", cur_baud, real);
+    scr_set(2, COL_TEXT, "Serial  %d baud (DC runs %.0f)%s", cur_baud, real, flow_on ? " FC" : "");
     if (ui_net[0]) scr_set(3, COL_DIM, "Host    network mode");
     else if (linked) scr_set(3, COL_GOOD, "Host    linked");
     else scr_set(3, COL_WARN, "Host    waiting for dctest.py (%d)", beacons);
     scr_set(4, COL_TEXT, "Frames  ok %u  bad %u  skip %u", st.frames_ok, ser_p.crc_bad + net_p.crc_bad + tcp_p.crc_bad,
             ser_p.resync + net_p.resync + tcp_p.resync);
-    scr_set(5, fifo_polled || rts_high ? COL_WARN : COL_TEXT, "Bytes   rx %u tx %u poll %u rts %u", st.bytes_rx, st.bytes_tx, fifo_polled, rts_high);
+    scr_set(5, COL_TEXT, "Bytes   rx %u  tx %u", st.bytes_rx, st.bytes_tx);
     if (rxq_drop || tx_fail || scif_err || scif_ovr || flow_fix)
         scr_set(6, COL_BAD, "Errors  scif %u ovr %u flow %u q %u tx %d", scif_err, scif_ovr, flow_fix, rxq_drop, tx_fail);
     else scr_set(6, COL_GOOD, "Errors  none");
@@ -469,6 +472,11 @@ static int handle(dt_io *io, const dt_frame *f) {
         act_arg = f->pay[0] | f->pay[1] << 8;
         reply(io, DT_TCPSTART, 0, f->seq, f->pay, 2);
         return ACT_TCPSTART;
+    case DT_FLOW:
+        if (f->len < 1) break;
+        hal_set_flow(f->pay[0] ? 1 : 0);
+        reply(io, DT_FLOW, 0, f->seq, f->pay, 1);
+        break;
     case DT_TRACE: {
         uint32_t total = tr_count, n = total < 32 ? total : 32;
         dt_put32(tmp, (uint32_t)hal_us()); dt_put32(tmp + 4, total);

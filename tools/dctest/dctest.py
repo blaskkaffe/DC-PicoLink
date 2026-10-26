@@ -24,7 +24,7 @@ import threading, time, zlib
 
 # ---------------------------------------------------------------- protocol (mirror of proto.h)
 S0, S1, HDR, MAXPAY = 0xD3, 0x7C, 10, 2048
-HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART, PROBE, TRACE = range(1, 14)
+HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART, PROBE, TRACE, FLOW = range(1, 15)
 REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
@@ -622,6 +622,21 @@ def hello(link, tries=10, timeout=0.3):
     return f.payload.decode(errors="replace") if f else None
 
 
+def apply_flow(c, baud):
+    """Switch the Dreamcast's hardware flow control (RTS/CTS) for this rate: --flow on/off, auto = on from 500000 baud up
+    (a 16-byte FIFO overruns in long back-to-back bursts at 1.5 Mbaud without it)."""
+    mode = getattr(c.args, "flow", "auto")
+    want = 1 if mode == "on" or (mode == "auto" and dc_effective(baud) >= 500000) else 0
+    if getattr(c, "flow", None) == want:
+        return
+    r = c.link.request(FLOW, bytes([want]), timeout=1.0, tries=3)
+    if r:
+        c.flow = want
+        c.log.line("Dreamcast hardware flow control (RTS/CTS): %s" % ("ON" if want else "off"))
+    else:
+        c.log.line("could not change the Dreamcast's flow control (old dctest?)")
+
+
 def set_baud(c, new):
     """Move DC and cable to `new`. Returns True if the DC answers there, else restores the old rate."""
     link, old = c.link, c.baud
@@ -636,6 +651,7 @@ def set_baud(c, new):
         link.quiesce(0.1)
         if hello(link, tries=6, timeout=0.5):
             c.log.line("baud %d: the DC did switch, only the acknowledgement was lost" % new)
+            apply_flow(c, new)
             return True
         c.tr.set_baud(host_rate(old, nominal))
         c.baud = old
@@ -651,6 +667,7 @@ def set_baud(c, new):
     c.baud = new
     h = hello(link, tries=8, timeout=0.4)
     if h:
+        apply_flow(c, new)
         return True
     c.log.line("baud %d: no answer; DC reverts to %d in 5 s" % (new, old))
     c.tr.set_baud(host_rate(old, getattr(c.args, "nominal_baud", False)))
@@ -1202,6 +1219,7 @@ def selftest(args, log):
     hw = detect(c)
     check("detect: W5500 found, switching planned", bool(hw and hw["w5500"] and hw["plan"]["switch"] and hw["plan"]["net"]))
     check("detect: no SD card", bool(hw and not hw["sd"]))
+    check("flow control command is acknowledged", bool(c.link.request(FLOW, b"\x01", timeout=1.0, tries=2)))
     tr = dc_trace(c.link)
     check("Dreamcast event trace works (frames seen, replies sent)", bool(tr and any(e == 1 for _, e, _ in tr[0]) and any(e == 2 for _, e, _ in tr[0])))
     args.bauds = "115200,1500000"
@@ -1492,6 +1510,8 @@ def main():
             p.add_argument("--send-anyway", action="store_true", help="do not wait for the Dreamcast's announce frames; send HELLO at once")
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
             p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
+            p.add_argument("--flow", choices=("auto", "on", "off"), default="auto",
+                           help="Dreamcast hardware flow control (RTS/CTS): auto = on from 500000 baud up")
             p.add_argument("--no-limits", action="store_true", help="try baud rates above the adapter chip's known limit")
             p.add_argument("--nominal-baud", action="store_true", help="set the requested rate on the host port (like dc-tool) instead of the "
                                                                           "Dreamcast's real rate; 115200 is then 4.3%% off")
