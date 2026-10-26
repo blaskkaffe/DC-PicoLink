@@ -24,7 +24,7 @@ import threading, time, zlib
 
 # ---------------------------------------------------------------- protocol (mirror of proto.h)
 S0, S1, HDR, MAXPAY = 0xD3, 0x7C, 10, 2048
-HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART, PROBE = range(1, 13)
+HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART, PROBE, TRACE = range(1, 14)
 REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
@@ -394,6 +394,7 @@ class Ctx:
         self.portinfo, self.hw = None, None
         self.baud = args.start_baud if hasattr(args, "start_baud") else 0
         self.echo_seq = 0
+        self.trace_budget = 4                         # failing tests that get a full timeline per run
         self.rng = random.Random(args.seed)
 
 
@@ -408,6 +409,55 @@ def frames_for(rate_bps, seconds, length, lo=3, hi=4000):
     return max(lo, min(hi, int(rate_bps / 10.0 * seconds / (length + 14))))
 
 
+TRACE_EVENTS = {1: "DC got frame", 2: "DC sent bytes", 3: "DC announce", 4: "DC transmitter slow, bytes left", 5: "DC baud change (x100)"}
+FRAME_NAMES = {HELLO: "HELLO", ECHO: "ECHO", SINK: "SINK", STATS: "STATS", CLEAR: "CLEAR", SRC: "SRC", SETBAUD: "SETBAUD", PROBE: "PROBE", TRACE: "TRACE"}
+
+
+def dc_trace(link):
+    """-> (list of (seconds_before_now, event, arg), t_reply_received) from the Dreamcast's own clock, or None."""
+    f = link.request(TRACE, timeout=1.5, tries=2)
+    t_rx = time.perf_counter()
+    if not f or len(f.payload) < 8:
+        return None
+    now_us, total = struct.unpack_from("<II", f.payload, 0)
+    out = []
+    for k in range((len(f.payload) - 8) // 8):
+        t, ev, arg = struct.unpack_from("<IHH", f.payload, 8 + 8 * k)
+        out.append((((now_us - t) & 0xFFFFFFFF) / 1e6, ev, arg))
+    return out, t_rx
+
+
+def log_timeline(c, label, host_events, t0):
+    """Merge what the host did (S = sent, R = received) with what the Dreamcast says it did, on one clock
+    (the Dreamcast's clock is aligned to the arrival of its TRACE reply, so it is good to about a millisecond)."""
+    if c.trace_budget <= 0:
+        return
+    c.trace_budget -= 1
+    tr = dc_trace(c.link)
+    lines = []
+    for t, kind, seq in host_events:
+        lines.append((t - t0, "host %s #%d" % ("sent" if kind == "S" else "got reply", seq & 0xFFFF)))
+    if tr:
+        evs, t_rx = tr
+        for before, ev, arg in evs:
+            t = t_rx - before - t0
+            if t > -0.3:
+                what = TRACE_EVENTS.get(ev, "event %d" % ev)
+                if ev == 1:
+                    what += " %s #%d" % (FRAME_NAMES.get(arg >> 8, hex(arg >> 8)), arg & 255)
+                elif ev in (2, 4, 5):
+                    what += " %d" % arg
+                lines.append((t, what))
+    else:
+        lines.append((0.0, "(the Dreamcast did not answer TRACE)"))
+    lines.sort(key=lambda x: x[0])
+    c.log.line("timeline for %s (seconds from the first send; host and DC on one clock):" % label)
+    for t, what in lines[:70]:
+        c.log.line("   %+8.3f  %s" % (t, what), "trace| ")
+    if len(lines) > 70:
+        c.log.line("   ... %d more" % (len(lines) - 70), "trace| ")
+
+
 def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
     """Send `count` ECHO frames (window outstanding), verify every reply. Duplex traffic."""
     link = c.link
@@ -415,6 +465,7 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
     s0 = link.stats(tries=1)                      # the Dreamcast's counters before the run, to tell lost from late from never-received
     p0 = (link.parser.crc_bad, link.parser.resync)
     pend, ok, bad, dup = {}, 0, 0, 0
+    hev = []                                       # host-side timeline (first 40 events)
     base = c.echo_seq
     c.echo_seq += count + 1000
     sent = 0
@@ -431,6 +482,8 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
             pay = pattern(pat, seed, seq, length)
             pend[seq] = pay
             link.send(ECHO, pay, flags=pat, seq=seq)
+            if len(hev) < 40:
+                hev.append((time.perf_counter(), "S", seq))
             sent += 1
             last = time.perf_counter()
         link.pump(0.002 if len(pend) >= window or sent < count else 0.02)
@@ -439,6 +492,8 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
             if f.type != ECHO | REPLY:
                 continue
             exp = pend.pop(f.seq, None)
+            if len(hev) < 40:
+                hev.append((time.perf_counter(), "R", f.seq))
             if exp is None:
                 dup += 1
             elif exp == f.payload and f.flags == pat:
@@ -473,6 +528,8 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
         elif s0 and not s1:
             diag = dict(dc_stats="no answer")
     lost = len(pend)
+    if (lost or late) and hev:
+        log_timeline(c, "%s %s len=%d" % (name, PAT_NAMES[pat], length), hev, hev[0][0])
     hb = link.parser.crc_bad - p0[0]
     c.log.result(dict(name=name, ok=lost == 0 and bad == 0 and dup == 0 and hb == 0 and late == 0, pat=PAT_NAMES[pat], len=length,
                       n=count, lost=lost, late=late, bad=bad, dup=dup, host_crc=hb, host_skipped=link.parser.resync - p0[1],
@@ -1127,6 +1184,8 @@ def selftest(args, log):
     hw = detect(c)
     check("detect: W5500 found, switching planned", bool(hw and hw["w5500"] and hw["plan"]["switch"] and hw["plan"]["net"]))
     check("detect: no SD card", bool(hw and not hw["sd"]))
+    tr = dc_trace(c.link)
+    check("Dreamcast event trace works (frames seen, replies sent)", bool(tr and any(e == 1 for _, e, _ in tr[0]) and any(e == 2 for _, e, _ in tr[0])))
     args.bauds = "115200,1500000"
     cmd_serial(c)
     args.baud, args.modes, args.length = 115200, "echo,sink,src", 128

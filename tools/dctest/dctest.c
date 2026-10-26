@@ -30,6 +30,9 @@
 /* ---------- hardware layer ---------- */
 static void hal_log(const char *fmt, ...);
 static uint32_t rxq_drop;               /* bytes lost because our own receive queue was full */
+/* event trace: what the Dreamcast saw and did, with its own microsecond clock (fetched with DT_TRACE) */
+enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5 };
+static void trace(int ev, int arg);
 static uint32_t scif_err, scif_ovr, flow_fix;   /* SCIF receive errors, overruns, times hardware flow control had to be switched off again */
 static char ui_net[40];                 /* "" = network off, else the Dreamcast's address */
 static int linked, beacons;             /* host state for the screen */
@@ -172,6 +175,7 @@ static void rx_pump(void) {
 }
 static void hal_write(const uint8_t *b, int n) {
     uint64_t t0 = timer_us_gettime64();
+    int noted = 0;
     while (n > 0) {
         if (SCFSR2_R & 0x20) {                         /* TDFE: room in the transmit FIFO */
             SCFTDR2_R = *b++; n--;
@@ -179,6 +183,7 @@ static void hal_write(const uint8_t *b, int n) {
             t0 = timer_us_gettime64();
         } else {
             rx_pump();
+            if (!noted && timer_us_gettime64() - t0 > 5000) { noted = 1; trace(TR_TXWAIT, n); }   /* transmitter slow: record it */
             if (timer_us_gettime64() - t0 > 2000000) { tx_fail++; return; }   /* transmitter stuck: drop this frame, carry on */
         }
     }
@@ -254,6 +259,14 @@ static void hal_probe(uint8_t *w5, uint8_t *sd) {
 
 static uint32_t hal_ms(void) { return (uint32_t)(hal_us() / 1000); }
 
+#define TR_N 128
+static struct { uint32_t t_us; uint16_t ev, arg; } tr_ring[TR_N];
+static uint32_t tr_count;
+static void trace(int ev, int arg) {
+    uint32_t i = tr_count++ & (TR_N - 1);
+    tr_ring[i].t_us = (uint32_t)hal_us(); tr_ring[i].ev = (uint16_t)ev; tr_ring[i].arg = (uint16_t)arg;
+}
+
 /* ---------- state ---------- */
 typedef struct {
     uint32_t frames_ok, crc_bad, resync, bytes_rx, bytes_tx, pat_bad, seq_gap, frames_tx,
@@ -277,7 +290,7 @@ typedef struct dt_io {
     struct sockaddr_in peer;
 } dt_io;
 
-static void ser_tx(dt_io *io, const uint8_t *b, int n) { (void)io; hal_write(b, n); st.bytes_tx += n; }
+static void ser_tx(dt_io *io, const uint8_t *b, int n) { (void)io; hal_write(b, n); st.bytes_tx += n; trace(TR_TX, n); }
 static void udp_tx(dt_io *io, const uint8_t *b, int n) {
     sendto(io->fd, b, n, 0, (struct sockaddr *)&io->peer, sizeof io->peer); st.bytes_tx += n;
 }
@@ -423,6 +436,18 @@ static int handle(dt_io *io, const dt_frame *f) {
         act_arg = f->pay[0] | f->pay[1] << 8;
         reply(io, DT_TCPSTART, 0, f->seq, f->pay, 2);
         return ACT_TCPSTART;
+    case DT_TRACE: {
+        uint32_t total = tr_count, n = total < 32 ? total : 32;
+        dt_put32(tmp, (uint32_t)hal_us()); dt_put32(tmp + 4, total);
+        for (uint32_t k = 0; k < n; k++) {
+            uint32_t idx = (total - n + k) & (TR_N - 1);
+            dt_put32(tmp + 8 + 8 * k, tr_ring[idx].t_us);
+            tmp[12 + 8 * k] = tr_ring[idx].ev; tmp[13 + 8 * k] = tr_ring[idx].ev >> 8;
+            tmp[14 + 8 * k] = tr_ring[idx].arg; tmp[15 + 8 * k] = tr_ring[idx].arg >> 8;
+        }
+        reply(io, DT_TRACE, 0, f->seq, tmp, 8 + 8 * n);
+        break;
+    }
     case DT_PROBE: {
         if (io->fd < 0 && ((f->len >= 1 && f->pay[0]) || !probed)) { act_seq = f->seq; return ACT_PROBE; }   /* first request or rerun: serial only */
         probe_reply(io, f->seq);
@@ -574,6 +599,7 @@ int main(int argc, char **argv) {
                 last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
                 if (tx_fail && !(tx_fail & 7)) hal_log("TX failed: KOS disabled the SCIF");
                 beacons++;
+                trace(TR_BEACON, 0);
                 reply(&sio, DT_HELLO, 0, 0, (const uint8_t *)"dctest", 6);
             }
             if (now - last_show > 250) { last_show = now; ui_update(); }
@@ -588,6 +614,7 @@ int main(int argc, char **argv) {
         dt_io io = {ser_tx, -1, {0}};
         int r = dt_feed(&ser_p, c, &f);
         while (r) {
+            trace(TR_RX, f.type << 8 | (f.seq & 255));
             revert_at = 0;                        /* a good frame at the new rate confirms it */
             linked = 1;
             switch (handle(&io, &f)) {
@@ -597,6 +624,7 @@ int main(int argc, char **argv) {
                 revert_at = hal_ms() + REVERT_MS;
                 linked = 0; last_beacon = hal_ms();
                 ser_p.n = ser_p.pending = 0;
+                trace(TR_BAUD, cur_baud / 100);
                 hal_log("baud -> %d", cur_baud);
                 break;
             case ACT_PROBE:

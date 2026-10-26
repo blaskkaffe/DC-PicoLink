@@ -23,6 +23,7 @@ enum {
     DT_NETSTART = 9, /* u16 port: leave serial, bring up the W5500, serve UDP on that port */
     DT_NETSTOP = 10, /* (over UDP/TCP) leave the network, back to serial */
     DT_TCPSTART = 11,/* (over UDP) u16 port: accept one TCP connection, same protocol on the stream */
+    DT_TRACE = 13,   /* -> u32 DC clock (us), u32 events so far, then up to 32 x {u32 t_us, u16 event, u16 arg}, oldest first */
     DT_PROBE = 12,   /* u8 rerun -> 8 bytes: W5500 version reg, SD R1, dcload type at start, flags, u32 baud */
     DT_REPLY = 0x80
 };
