@@ -1261,13 +1261,19 @@ class CableLog:
             except usb.core.USBError as e:
                 if getattr(e, "errno", None) in (60, 110) or "timed out" in str(e).lower():
                     continue
-                self.log.line("cable log stopped: %s" % e, "cable| ")
+                if not self.stop.is_set():                      # at shutdown the device handle just goes away
+                    self.log.line("cable log stopped: %s" % e, "cable| ")
                 return
             buf += bytes(data)
             CableLog.parse(buf, emit)
 
     def close(self):
         self.stop.set()
+        if self.thread:
+            self.thread.join(1.5)                               # let the last read finish before the process exits
+
+
+_CABLE_LOGS = []
 
 
 def start_cable_log(args, log, info):
@@ -1282,6 +1288,7 @@ def start_cable_log(args, log, info):
         log.line("cable's own log not available: " + why)
         return None
     log.line("reading the cable's own status lines (lines marked 'cable|')")
+    _CABLE_LOGS.append(cl)
     return cl
 
 
@@ -1388,14 +1395,11 @@ def main():
             cl = start_cable_log(args, log, pick_port(args.port))
             if cl:
                 time.sleep(args.seconds)
-                cl.close()
             ok = cl is not None
         elif args.cmd == "listen":
             cl = start_cable_log(args, log, pick_port(args.port))
             ok = cmd_listen(args, log)
-            if cl:
-                time.sleep(1.0)                  # let the cable's last lines in
-                cl.close()
+
         else:
             direct = args.cmd == "net" and args.dc_ip and not args.port
             info = None if direct else pick_port(args.port)
@@ -1430,6 +1434,10 @@ def main():
         log.summary()
         ok = False
     finally:
+        if _CABLE_LOGS:
+            time.sleep(0.7)                                     # the cable's last lines (mode changes at the end of a run)
+            for cl in _CABLE_LOGS:
+                cl.close()
         if fw:
             fw.kill()
     return 0 if ok else 1
