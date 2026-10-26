@@ -83,6 +83,15 @@ it on a machine where the `dcsd` service is running (it owns that interface): re
 The W5500 / SD probe is **not** run at start-up (it makes the cable switch to SPI mode and back): the Dreamcast
 announces itself on serial first, and probes when `detect` asks for it.
 
+## Reading a failed echo test
+
+A failing `echo` line says what happened to the missing frames: `late` = the reply did arrive, but only after the
+test gave up (we send more traffic and see whether it shows up); `lost` = never; `dc_got` = how many of the requests
+the Dreamcast counted (if it is lower than `n`, they were lost on the way to it; if equal, the replies were lost on the
+way back); `dc_scif_err` / `dc_ovr` = receive errors and overruns the Dreamcast's serial chip reported; `dc_flow` = times
+the Dreamcast's serial chip had hardware flow control switched on (KOS does that after any error; dctest switches it off
+again). The same counters are in the `Errors` row of the Dreamcast screen.
+
 ## Setup
 
 

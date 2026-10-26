@@ -45,3 +45,9 @@ void dbgio_disable(void);
 #define BFONT_CODE_ISO8859_1 0
 void bfont_set_encoding(int enc);
 void bfont_draw_str_ex(void *b, uint32_t width, uint32_t fg, uint32_t bg, uint8_t bpp, _Bool opaque, const char *str);
+typedef int irq_t;
+typedef struct { int dummy; } irq_context_t;
+typedef void (*irq_hdl_t)(irq_t, irq_context_t *, void *);
+#define EXC_SCIF_ERI 0x0700
+#define EXC_SCIF_BRI 0x0720
+int irq_set_handler(irq_t code, irq_hdl_t hnd, void *data);

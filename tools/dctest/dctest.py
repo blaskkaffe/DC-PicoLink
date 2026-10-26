@@ -28,7 +28,8 @@ HELLO, ECHO, SINK, STATS, CLEAR, SRC, SETBAUD, DATA, NETSTART, NETSTOP, TCPSTART
 REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
-               "frames_tx", "baud", "uptime_ms", "reverts", "echo_frames", "sink_frames"]
+               "frames_tx", "baud", "uptime_ms", "reverts", "echo_frames", "sink_frames",
+               "scif_err", "scif_overrun", "flow_fixed"]
 M32 = 0xFFFFFFFF
 
 
@@ -370,7 +371,11 @@ class Link:
         f = self.request(STATS, timeout=1.0, tries=tries)
         if not f or len(f.payload) < 52:
             return None
-        return dict(zip(STAT_FIELDS, struct.unpack("<13I", f.payload[:52])))
+        n = 16 if len(f.payload) >= 64 else 13
+        d = dict(zip(STAT_FIELDS, struct.unpack("<%dI" % n, f.payload[:4 * n])))
+        for k in STAT_FIELDS[n:]:
+            d[k] = 0
+        return d
 
 
 def pace(deadline):
@@ -407,6 +412,7 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
     """Send `count` ECHO frames (window outstanding), verify every reply. Duplex traffic."""
     link = c.link
     link.quiesce()
+    s0 = link.stats(tries=1)                      # the Dreamcast's counters before the run, to tell lost from late from never-received
     p0 = (link.parser.crc_bad, link.parser.resync)
     pend, ok, bad, dup = {}, 0, 0, 0
     base = c.echo_seq
@@ -443,12 +449,35 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
         if pend and time.perf_counter() - last > stall:
             break
     el = time.perf_counter() - t0
+    late, diag = 0, {}
+    if pend:                                       # lost or just late? Send more traffic and see whether the missing replies show up
+        link.rid += 1
+        probe_id = link.rid
+        link.send(HELLO, seq=probe_id)
+        t_end = time.perf_counter() + 2.0
+        while time.perf_counter() < t_end:
+            link.pump(0.05)
+            while link.q:
+                f = link.q.popleft()
+                if f.type == ECHO | REPLY and f.seq in pend:
+                    if pend[f.seq] == f.payload:
+                        late += 1
+                    pend.pop(f.seq)
+                elif f.type == HELLO | REPLY and f.seq == probe_id:
+                    t_end = min(t_end, time.perf_counter() + 0.3)
+        s1 = link.stats(tries=2)
+        if s0 and s1:
+            diag = dict(dc_got=s1["echo_frames"] - s0["echo_frames"], dc_crc=s1["crc_bad"] - s0["crc_bad"],
+                        dc_scif_err=s1["scif_err"] - s0["scif_err"], dc_ovr=s1["scif_overrun"] - s0["scif_overrun"],
+                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"])
+        elif s0 and not s1:
+            diag = dict(dc_stats="no answer")
     lost = len(pend)
     hb = link.parser.crc_bad - p0[0]
-    c.log.result(dict(name=name, ok=lost == 0 and bad == 0 and dup == 0 and hb == 0, pat=PAT_NAMES[pat], len=length,
-                      n=count, lost=lost, bad=bad, dup=dup, host_crc=hb, host_skipped=link.parser.resync - p0[1],
-                      kBps_each_way=round(count * length / el / 1000.0, 1), **info))
-    return lost == 0 and bad == 0
+    c.log.result(dict(name=name, ok=lost == 0 and bad == 0 and dup == 0 and hb == 0 and late == 0, pat=PAT_NAMES[pat], len=length,
+                      n=count, lost=lost, late=late, bad=bad, dup=dup, host_crc=hb, host_skipped=link.parser.resync - p0[1],
+                      kBps_each_way=round(count * length / el / 1000.0, 1), **diag, **info))
+    return lost == 0 and bad == 0 and late == 0
 
 
 def sink_run(c, name, count, length, pat, seed, interval=0.0, **info):
@@ -540,8 +569,22 @@ def set_baud(c, new):
     link.quiesce(0.05)
     r = link.request(SETBAUD, struct.pack("<I", new), timeout=1.0, tries=3)
     if not r:
-        c.log.line("baud %d: DC did not acknowledge the switch" % new)
-        return False
+        # the acknowledgement may be what got lost: the Dreamcast switches 30 ms after sending it
+        c.log.line("baud %d: no acknowledgement; checking whether the DC switched anyway" % new)
+        nominal = getattr(c.args, "nominal_baud", False)
+        c.tr.set_baud(host_rate(new, nominal))
+        c.baud = new
+        link.quiesce(0.1)
+        if hello(link, tries=6, timeout=0.5):
+            c.log.line("baud %d: the DC did switch, only the acknowledgement was lost" % new)
+            return True
+        c.tr.set_baud(host_rate(old, nominal))
+        c.baud = old
+        time.sleep(6.0)                              # a Dreamcast that had switched returns to the old rate after 5 s
+        link.quiesce(0.3)
+        if hello(link, tries=6, timeout=0.5):
+            return False
+        raise RuntimeError("lost the DC while trying baud %d (restart dctest on the Dreamcast)" % new)
     time.sleep(0.15)
     c.tr.set_baud(host_rate(new, getattr(c.args, "nominal_baud", False)))
     link.chan.drain() if hasattr(link.chan, "drain") else None
