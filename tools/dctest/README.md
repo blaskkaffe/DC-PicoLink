@@ -151,10 +151,10 @@ yet: the CI job builds it, but no `dctest.elf` has been tried on a console. If t
 difference, send me the log. Things I could not check without hardware: the W5500/SD probe
 bit-banging, and how the cable reacts to the probe at start.
 
-**Flow control.** At about 1.5 Mbaud the Dreamcast's 16-byte serial FIFO overruns now and then in long back-to-back bursts
-(one lost frame per ~110 KB, `dc_ovr` in the failing line). `--flow on|off|auto` switches the Dreamcast's hardware flow control
-(RTS/CTS; the cable stops sending while the Dreamcast's RTS is high); `auto` (default) turns it on from 500000 baud up, and the
-screen shows `FC` next to the rate when it is on.
+**Flow control.** `--flow on|off|auto` switches the Dreamcast's hardware flow control (RTS/CTS; the cable stops sending while
+the Dreamcast's RTS is high, `FC` on the screen). The default is off: on the first cable tried it halved the echo throughput,
+stalled the Dreamcast's replies for ~0.8 s and did not stop the overruns. At 1.56 Mbaud with flow control off all echo
+tests pass; only a 3 s back-to-back sink burst (the full line rate) loses 1-2 frames out of 445.
 
 Known limit on the Dreamcast side: KOS receives on the SCIF through a 1 KB interrupt ring with no hardware flow
 control. `dctest` drains it into its own 16 KB queue between 16-byte chunks of every transmission, and the

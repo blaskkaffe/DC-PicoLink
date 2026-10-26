@@ -162,7 +162,7 @@ static int hal_getc(void) {
 #define SCSPTR2_R (*(volatile uint16_t *)0xffe80020)
 #define SCFDR2_R (*(volatile uint16_t *)0xffe8001C)
 #define SCFRDR2_R (*(volatile uint8_t *)0xffe80014)
-#define SCFCR2_RUN 0x40                 /* what scif_init writes: FIFO triggers, no hardware flow control */
+#define SCFCR2_RUN 0x00                 /* receive trigger 1 byte (scif_init writes 0x40 = 4 bytes: 12 bytes of headroom, now 15), no hardware flow control */
 #define SCFCR2_FLOW 0x88                /* receive trigger 8 bytes + MCE: RTS goes high when the FIFO holds 8, the cable then stops sending */
 static int tx_fail;
 static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {

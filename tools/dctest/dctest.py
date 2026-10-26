@@ -623,9 +623,9 @@ def hello(link, tries=10, timeout=0.3):
 
 
 def apply_flow(c, baud):
-    """Switch the Dreamcast's hardware flow control (RTS/CTS) for this rate: --flow on/off, auto = on from 500000 baud up
-    (a 16-byte FIFO overruns in long back-to-back bursts at 1.5 Mbaud without it)."""
-    mode = getattr(c.args, "flow", "auto")
+    """Switch the Dreamcast's hardware flow control (RTS/CTS) for this rate: --flow on/off, auto = on from 500000 baud up.
+    Default is off: on hardware it halved the echo throughput, stalled the Dreamcast's replies and did not stop the overruns."""
+    mode = getattr(c.args, "flow", "off")
     want = 1 if mode == "on" or (mode == "auto" and dc_effective(baud) >= 500000) else 0
     if getattr(c, "flow", None) == want:
         return
@@ -1510,8 +1510,8 @@ def main():
             p.add_argument("--send-anyway", action="store_true", help="do not wait for the Dreamcast's announce frames; send HELLO at once")
             p.add_argument("--reprobe", action="store_true", help="make the Dreamcast probe its SPI pins again (the cable blips)")
             p.add_argument("--force", action="store_true", help="run W5500 / switching tests even if the hardware was not found")
-            p.add_argument("--flow", choices=("auto", "on", "off"), default="auto",
-                           help="Dreamcast hardware flow control (RTS/CTS): auto = on from 500000 baud up")
+            p.add_argument("--flow", choices=("auto", "on", "off"), default="off",
+                           help="Dreamcast hardware flow control (RTS/CTS), experimental: it made things worse on the first cable tried")
             p.add_argument("--no-limits", action="store_true", help="try baud rates above the adapter chip's known limit")
             p.add_argument("--nominal-baud", action="store_true", help="set the requested rate on the host port (like dc-tool) instead of the "
                                                                           "Dreamcast's real rate; 115200 is then 4.3%% off")
