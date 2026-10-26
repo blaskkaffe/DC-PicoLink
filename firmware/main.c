@@ -867,6 +867,7 @@ static void autobaud_task(void) {
         win[wn++] = cyc;
         if (wn < 32) continue;
         wn = 0;
+        if (!abw_usable(win, 32)) continue;            /* all pulses equal: a run of zero bytes looks like a slow DC */
         uint32_t m = 0xFFFFFFFFu;
         for (int i = 0; i < 32; i++) if (win[i] < m) m = win[i];
         uint64_t sum = 0; uint32_t cnt = 0;
