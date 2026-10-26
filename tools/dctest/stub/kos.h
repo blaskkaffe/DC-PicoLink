@@ -49,5 +49,9 @@ typedef int irq_t;
 typedef struct { int dummy; } irq_context_t;
 typedef void (*irq_hdl_t)(irq_t, irq_context_t *, void *);
 #define EXC_SCIF_ERI 0x0700
-#define EXC_SCIF_BRI 0x0720
+#define EXC_SCIF_RXI 0x0720
+#define EXC_SCIF_BRI 0x0740
 int irq_set_handler(irq_t code, irq_hdl_t hnd, void *data);
+typedef int irq_mask_t;
+irq_mask_t irq_disable(void);
+void irq_restore(irq_mask_t state);

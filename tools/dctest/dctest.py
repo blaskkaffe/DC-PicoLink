@@ -29,7 +29,7 @@ REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
                "frames_tx", "baud", "uptime_ms", "reverts", "echo_frames", "sink_frames",
-               "scif_err", "scif_overrun", "flow_fixed"]
+               "scif_err", "scif_overrun", "flow_fixed", "fifo_polled", "rts_high"]
 M32 = 0xFFFFFFFF
 
 
@@ -371,7 +371,7 @@ class Link:
         f = self.request(STATS, timeout=1.0, tries=tries)
         if not f or len(f.payload) < 52:
             return None
-        n = 16 if len(f.payload) >= 64 else 13
+        n = 18 if len(f.payload) >= 72 else 16 if len(f.payload) >= 64 else 13
         d = dict(zip(STAT_FIELDS, struct.unpack("<%dI" % n, f.payload[:4 * n])))
         for k in STAT_FIELDS[n:]:
             d[k] = 0
@@ -409,7 +409,8 @@ def frames_for(rate_bps, seconds, length, lo=3, hi=4000):
     return max(lo, min(hi, int(rate_bps / 10.0 * seconds / (length + 14))))
 
 
-TRACE_EVENTS = {1: "DC got frame", 2: "DC sent bytes", 3: "DC announce", 4: "DC transmitter slow, bytes left", 5: "DC baud change (x100)"}
+TRACE_EVENTS = {1: "DC got frame", 2: "DC sent bytes", 3: "DC announce", 4: "DC transmitter slow, bytes left", 5: "DC baud change (x100)",
+                6: "DC found bytes in the serial FIFO that no interrupt was delivering, count"}
 FRAME_NAMES = {HELLO: "HELLO", ECHO: "ECHO", SINK: "SINK", STATS: "STATS", CLEAR: "CLEAR", SRC: "SRC", SETBAUD: "SETBAUD", PROBE: "PROBE", TRACE: "TRACE"}
 
 
@@ -445,7 +446,7 @@ def log_timeline(c, label, host_events, t0):
                 what = TRACE_EVENTS.get(ev, "event %d" % ev)
                 if ev == 1:
                     what += " %s #%d" % (FRAME_NAMES.get(arg >> 8, hex(arg >> 8)), arg & 255)
-                elif ev in (2, 4, 5):
+                elif ev in (2, 4, 5, 6):
                     what += " %d" % arg
                 lines.append((t, what))
     else:
@@ -524,7 +525,8 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
         if s0 and s1:
             diag = dict(dc_got=s1["echo_frames"] - s0["echo_frames"], dc_crc=s1["crc_bad"] - s0["crc_bad"],
                         dc_scif_err=s1["scif_err"] - s0["scif_err"], dc_ovr=s1["scif_overrun"] - s0["scif_overrun"],
-                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"])
+                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"], dc_polled=s1["fifo_polled"] - s0["fifo_polled"],
+                        dc_rts_hi=s1["rts_high"] - s0["rts_high"])
         elif s0 and not s1:
             diag = dict(dc_stats="no answer")
     lost = len(pend)

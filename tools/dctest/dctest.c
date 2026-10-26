@@ -31,8 +31,9 @@
 static void hal_log(const char *fmt, ...);
 static uint32_t rxq_drop;               /* bytes lost because our own receive queue was full */
 /* event trace: what the Dreamcast saw and did, with its own microsecond clock (fetched with DT_TRACE) */
-enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5 };
+enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5, TR_POLL = 6 };
 static void trace(int ev, int arg);
+static uint32_t fifo_polled, rts_high;   /* bytes the main loop found in the SCIF FIFO itself; samples with the Dreamcast's RTS pin high */
 static uint32_t scif_err, scif_ovr, flow_fix;   /* SCIF receive errors, overruns, times hardware flow control had to be switched off again */
 static char ui_net[40];                 /* "" = network off, else the Dreamcast's address */
 static int linked, beacons;             /* host state for the screen */
@@ -137,7 +138,7 @@ static void hal_yield(void) { thd_pass(); }
    would overflow at every baud rate. Our queue is drained between 16-byte chunks of every transmission. */
 #define RXQ 16384
 static uint8_t rxq[RXQ];
-static uint32_t rxq_w, rxq_r;
+static volatile uint32_t rxq_w, rxq_r;
 static void rx_pump(void);
 static int hal_getc(void) {
     if (rxq_r == rxq_w) rx_pump();
@@ -156,6 +157,9 @@ static int hal_getc(void) {
 #define SCFSR2_R (*(volatile uint16_t *)0xffe80010)
 #define SCFCR2_R (*(volatile uint16_t *)0xffe80018)
 #define SCLSR2_R (*(volatile uint16_t *)0xffe80024)
+#define SCSPTR2_R (*(volatile uint16_t *)0xffe80020)
+#define SCFDR2_R (*(volatile uint16_t *)0xffe8001C)
+#define SCFRDR2_R (*(volatile uint8_t *)0xffe80014)
 #define SCFCR2_RUN 0x40                 /* what scif_init writes: FIFO triggers, no hardware flow control */
 static int tx_fail;
 static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {
@@ -166,11 +170,35 @@ static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {
     (void)SCLSR2_R; SCLSR2_R = 0;
     SCSCR2_R &= ~0x08; SCSCR2_R |= 0x08;              /* acknowledge, as KOS's handler does */
 }
+/* Receive: our own interrupt handler and queue instead of KOS's ring (1 KB, shared counter without locking).
+   The handler clears the RDF/DR flags BEFORE draining the FIFO: a byte arriving afterwards raises them again,
+   so nothing is left behind without an interrupt. The main loop also looks into the FIFO itself (interrupts off
+   while it does, so there is one producer at a time); bytes it finds there with no RDF/DR pending were not going
+   to be delivered by an interrupt: counted in fifo_polled and traced. */
+static void drain_fifo(int polled) {
+    SCFSR2_R &= ~0x03;
+    while (SCFDR2_R & 0x1f) {
+        uint8_t b = SCFRDR2_R;
+        if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = b; else rxq_drop++;
+        if (polled) fifo_polled++;
+    }
+}
+static void dt_scif_rx(irq_t src, irq_context_t *cxt, void *data) {
+    (void)src; (void)cxt; (void)data;
+    SCSCR2_R &= ~0x40; SCSCR2_R |= 0x40;               /* acknowledge, as KOS's handler does */
+    drain_fifo(0);
+}
 static void rx_pump(void) {
     if (SCFCR2_R & 0x08) { SCFCR2_R = SCFCR2_RUN; flow_fix++; }      /* hardware flow control on: off again */
-    int c;
-    while ((c = scif_read()) >= 0) {
-        if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = (uint8_t)c; else rxq_drop++;
+    if (SCSPTR2_R & 0x40) rts_high++;                  /* the Dreamcast's RTS pin (the cable only sends while it is low) */
+    if (SCFDR2_R & 0x1f) {
+        irq_mask_t m = irq_disable();
+        int n = SCFDR2_R & 0x1f;
+        if (n) {
+            if (!(SCFSR2_R & 0x03)) trace(TR_POLL, n);   /* bytes in the FIFO and no interrupt pending for them */
+            drain_fifo(1);
+        }
+        irq_restore(m);
     }
 }
 static void hal_write(const uint8_t *b, int n) {
@@ -196,6 +224,7 @@ static void hal_flush(void) {
 /* scif_set_parameters only stores the rate; scif_init applies it (and clears the IRQ enables). */
 static void hal_serial_init(int baud) {
     scif_set_parameters(baud, 1); scif_init(); scif_set_irq_usage(1);
+    irq_set_handler(EXC_SCIF_RXI, dt_scif_rx, NULL);    /* and its receive handler */
     irq_set_handler(EXC_SCIF_ERI, dt_scif_err, NULL);   /* replace KOS's error handlers (see above) */
     irq_set_handler(EXC_SCIF_BRI, dt_scif_err, NULL);
     SCFCR2_R = SCFCR2_RUN;
@@ -270,7 +299,7 @@ static void trace(int ev, int arg) {
 /* ---------- state ---------- */
 typedef struct {
     uint32_t frames_ok, crc_bad, resync, bytes_rx, bytes_tx, pat_bad, seq_gap, frames_tx,
-             baud, uptime_ms, reverts, echo_frames, sink_frames, scif_err, scif_overrun, flow_fixed;
+             baud, uptime_ms, reverts, echo_frames, sink_frames, scif_err, scif_overrun, flow_fixed, fifo_polled, rts_high;
 } dt_stats;
 static dt_stats st;
 static uint32_t t_start, sink_seed, sink_next;
@@ -319,8 +348,9 @@ static void pack_stats(uint8_t *o) {
     st.resync = ser_p.resync + net_p.resync + tcp_p.resync;
     st.baud = cur_baud; st.uptime_ms = hal_ms() - t_start;
     st.scif_err = scif_err; st.scif_overrun = scif_ovr; st.flow_fixed = flow_fix;
+    st.fifo_polled = fifo_polled; st.rts_high = rts_high;
     const uint32_t *s = (const uint32_t *)&st;
-    for (int i = 0; i < 16; i++) dt_put32(o + 4 * i, s[i]);
+    for (int i = 0; i < 18; i++) dt_put32(o + 4 * i, s[i]);
 }
 
 static void probe_reply(dt_io *io, uint32_t seq) {
@@ -355,7 +385,7 @@ static void ui_update(void) {
     else scr_set(3, COL_WARN, "Host    waiting for dctest.py (%d)", beacons);
     scr_set(4, COL_TEXT, "Frames  ok %u  bad %u  skip %u", st.frames_ok, ser_p.crc_bad + net_p.crc_bad + tcp_p.crc_bad,
             ser_p.resync + net_p.resync + tcp_p.resync);
-    scr_set(5, COL_TEXT, "Bytes   rx %u  tx %u", st.bytes_rx, st.bytes_tx);
+    scr_set(5, fifo_polled || rts_high ? COL_WARN : COL_TEXT, "Bytes   rx %u tx %u poll %u rts %u", st.bytes_rx, st.bytes_tx, fifo_polled, rts_high);
     if (rxq_drop || tx_fail || scif_err || scif_ovr || flow_fix)
         scr_set(6, COL_BAD, "Errors  scif %u ovr %u flow %u q %u tx %d", scif_err, scif_ovr, flow_fix, rxq_drop, tx_fail);
     else scr_set(6, COL_GOOD, "Errors  none");
@@ -392,7 +422,7 @@ static int handle(dt_io *io, const dt_frame *f) {
         break;
     case DT_STATS:
         pack_stats(tmp);
-        reply(io, DT_STATS, 0, f->seq, tmp, 64);
+        reply(io, DT_STATS, 0, f->seq, tmp, 72);
         break;
     case DT_CLEAR: {
         uint32_t b = cur_baud, up = st.uptime_ms, rv = st.reverts;
