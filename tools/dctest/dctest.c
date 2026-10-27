@@ -26,6 +26,7 @@
 #endif
 #define BAUD_START 115200
 #define REVERT_MS 5000
+static int silent_ms = 20000;          /* no host for this long at a rate other than the start rate: back to the start rate */
 
 /* ---------- hardware layer ---------- */
 static void hal_log(const char *fmt, ...);
@@ -627,11 +628,12 @@ int main(int argc, char **argv) {
     hal_log("serial running");
     probe_show();
     ui_update();
-    uint32_t last_rx = hal_ms(), last_show = 0, last_beacon = 0;
+    uint32_t last_rx = hal_ms(), last_show = 0, last_beacon = 0, last_good = hal_ms();
     int ticks = 0;
     dt_io sio = {ser_tx, -1, {0}};
 #ifdef DCTEST_HOST
     if (getenv("DCTEST_NET_IDLE_MS")) net_idle_ms = atoi(getenv("DCTEST_NET_IDLE_MS"));
+    if (getenv("DCTEST_SILENT_MS")) silent_ms = atoi(getenv("DCTEST_SILENT_MS"));
 #endif
     uint32_t loop_t = hal_ms();
     for (;;) {
@@ -644,6 +646,11 @@ int main(int argc, char **argv) {
             check_revert();
             uint32_t now = hal_ms();
             if (linked && now - last_rx > 3000) { linked = 0; beacons = 0; last_beacon = 0; }   /* host gone quiet (or restarted): announce again */
+            if (!linked && cur_baud != BAUD_START && now - last_good > (uint32_t)silent_ms) {   /* a run of the tool ended at another rate: a new one starts at the start rate */
+                prev_baud = cur_baud; cur_baud = BAUD_START; hal_serial_baud(cur_baud); revert_at = 0;
+                last_good = now; last_beacon = 0; beacons = 0;
+                hal_log("no host for %d s, back to %d", silent_ms / 1000, cur_baud);
+            }
             if (!linked && now - last_beacon >= 300) {         /* nobody has talked to us yet at this rate: announce ourselves. */
                 last_beacon = now;                              /* The cable only learns the DC's real rate from what the DC sends. */
                 if (tx_fail && !(tx_fail & 7)) hal_log("TX failed: KOS disabled the SCIF");
@@ -665,7 +672,7 @@ int main(int argc, char **argv) {
         while (r) {
             trace(TR_RX, f.type << 8 | (f.seq & 255));
             revert_at = 0;                        /* a good frame at the new rate confirms it */
-            linked = 1;
+            linked = 1; last_good = hal_ms();
             switch (handle(&io, &f)) {
             case ACT_SETBAUD:
                 hal_flush(); hal_sleep_ms(30);

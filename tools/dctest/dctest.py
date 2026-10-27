@@ -1286,6 +1286,14 @@ def selftest(args, log):
         back = hello(c.link, tries=20, timeout=0.5)
         check("Dreamcast returns to serial after the idle timeout (%.1f s)" % (time.time() - t), bool(back))
     c.link.chan.close()
+    c = session(0, picolink, {"DCTEST_SILENT_MS": "1500"})
+    check("baud change accepted", set_baud(c, 57600))
+    s = c.link.stats()
+    check("Dreamcast runs at 57600", bool(s) and s["baud"] == 57600)
+    time.sleep(5.0)
+    s = c.link.stats(tries=8)
+    check("Dreamcast goes back to the start rate when no host talks to it", bool(s) and s["baud"] == 115200)
+    c.link.chan.close()
     check("1200 baud is never used on a PicoLink", usable_bauds(_PL(), [1200, 9600]) == [9600])
 
     log.line("selftest: 1 bit flip per 3000 bytes, the tool must report failures")
@@ -1495,6 +1503,17 @@ def wait_for_dc(c, seconds):
     return False
 
 
+def restore_rate(c):
+    """Leave the Dreamcast at the start rate, where the next run of the tool looks for it (it goes back there by itself
+    after 20 s without a host, but a run right after this one should not have to wait)."""
+    try:
+        if c.baud != c.args.start_baud and c.link:
+            c.link.quiesce(0.05)
+            set_baud(c, c.args.start_baud)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1604,8 +1623,11 @@ def main():
                     log.line(NO_ANSWER % (args.port, args.start_baud, args.port))
                     return 2
             if args.cmd not in ("hello", "detect"):
-                {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
-                 "switch": cmd_switch, "soak": cmd_soak}[args.cmd](c)
+                try:
+                    {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
+                     "switch": cmd_switch, "soak": cmd_soak}[args.cmd](c)
+                finally:
+                    restore_rate(c)
             ok = log.summary() if args.cmd not in ("hello", "detect") else True
     except KeyboardInterrupt:
         log.line("interrupted")

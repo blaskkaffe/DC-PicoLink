@@ -160,6 +160,10 @@ tests pass; only a 3 s back-to-back sink burst (the full line rate) loses 1-2 fr
 away, in the test just run. A gap of hundreds of ms means the Dreamcast itself stalled; the trace timeline shows it as
 "DC main loop was away for (ms)".
 
+**Rate after a run.** Every command puts the Dreamcast back to the start rate (115200) when it ends, and the Dreamcast does so by itself
+after 20 s without a host (a run that was killed, a cable unplugged), so the next run finds it where it looks. (The cable follows the
+Dreamcast's rate only up to 400000 baud, so a Dreamcast left at 1.5 Mbaud could not be heard at all.)
+
 Known limit on the Dreamcast side: KOS receives on the SCIF through a 1 KB interrupt ring with no hardware flow
 control. `dctest` drains it into its own 16 KB queue between 16-byte chunks of every transmission, and the
 Dreamcast screen reports "receive queue overflowed" if even that is not enough, so a lost byte can be told
