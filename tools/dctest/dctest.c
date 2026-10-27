@@ -31,9 +31,9 @@
 static void hal_log(const char *fmt, ...);
 static uint32_t rxq_drop;               /* bytes lost because our own receive queue was full */
 /* event trace: what the Dreamcast saw and did, with its own microsecond clock (fetched with DT_TRACE) */
-enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5, TR_POLL = 6 };
+enum { TR_RX = 1, TR_TX = 2, TR_BEACON = 3, TR_TXWAIT = 4, TR_BAUD = 5, TR_POLL = 6, TR_GAP = 7 };
 static void trace(int ev, int arg);
-static uint32_t fifo_polled, rts_high;   /* bytes the main loop found in the SCIF FIFO itself; samples with the Dreamcast's RTS pin high */
+static uint32_t rxq_hw, gap_ms;          /* fullest the receive queue got, longest pause of the main loop (ms) since the last STATS */
 static uint32_t scif_err, scif_ovr, flow_fix;
 static int flow_on;                    /* SCIF hardware flow control wanted (DT_FLOW); off by default */   /* SCIF receive errors, overruns, times hardware flow control had to be switched off again */
 static char ui_net[40];                 /* "" = network off, else the Dreamcast's address */
@@ -138,7 +138,7 @@ static void hal_yield(void) { thd_pass(); }
 /* KOS's own receive ring holds 1 KB and drops the rest silently. Sending a frame blocks us for as long as
    it takes on the wire (90 ms for 1 KB at 115200), and the host keeps sending (duplex echo), so the ring
    would overflow at every baud rate. Our queue is drained between 16-byte chunks of every transmission. */
-#define RXQ 16384
+#define RXQ 65536
 static uint8_t rxq[RXQ];
 static volatile uint32_t rxq_w, rxq_r;
 static void rx_pump(void);
@@ -177,13 +177,14 @@ static void dt_scif_err(irq_t src, irq_context_t *cxt, void *data) {
    The handler drains the FIFO, clears RDF/DR, and looks again (a byte that arrived in between is taken in the
    next pass). The main loop also looks into the FIFO itself (interrupts off
    while it does, so there is one producer at a time); bytes it finds there with no RDF/DR pending were not going
-   to be delivered by an interrupt: counted in fifo_polled and traced. */
+   to be delivered by an interrupt. */
 static void drain_fifo(int polled) {
+    (void)polled;
     for (int pass = 0; pass < 4; pass++) {
         while (SCFDR2_R & 0x1f) {
             uint8_t b = SCFRDR2_R;
             if (rxq_w - rxq_r < RXQ) rxq[rxq_w++ & (RXQ - 1)] = b; else rxq_drop++;
-            if (polled) fifo_polled++;
+            if (rxq_w - rxq_r > rxq_hw) rxq_hw = rxq_w - rxq_r;
         }
         SCFSR2_R &= ~0x03;                              /* clear RDF/DR only once the FIFO is empty, like KOS: clearing them first can leave */
         if (!(SCFDR2_R & 0x1f)) break;                  /* the flag latched (interrupt storm); a byte that slipped in meanwhile: go round again */
@@ -196,7 +197,6 @@ static void dt_scif_rx(irq_t src, irq_context_t *cxt, void *data) {
 }
 static void rx_pump(void) {
     if ((SCFCR2_R & 0x08) && !flow_on) { SCFCR2_R = SCFCR2_RUN; flow_fix++; }      /* hardware flow control on and not wanted: off again */
-    if (SCSPTR2_R & 0x40) rts_high++;                  /* the Dreamcast's RTS pin (the cable only sends while it is low) */
     if (SCFDR2_R & 0x1f) {
         irq_mask_t m = irq_disable();
         int n = SCFDR2_R & 0x1f;
@@ -305,7 +305,7 @@ static void trace(int ev, int arg) {
 /* ---------- state ---------- */
 typedef struct {
     uint32_t frames_ok, crc_bad, resync, bytes_rx, bytes_tx, pat_bad, seq_gap, frames_tx,
-             baud, uptime_ms, reverts, echo_frames, sink_frames, scif_err, scif_overrun, flow_fixed, fifo_polled, rts_high;
+             baud, uptime_ms, reverts, echo_frames, sink_frames, scif_err, scif_overrun, flow_fixed, rxq_hw, gap_ms;
 } dt_stats;
 static dt_stats st;
 static uint32_t t_start, sink_seed, sink_next;
@@ -354,7 +354,8 @@ static void pack_stats(uint8_t *o) {
     st.resync = ser_p.resync + net_p.resync + tcp_p.resync;
     st.baud = cur_baud; st.uptime_ms = hal_ms() - t_start;
     st.scif_err = scif_err; st.scif_overrun = scif_ovr; st.flow_fixed = flow_fix;
-    st.fifo_polled = fifo_polled; st.rts_high = rts_high;
+    st.rxq_hw = rxq_hw; st.gap_ms = gap_ms;
+    rxq_hw = 0; gap_ms = 0;                 /* high-water marks: since the previous STATS */
     const uint32_t *s = (const uint32_t *)&st;
     for (int i = 0; i < 18; i++) dt_put32(o + 4 * i, s[i]);
 }
@@ -632,7 +633,12 @@ int main(int argc, char **argv) {
 #ifdef DCTEST_HOST
     if (getenv("DCTEST_NET_IDLE_MS")) net_idle_ms = atoi(getenv("DCTEST_NET_IDLE_MS"));
 #endif
+    uint32_t loop_t = hal_ms();
     for (;;) {
+        uint32_t lt = hal_ms();
+        if (lt - loop_t > gap_ms) gap_ms = lt - loop_t;
+        if (lt - loop_t >= 50) trace(TR_GAP, lt - loop_t);   /* the main loop was away for 50 ms or more */
+        loop_t = lt;
         int c = hal_getc();
         if (c < 0) {
             check_revert();

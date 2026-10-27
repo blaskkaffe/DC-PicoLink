@@ -29,7 +29,7 @@ REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
                "frames_tx", "baud", "uptime_ms", "reverts", "echo_frames", "sink_frames",
-               "scif_err", "scif_overrun", "flow_fixed", "fifo_polled", "rts_high"]
+               "scif_err", "scif_overrun", "flow_fixed", "rxq_hw", "gap_ms"]
 M32 = 0xFFFFFFFF
 
 
@@ -410,7 +410,8 @@ def frames_for(rate_bps, seconds, length, lo=3, hi=4000):
 
 
 TRACE_EVENTS = {1: "DC got frame", 2: "DC sent bytes", 3: "DC announce", 4: "DC transmitter slow, bytes left", 5: "DC baud change (x100)",
-                6: "DC found bytes in the serial FIFO that no interrupt was delivering, count"}
+                6: "DC found bytes in the serial FIFO that no interrupt was delivering, count",
+                7: "DC main loop was away for (ms)"}
 FRAME_NAMES = {HELLO: "HELLO", ECHO: "ECHO", SINK: "SINK", STATS: "STATS", CLEAR: "CLEAR", SRC: "SRC", SETBAUD: "SETBAUD", PROBE: "PROBE", TRACE: "TRACE"}
 
 
@@ -521,12 +522,11 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
                     pend.pop(f.seq)
                 elif f.type == HELLO | REPLY and f.seq == probe_id:
                     t_end = min(t_end, time.perf_counter() + 0.3)
-        s1 = link.stats(tries=2)
+        s1 = link.stats(tries=6)         # a stalled Dreamcast answers late: wait for it, its gap_ms says how long it was away
         if s0 and s1:
             diag = dict(dc_got=s1["echo_frames"] - s0["echo_frames"], dc_crc=s1["crc_bad"] - s0["crc_bad"],
                         dc_scif_err=s1["scif_err"] - s0["scif_err"], dc_ovr=s1["scif_overrun"] - s0["scif_overrun"],
-                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"], dc_polled=s1["fifo_polled"] - s0["fifo_polled"],
-                        dc_rts_hi=s1["rts_high"] - s0["rts_high"])
+                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"], dc_rxq_hw=s1["rxq_hw"], dc_gap_ms=s1["gap_ms"])
         elif s0 and not s1:
             diag = dict(dc_stats="no answer")
     lost = len(pend)
