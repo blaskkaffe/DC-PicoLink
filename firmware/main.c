@@ -903,6 +903,7 @@ static void autobaud_task(void) {
         if (cand == 0 || fabsf(rate / cand - 1.0f) > 0.015f) { cand = rate; cand_n = 1; fe_mark = fe_count; continue; }
         cand_n++;
         bool errors = fe_count != fe_mark;
+        if (ab_fraction(wire_baud, rate) && cand_n < 16) continue;     /* 1/2, 1/3 ... of the wire rate: be sure first */
         if (!(errors && cand_n >= 2) && !(clean && cand_n >= 4)) continue;
         auto_baud = snapped;
         set_wire_baud(snapped);

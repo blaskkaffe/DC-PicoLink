@@ -28,3 +28,15 @@ static bool abw_usable(const uint32_t *w, int n) {
     for (int i = 0; i < n; i++) { if (w[i] < lo) lo = w[i]; if (w[i] > hi) hi = w[i]; }
     return n > 0 && hi * 2u >= lo * 3u;
 }
+
+/* A measured rate that is (nearly) a whole fraction of the current wire rate (1/2, 1/3, ... 1/12 ...) is
+   usually a window without 1-bit pulses (the meter only sees LOW periods), not a Dreamcast that changed
+   speed: the cable follows such a candidate only after many agreeing windows. 115200 vs 120192, 1.5 Mbaud
+   vs 1.5625 Mbaud and other small differences are not affected. */
+static bool ab_fraction(float wire, float rate) {
+    if (rate <= 0 || wire <= rate) return false;
+    float k = wire / rate, r = (float)(int)(k + 0.5f);
+    if (r < 2.0f) return false;
+    float d = k > r ? k - r : r - k;
+    return d < 0.06f * r;
+}
