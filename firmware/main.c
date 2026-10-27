@@ -804,6 +804,28 @@ static void sense_report_task(void) {
 
 /* The cable sends to the Dreamcast only while its RTS line (SD CS pad, GPIO5) is low. A bad contact there holds
    the cable's transmitter (replies reach the Dreamcast seconds late) without corrupting a byte, so say so. */
+/* The six pads as the cable sees them right now (for hardware faults: a repaired adapter, a damaged pin). */
+static const char *pins_text(void) {
+    static char t[96];
+    uint32_t g = sio_hw->gpio_in;
+    snprintf(t, sizeof t, "CLK/CTS=%d CMD/TXD=%d DAT0/RXD=%d CS/RTS=%d RTS-out=%d 3V3-sense=%d",
+             (int)((g >> 2) & 1), (int)((g >> 3) & 1), (int)((g >> 4) & 1), (int)((g >> 5) & 1), (int)((g >> 6) & 1), (int)((g >> 7) & 1));
+    return t;
+}
+
+/* DC off or not started: say what the pads read every 10 s (and when they change), so the cable can be tested without a meter. */
+static void pins_offline_task(void) {
+    static uint32_t last_t, last_sig = 0xFFFFFFFFu, last_rep;
+    if (seen_mode != MODE_OFFLINE) { last_sig = 0xFFFFFFFFu; return; }
+    uint32_t now = time_us_32();
+    if (now - last_t < 500000u) return;
+    last_t = now;
+    uint32_t sig = (sio_hw->gpio_in >> 2) & 0x3F;
+    if (sig == last_sig && now - last_rep < 10000000u) return;
+    last_sig = sig; last_rep = now;
+    if (sd_link_up) status("pads with the DC off or not started: %s", pins_text());
+}
+
 static void rts_watch_task(void) {
     static uint32_t n, hi, t0, shown_pct;
     if (seen_mode != MODE_SERIAL) { n = hi = 0; return; }
@@ -814,8 +836,8 @@ static void rts_watch_task(void) {
     if (now - t0 < 5000000u) return;
     uint32_t pct = n ? (uint32_t)((uint64_t)hi * 100u / n) : 0;
     if (pct >= 2 && sd_link_up)
-        status("serial: the DC's RTS line (SD CS pad, GPIO%d) was high in %lu%% of %lu samples in 5 s: the cable cannot send to the DC while it is high (contact or wiring?)",
-               PIN_CTS, (unsigned long)pct, (unsigned long)n);
+        status("serial: the DC's RTS line (SD CS pad, GPIO%d) was high in %lu%% of %lu samples in 5 s: the cable cannot send to the DC while it is high (contact or wiring?) [%s]",
+               PIN_CTS, (unsigned long)pct, (unsigned long)n, pins_text());
     else if (shown_pct >= 2 && pct < 2 && sd_link_up)
         status("serial: the DC's RTS line is low again");
     shown_pct = pct;
@@ -988,6 +1010,7 @@ int main(void) {
         sd_task();
         autobaud_task();
         rts_watch_task();
+        pins_offline_task();
         power_sense_task();
         sense_report_task();
     }
