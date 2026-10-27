@@ -189,7 +189,12 @@ class SerialChan:
         self.baud = b
 
     def write(self, b):
-        self.s.write(b)
+        import serial
+        try:
+            self.s.write(b)
+        except serial.SerialTimeoutException:           # the cable took nothing for write_timeout seconds: a failed test, not the end of the run
+            self.s.reset_output_buffer()
+            self.write_timeouts = getattr(self, "write_timeouts", 0) + 1
 
     def read(self, timeout):
         end = time.perf_counter() + timeout
@@ -1052,6 +1057,26 @@ def cmd_switch(c):
         echo_run(c, "echo-after", 50, 256, 0, c.rng.getrandbits(32), baud=b, cycle=i)
 
 
+def resync(c):
+    """After a failed operation: is the Dreamcast still where we think it is? It goes back to the start rate by itself after
+    20 s without a good frame, and a stalled link can leave host and Dreamcast at different rates."""
+    link = c.link
+    link.quiesce(0.2)
+    if hello(link, tries=3, timeout=0.5):
+        return True
+    old = c.baud
+    for b in (c.args.start_baud, old):
+        c.tr.set_baud(host_rate(b, getattr(c.args, "nominal_baud", False)))
+        c.baud = b
+        link.quiesce(0.3)
+        if hello(link, tries=6, timeout=0.5):
+            c.log.line("resync: the Dreamcast answers at %d baud%s" % (b, "" if b == old else " (it had gone back; carrying on there)"))
+            apply_flow(c, b)
+            return True
+    c.baud = old
+    raise RuntimeError("lost the Dreamcast: it does not answer at %d or %d baud" % (c.args.start_baud, old))
+
+
 def cmd_soak(c):
     end = time.time() + c.args.minutes * 60
     bauds = usable_bauds(c, parse_bauds(c.args.bauds))
@@ -1079,6 +1104,8 @@ def cmd_soak(c):
         else: src_run(c, "soak-src", cnt, ln, pat, seed, interval_us=int(iv * 1e6) if load < 1 else 0, **tag)
         if r.random() < 0.2:
             time.sleep(r.choice([0.05, 0.5, 3.0]))
+        if c.log.results and not c.log.results[-1].get("ok", True):
+            resync(c)
 
 
 
