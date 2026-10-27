@@ -802,6 +802,26 @@ static void sense_report_task(void) {
     sense_note = 0;
 }
 
+/* The cable sends to the Dreamcast only while its RTS line (SD CS pad, GPIO5) is low. A bad contact there holds
+   the cable's transmitter (replies reach the Dreamcast seconds late) without corrupting a byte, so say so. */
+static void rts_watch_task(void) {
+    static uint32_t n, hi, t0, shown_pct;
+    if (seen_mode != MODE_SERIAL) { n = hi = 0; return; }
+    uint32_t now = time_us_32();
+    if (!t0) t0 = now;
+    n++;
+    if (gpio_get(PIN_CTS)) hi++;
+    if (now - t0 < 5000000u) return;
+    uint32_t pct = n ? (uint32_t)((uint64_t)hi * 100u / n) : 0;
+    if (pct >= 2 && sd_link_up)
+        status("serial: the DC's RTS line (SD CS pad, GPIO%d) was high in %lu%% of %lu samples in 5 s: the cable cannot send to the DC while it is high (contact or wiring?)",
+               PIN_CTS, (unsigned long)pct, (unsigned long)n);
+    else if (shown_pct >= 2 && pct < 2 && sd_link_up)
+        status("serial: the DC's RTS line is low again");
+    shown_pct = pct;
+    n = hi = 0; t0 = now;
+}
+
 static void autobaud_task(void) {
     static uint32_t win[32], wn;
     static float cand;
@@ -967,6 +987,7 @@ int main(void) {
         capture_task();
         sd_task();
         autobaud_task();
+        rts_watch_task();
         power_sense_task();
         sense_report_task();
     }
