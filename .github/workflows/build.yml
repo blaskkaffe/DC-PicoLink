@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:        # Actions tab -> build -> Run workflow (any branch)
 
 permissions:
   contents: write   # releases on tags
@@ -61,8 +62,68 @@ jobs:
           name: dc-picolink
           path: dist/*
 
+  # The Dreamcast test program: needs the KallistiOS toolchain, taken from the image KOS itself
+  # publishes for its CI (Docker Hub: pcercuei/dreamcast-toolchain). KOS is pinned so a build
+  # is reproducible; bump the ref when you want a newer KOS.
+  dctest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KallistiOS/KallistiOS
+          ref: 368a2eb9584a7d130a6e77e299468c0b64fa1a9f
+          path: kos
+
+      - name: Build dctest.elf
+        run: |
+          ver=$(git describe --tags --always --dirty)
+          docker run --rm -v "$PWD":/work -w /work pcercuei/dreamcast-toolchain:stable \
+            bash tools/dctest/ci-build.sh /work/kos /work/dist-dctest "$ver"
+          sudo chown -R "$(id -u):$(id -g)" dist-dctest
+
+      # A bootable disc image (CDI) from the same ELF, for burning, ODE/SD loaders and emulators. A
+      # console that boots it does not need dc-tool at all. mkdcdisc is pinned; -N skips padding the
+      # data track to a full CD (740 MB), which only speeds up loading. A failure here is reported as a
+      # warning and does not stop the ELF from being published.
+      - name: CDI image
+        id: cdi
+        continue-on-error: true
+        run: |
+          ver=$(git describe --tags --always --dirty)
+          sudo apt-get install -y meson ninja-build pkg-config libisofs-dev
+          git clone https://gitlab.com/simulant/mkdcdisc.git
+          git -C mkdcdisc checkout 2b98b0d9480e364e3517355648fbc3b49fb19882
+          meson setup mkdcdisc/build mkdcdisc
+          meson compile -C mkdcdisc/build
+          mkdcdisc/build/mkdcdisc -q -N -e dist-dctest/dctest-$ver.elf -o dist-dctest/dctest-$ver.cdi -n DCTEST
+          ls -l dist-dctest
+
+      - name: CDI failed
+        if: steps.cdi.outcome == 'failure'
+        run: echo "::warning::CDI image step failed; dctest.elf was still built and uploaded"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dctest
+          path: dist-dctest/*
+
+  release:
+    needs: [build, dctest]
+    # the firmware release goes out even if the KOS build breaks; dctest.elf is added when it worked
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "DC-PicoLink $GITHUB_REF_NAME" --generate-notes
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "DC-PicoLink $GITHUB_REF_NAME" --generate-notes

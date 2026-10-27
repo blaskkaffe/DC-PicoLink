@@ -29,6 +29,19 @@ int main(void) {
         printf("%s -b %u -> %.1f baud%s\n", ok ? "PASS" : "FAIL", spot[i].req, got, baud_wrapped ? " (wrapped, warned)" : "");
         fails += !ok;
     }
+    {   /* auto-baud guard: windows of 32 low-pulse widths at 250 MHz, 16 loop counts per us... widths in meter cycles */
+        uint32_t bit = 250000000u / 120192u, w[32];
+        for (int i = 0; i < 32; i++) w[i] = 9 * bit;                       /* all-zero bytes: only 9-bit lows */
+        bool ok = !abw_usable(w, 32);
+        for (int i = 0; i < 32; i++) w[i] = bit;                           /* 0xFF bytes: only 1-bit lows */
+        ok = ok && !abw_usable(w, 32);
+        for (int i = 0; i < 32; i++) w[i] = (1 + i % 3) * bit;             /* ordinary data: 1..3 bit lows */
+        ok = ok && abw_usable(w, 32);
+        for (int i = 0; i < 32; i++) w[i] = (i % 2 ? 2 : 1) * bit;         /* 0x7E flags: 1 and 2 bit lows */
+        ok = ok && abw_usable(w, 32);
+        printf("%s auto-baud ignores windows of equal pulses (zero bytes), accepts mixed data\n", ok ? "PASS" : "FAIL");
+        fails += !ok;
+    }
     dc_effective_baud(115200);
     if (baud_wrapped) { printf("FAIL wrap flag stuck\n"); fails++; }
     printf(fails ? "FAILED: %u\n" : "OK: %u requests match dcload's DC rate\n", fails ? fails : n);

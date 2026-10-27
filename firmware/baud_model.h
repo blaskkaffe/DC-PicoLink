@@ -18,3 +18,13 @@ static float dc_effective_baud(uint32_t req) {
     baud_wrapped = false;
     return (float)req;
 }
+
+/* Auto-baud guard (autobaud_task). The meter only measures LOW periods, so a window in which every
+   pulse has the same width cannot tell a bit time from a run of bits: all-zero bytes are 9-bit lows
+   (120192 baud would look like 13355), 0xFF bytes are 1-bit lows. A window is usable only if its
+   pulse widths vary (the longest at least 1.5x the shortest). */
+static bool abw_usable(const uint32_t *w, int n) {
+    uint32_t lo = 0xFFFFFFFFu, hi = 0;
+    for (int i = 0; i < n; i++) { if (w[i] < lo) lo = w[i]; if (w[i] > hi) hi = w[i]; }
+    return n > 0 && hi * 2u >= lo * 3u;
+}

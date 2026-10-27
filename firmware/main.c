@@ -96,7 +96,6 @@ static uint32_t baud_holdoff_until;       /* no auto-follow right after a host c
 static uint meter_sm;
 static volatile uint32_t pending_baud = 0;   /* 0 = none */
 static volatile uint32_t pending_old_bytes;  /* bytes to send at the old rate */
-static volatile bool want_bootsel = false;
 
 /* ---- baud ------------------------------------------------------------- */
 #include "baud_model.h"
@@ -399,8 +398,6 @@ static void dc_to_usb(void) {
 void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lc) {
     if (itf != 0) return;               /* only the coder's-cable port has a baud rate */
     uint32_t b = lc->bit_rate;
-    if (b == 1200) { want_bootsel = true; return; }  /* 1200-baud touch -> BOOTSEL */
-    want_bootsel = false;
     if (b == 0 || b == cur_baud) { pending_baud = 0; return; }
     if (dc_mode != MODE_SERIAL) { pending_baud = 0; apply_baud(b); return; }
     /* bytes already received over USB belong to the old rate (dc-tool sends the
@@ -409,10 +406,10 @@ void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lc) {
     pending_baud = b;
 }
 
+/* No 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate here, and a test tool or terminal that
+   sets it must not reboot the cable. BOOTSEL is the button. */
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
-    (void)rts;
-    if (itf != 0) return;
-    if (!dtr && want_bootsel) reset_usb_boot(0, 0);
+    (void)itf; (void)dtr; (void)rts;
 }
 
 static void status(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -870,6 +867,7 @@ static void autobaud_task(void) {
         win[wn++] = cyc;
         if (wn < 32) continue;
         wn = 0;
+        if (!abw_usable(win, 32)) continue;            /* all pulses equal: a run of zero bytes looks like a slow DC */
         uint32_t m = 0xFFFFFFFFu;
         for (int i = 0; i < 32; i++) if (win[i] < m) m = win[i];
         uint64_t sum = 0; uint32_t cnt = 0;
