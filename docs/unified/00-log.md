@@ -2,6 +2,18 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (late night): Pico2Maple received
+
+**Done**
+- Read the decompilation the owner supplied (stock `pico2maple_2026-06-14.uf2`, RP2040 and RP2350) and wrote `05-pico2maple.md`: features (`PM-B1` to `PM-B8`), and how it touches the other repos.
+- Main finding: Pico2Maple reads the game id from **Maple command 0x21**, which neither openMenu `unified` nor the iBlue firmware uses (iBlue reads a VMU block). Also: the game id is 12 characters there and in iBlue, and a second SD layout exists for VMU files.
+
+**Limits**
+- This is the stock upstream build, not the owner's modified firmware. Function names come from the decompiler's author; nothing was run on hardware. License of the firmware repository not found.
+
+**To do**
+- Get the modified firmware; decide on `0x21` (C-9); check the license.
+
 ## 2026-11-03 (night): DreamDash license and openMenu on both networks
 
 **Done**
