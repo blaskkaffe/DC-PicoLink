@@ -2,6 +2,13 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (late night, 3): DC-Pico2Maple repo, and a correction
+
+**Done**
+- Looked at `blaskkaffe/DC-Pico2Maple`: a copy of the upstream firmware download repo (UF2 files, README, changelog; no source, no LICENSE file).
+- **Correction:** I had written that openMenu does not use Maple `0x21`. It does: `vm2_set_id()` sends command 33 with the memory-card function, a 12-byte id and the game name, to VM2, VMU Pro, USB4Maple and Pico2Maple. iBlue is the one that does not follow it. Fixed in `05`, `01` and `02`; the earlier search had a filter that hid the result.
+- Added the repo to the family links and put the patch there (see the next entry).
+
 ## 2026-11-03 (late night, 2): the owner's Pico2Maple patch
 
 **Done**

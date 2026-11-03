@@ -11,6 +11,7 @@ Decisions made by the project owner. Newest first. Each one says what it changes
 | D-3 | **No telephone numbers at all.** The test numbers for switching the network were a first experiment before it was clear that it can be done over the data channel. All telephone-number features are removed in the unified branch. | Done in DC-DreamDash (`unified`): numbers module, number matching, hang-up numbers, busy tone and the `switcher` actions are gone; the network is selected over the page, the GPIO buttons and `POST /dcnow` / `POST /dcnet`. openMenu `unified` has no switching numbers (it still dials its fixed connect number, because it has to place the call). The unmerged openMenu `dreamy-planck` ideas that use dialing (Switch buttons, Custom Dial pad) are dropped. |
 | D-5 | **openMenu works equally well on both networks (DCNow! and DCNET).** It tries DCNET's login as well, and it must know which network it is connected to and which one is selected, through the API. | Pi side done in DC-DreamDash: the openMenu poll reply has a new `CALL dcnow\|dcnet` line (the network of the current call) next to `NET` (the selected network); tests added. openMenu side (retry with the other login; show/act on a mismatch) is **not written yet**: OM-P11. Note from openMenu's own header: DreamPi "accepts any login" on DCNow!, so DCNET's login may work on both networks; to be confirmed on hardware. |
 | D-6 | **DC-DreamDash is MIT-licensed.** | `LICENSE` added in DC-DreamDash (Copyright (c) 2026 blaskkaffe and DC-DreamDash contributors); README license section updated. |
+| D-7 | **Pico2Maple work lives in `DC-Pico2Maple`** (created by the owner 2026-11-03, a copy of the upstream firmware repository). | `unified` branch there holds the composite-toggle patch (source and scripts, not the patched UF2), the family docs, the cross-link block and a License section. Upstream publishes no source, so patching the binary is the only route unless the author shares source. |
 | D-4 | **Docs live in `unified` in every repo.** All READMEs on `unified` link each other, and every license is stated properly in each. | `docs/unified/` in each repo, a cross-link block and a License section in each README. |
 
 ## Consequences found while doing D-3
@@ -19,7 +20,7 @@ Decisions made by the project owner. Newest first. Each one says what it changes
 
 ## Still open
 
-1. Pico2Maple: the stock 2026-06-14 build was analysed (`05-pico2maple.md`); the owner's modified firmware (a composite keyboard/mouse toggle patch of that build) arrived and is in the same file. Open from that analysis: where the patch lives, patch or fork, use Maple `0x21` as the game-id message in the new channel (C-9), and the firmware's license.
+1. Pico2Maple (`05-pico2maple.md`): the license of the patch; whether to ask the author for source or permission; and whether the iBlue firmware should answer Maple `0x21` for the game id like the other adapters (C-9). openMenu already sends it.
 2. The new control channel's design (D-2).
 3. Whether DCNET's login also works on DCNow! (then openMenu could use one login for both): confirm on hardware.
 4. Final names: DC-BlueRetro's fate (D-1) and the openMenu repository, which is currently `DC-openMenu-Virtual-Folder-Bundle` while the project notes call the fork "DC-openMenu-Wave".

@@ -19,6 +19,7 @@ These files are the same in every repository of the family (branch `unified`). T
 | [DC-iBlueControlMod](https://github.com/blaskkaffe/DC-iBlueControlMod/tree/unified) | BlueRetro fork for the internal Bluetooth controller adapter, with the Dreamcast extras | Apache-2.0 |
 | [DC-BlueRetro](https://github.com/blaskkaffe/DC-BlueRetro/tree/unified) | BlueRetro for BlueRetro-style ESP32 wiring (upstream, archived by its author) | Apache-2.0 (software) |
 | [DC-openMenu-Virtual-Folder-Bundle](https://github.com/blaskkaffe/DC-openMenu-Virtual-Folder-Bundle/tree/unified) | openMenu fork with virtual folders and the GD MENU Card Manager | Modified BSD (openMenu), GPL-3.0 (Card Manager) |
+| [DC-Pico2Maple](https://github.com/blaskkaffe/DC-Pico2Maple/tree/unified) | Pico2Maple USB/Bluetooth controller adapter and VMU: a copy of the upstream firmware downloads plus the family's patch (no source is published upstream) | none for the firmware (upstream states none); patch: not chosen yet |
 
 Pico2Maple (a commercial Dreamcast USB/Bluetooth adapter by Luoma Lab) is analysed in `05-pico2maple.md`; the owner's modified firmware (a small patch of the stock build) is described there too.
 
@@ -28,6 +29,7 @@ Each repository's README has the full License section. In short:
 
 - **Each repo keeps its own license.** Mixing code between repos has to respect them (for example Apache-2.0 code in DC-iBlueControlMod, MIT in DC-PicoLink and DC-DreamDash, GPL-3.0 in the Card Manager of the openMenu repo).
 - **BlueRetro logos** in `static/` (DC-BlueRetro, DC-iBlueControlMod) are CC BY-ND 4.0 (© 2022 Humble Bazooka): they may be shared unchanged, not modified.
+- **DC-Pico2Maple**: the firmware is Colin Luoma's and the upstream repository has no license file; the family's patch has no license yet.
 - BlueRetro's own hardware designs are CERN-OHL-P-2.0 upstream; no hardware files are in these repos.
 - Third-party components are listed in each README.
 - The documents in `docs/unified/` are project notes: in repositories with a single license (DC-PicoLink, DC-DreamDash, DC-iBlueControlMod, DC-BlueRetro) that license covers them (DC-DreamDash is MIT too); in DC-openMenu-Virtual-Folder-Bundle (two licenses by area) no separate license has been set for them.

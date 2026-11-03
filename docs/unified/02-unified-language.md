@@ -70,7 +70,7 @@ Wanted but missing: DreamDash ↔ PicoLink status (X-11); Pi ↔ iBlue port stat
 
 ## 7. Shared data
 
-- One **game id** key and one **per-game settings** record: port setup, network, link order (PL-R6), VMU slot. Stored by whoever owns the hardware that applies it; openMenu is the source of the id.
+- One **game id** key (12 characters, sent by openMenu as Maple command `0x21` to every VM2-class device; see `05-pico2maple.md`, C-9) and one **per-game settings** record: port setup, network, link order (PL-R6), VMU slot. Stored by whoever owns the hardware that applies it; openMenu is the source of the id.
 - **Do not touch** `OPENMENU.SYS`; extra data in `EXTENDED.SYS` (OM rule C-6).
 - SD layout for saves: `/sd/OPENMENU/SAVES/<GAMEID>/SLOT<n>.VMU` (+ the OM-16 tag when that is built). PicoLink and any save manager follow it.
 - Palette: DreamDash's 15 palette ids are the only colour names (DD rule); the LED/RGB firmware gets a mapping from those ids rather than its own colour list.
