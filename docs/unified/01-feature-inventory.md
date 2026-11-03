@@ -204,6 +204,7 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 - **C-6 `OPENMENU.SYS` compatibility.** OM must not change it (Derek's 1.7.1 reads it). Anything that wants per-game network or controller data needs its own file (`EXTENDED.SYS`).
 - **C-7 Name spelling.** DD: UI says **DCNow!** and **DCNET**, code keeps `dcnow`/`dcnet`, DreamPi's own string is `DCNet`. OM and IB docs mix `DCNet`, `DCNET`, `DC Now!`.
 - **C-8 "Dual stick" is a guess.** DD-4's docs say to check `GamePadAlt`'s label against the adapter.
+- **C-9 Game id: iBlue does not follow the existing protocol.** openMenu (`main`) already sends the game id and name to VM2, VMU Pro, USB4Maple and Pico2Maple as Maple command `0x21`; iBlue reads a VMU block instead (IB-B6, OM-15). Proposal: iBlue answers `0x21` and the VMU-block game id goes. Details in `05-pico2maple.md`. *Open: owner's yes/no.*
 
 ---
 
@@ -214,5 +215,5 @@ Decided on 2026-11-03 (details in `03-decisions.md`): D-1 BlueRetro-wiring firmw
 Still open:
 1. The new control channel's design.
 2. The openMenu side of D-5 (OM-P11), and whether DCNET's login also works on DCNow!.
-3. Pico2maple: the owner will paste its firmware; it needs its own `PM-` section.
+3. Pico2Maple (see `05-pico2maple.md`, ids `PM-`): the patch's license, whether to ask the author for source, and whether iBlue answers Maple `0x21` for the game id (C-9).
 4. DC-BlueRetro's final name/fate, and the openMenu repository name.

@@ -26,7 +26,7 @@ Rule taken from DC-DreamDash and kept for all: **never claim hardware behaviour 
 | network | DCNow! / DCNET (a service) and also modem/serial/W5500 (a path) | **network** = service (DCNow!, DCNET). **link** = physical or logical path (modem, serial, W5500, BBA, Wi-Fi, USB-net) |
 | channel | brctl, VMU-block channel, "openMenu link", SD link | **channel** = a way two devices exchange commands (over a link). Each channel has a name (`pi-http`, `ble-cfg`, `usb-sd`, and the new Dreamcast ↔ adapter one) |
 | profile | whole-adapter config (IB main) vs per-port type+map (brctl) | **profile** = whole adapter configuration. Per-port piece = **port setup** |
-| game id | 12 vs 16 chars, charset differs | **game id** = one string (suggest ≤16 of `A-Za-z0-9-_`), used as the key for port setup, network choice, VMU slot, link choice |
+| game id | 12 chars (openMenu's `0x21` frame, Pico2Maple, iBlue) vs 16 in an abandoned design | **game id** = the 12-character product number openMenu already sends (plus the game name, up to 128 bytes), used as the key for port setup, network choice, VMU slot, link choice |
 | module | DD modules vs IB Kconfig options vs OM settings rows | **module** stays DD's term. IB: **feature** (a Kconfig switch). OM: **setting** |
 | port | A-D controller ports vs serial/USB ports | **port A-D** = controller port; **serial port** / **USB port** spelled out |
 | type | "Controller type" Normal / Dual stick / Keyboard / Mouse / Racing / Maracas | **output mode** (BlueRetro's `dev_mode`), labels in one shared table |
@@ -34,7 +34,7 @@ Rule taken from DC-DreamDash and kept for all: **never claim hardware behaviour 
 ## 3. Names and spelling
 
 - UI text: **DCNow!** and **DCNET** (DC-DreamDash's rule), buttons "DCNow!" and "DCNET". Code and file names keep `dcnow` / `dcnet`. Upstream strings (DreamPi's `DCNet`, `[DCNet]` in netlink_config.ini) are not changed.
-- Repos: `DC-` prefix, as already renamed: DC-DreamDash, DC-PicoLink, DC-iBlueControlMod, DC-BlueRetro, DC-openMenu-Virtual-Folder-Bundle (project notes call the fork "DC-openMenu-Wave"; the name is not final).
+- Repos: `DC-` prefix, as already renamed: DC-DreamDash, DC-PicoLink, DC-iBlueControlMod, DC-BlueRetro, DC-Pico2Maple, DC-openMenu-Virtual-Folder-Bundle (project notes call the fork "DC-openMenu-Wave"; the name is not final).
 - Ports: letters **A-D** everywhere (openMenu, DD tiles, IB all already use them). Per-port colour: A orange, B green, C blue, D bright pink (DD-4's palette picks).
 - Status lines: plain English, short and specific, read in `journalctl` (DC-PicoLink's rule); first line carries `git describe`.
 - **No telephone numbers** anywhere as a control mechanism (D-3). The only dialed number left is the fixed one that places the call itself.
@@ -66,7 +66,7 @@ Existing material to reuse: IB `iBLU` info + feature bits, DD `launcher` announc
 | `usb-sd`, `usb-net`, `usb-serial` | DC-PicoLink ↔ Pi/PC | SD image, W5500 frames, coder's cable, STATS |
 | file state (`/opt/dreampi-netswitch/*`, `/tmp/…`) | DreamDash modules | cross-process state, no sockets |
 
-Wanted but missing: DreamDash ↔ PicoLink status (X-11); Pi ↔ iBlue port status (C-1); Dreamcast ↔ Pico2maple (pending); any wifi/Bluetooth/ethernet channel for openMenu beyond `pi-http`.
+Wanted but missing: DreamDash ↔ PicoLink status (X-11); Pi ↔ iBlue port status (C-1); Dreamcast ↔ Pico2Maple beyond the `0x21` game id (see `05-pico2maple.md`); any wifi/Bluetooth/ethernet channel for openMenu beyond `pi-http`.
 
 ## 7. Shared data
 
