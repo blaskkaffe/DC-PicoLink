@@ -8,6 +8,7 @@ These files are the same in every repository of the family (branch `unified`). T
 | [01-feature-inventory.md](01-feature-inventory.md) | Every feature found in every branch of the five repos, and where the same idea exists in several |
 | [02-unified-language.md](02-unified-language.md) | Draft shared vocabulary, naming and rules |
 | [03-decisions.md](03-decisions.md) | Decisions made by the owner and what is still open |
+| [06-todo.md](06-todo.md) | The owner's to-do list across all repos |
 | [05-pico2maple.md](05-pico2maple.md) | What the Pico2Maple firmware does (from a decompilation), the owner's composite-toggle patch, and how they touch the other repos |
 
 ## The repositories (branch `unified`)
