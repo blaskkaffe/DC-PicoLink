@@ -3,6 +3,8 @@
 Read docs/ARCHITECTURE.md first (goal and design), docs/ROADMAP.md (what's next),
 docs/DEVLOG.md (how the hard bugs were found; read before touching timing code).
 
+Cross-repo plan, vocabulary, decisions and licenses of the DC- family: `docs/unified/README.md` (read `03-decisions.md` before changing anything that talks to another repo).
+
 ## Build and test
 - Pico SDK 2.1.1 + Ubuntu `gcc-arm-none-eabi`. `cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 [-DDC_DIAG=0|1] && make -C build`
 - `tools/run-tests.sh [build-dir]`: C model tests; with a build dir also the PIO simulations.

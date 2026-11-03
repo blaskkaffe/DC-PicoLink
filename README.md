@@ -1,5 +1,7 @@
 # DC-PicoLink
 
+> **Part of the DC- Dreamcast family** (branch `unified`): [DC-DreamDash](https://github.com/blaskkaffe/DC-DreamDash/tree/unified) · [DC-PicoLink](https://github.com/blaskkaffe/DC-PicoLink/tree/unified) · [DC-iBlueControlMod](https://github.com/blaskkaffe/DC-iBlueControlMod/tree/unified) · [DC-BlueRetro](https://github.com/blaskkaffe/DC-BlueRetro/tree/unified) · [DC-openMenu-Virtual-Folder-Bundle](https://github.com/blaskkaffe/DC-openMenu-Virtual-Folder-Bundle/tree/unified). They work alone and together. The shared plan, feature list, vocabulary and licenses overview are in [docs/unified/](docs/unified/README.md).
+
 An RP2040-based Dreamcast serial-port adapter: a full coder's cable (serial and serial
 PPP), W5500 Ethernet emulation over USB networking, and SD card emulation (used by
 openMenu for its settings and VMU backups). Works with DreamPi or a regular computer,
@@ -56,8 +58,15 @@ Logs: `journalctl -fu dcsd` (the cable's own status lines), `journalctl -u dcusb
 Build: see [docs/REFERENCE.md#build](docs/REFERENCE.md#build). CI builds every push;
 tagged versions (`v*`) become releases with the UF2 files and the DreamPi installer.
 
-Part of a family of `DC-` Dreamcast projects.
-
 ## License
 
-MIT, see [LICENSE](LICENSE).
+DC-PicoLink is released under the **MIT License**, see [LICENSE](LICENSE) (Copyright (c) 2026 blaskkaffe and DC-PicoLink contributors).
+
+Third-party software it is built with or against (none of it is copied into this repository, except where stated):
+
+- **Raspberry Pi Pico SDK 2.1.1**: BSD-3-Clause, Copyright Raspberry Pi (Trading) Ltd. `firmware/pico_sdk_import.cmake` is a copy of the SDK's own file of that name and keeps its header.
+- **TinyUSB** (the SDK's USB stack): MIT.
+- **KallistiOS**: the Dreamcast test program `tools/dctest` is built against it in CI; it is fetched at build time and has its own (BSD-style) license, see its repository.
+- **DreamPi** (Kazade/dreampi) and its Netlink serial support: separate projects with their own licenses; the DreamPi add-on here does not modify or bundle them.
+
+The documents in [docs/unified/](docs/unified/README.md) are covered by the same MIT license. For the licenses of the other repositories in the family see the table there.
