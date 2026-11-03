@@ -1,6 +1,6 @@
 # DC ecosystem: shared documents
 
-These files are the same in every repository of the family (branch `unified`). The planning copy lives in the project "Unified Dreamcast Ecosystem"; if the copies differ, the newest log entry decides.
+**These numbered documents are a snapshot of 2026-11-03.** The master copy lives in the project "Unified Dreamcast Ecosystem" (documents `00-log`, `01-feature-inventory`, `02-unified-language`, `03-decisions`, `05-pico2maple`, `06-todo`) and is the only copy updated from now on, so the files below can be out of date: the Project's log and decisions win. Documents that describe code live with the code and are kept up to date in their own repository (for example `docs/ble-commands.md` in DC-iBlueControlMod).
 
 | Document | What it is |
 |---|---|
