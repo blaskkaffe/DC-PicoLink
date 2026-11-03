@@ -2,6 +2,16 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (late night, 4): Pico2Maple answers
+
+**Done**
+- Recorded D-8: iBlue should answer game id like the other adapters; the patched UF2 is shipped in `DC-Pico2Maple` (`firmware/patched/`, checksum identical to the supplied file); the decompilation stays out of the repositories until the upstream author has been heard from.
+- Checked who added the VMU-block game id: a Claude session on 2026-10-30 (iBlue commit `c6137bd`, openMenu branch `claude/gameid`). Checked the license question: no license file has ever been in the copy of the upstream repository.
+
+**To do**
+- Change the iBlue firmware to answer Maple `0x21` and drop the VMU-block game id (cannot be built here: needs ESP-IDF).
+- Choose the patch's license; hear from the upstream author.
+
 ## 2026-11-03 (late night, 3): DC-Pico2Maple repo, and a correction
 
 **Done**
