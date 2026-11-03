@@ -2,6 +2,17 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (late night, 2): the owner's Pico2Maple patch
+
+**Done**
+- Read the modified firmware (`composite_toggle_patch.zip`): a binary patch of the stock build that toggles a combo receiver between Dreamcast keyboard and mouse with a 3 s hold of the front button. Compared the patched UF2 with the stock images: the differences are exactly the ones its README lists. Added it to `05-pico2maple.md` as `PM-1`.
+
+**Limits**
+- Not rebuilt (the build script needs an ARM toolchain at a fixed path), the emulator tests were not re-run, nothing tried on a console. The patched UF2 was not copied anywhere (it contains the upstream firmware).
+
+**To do**
+- Decide where the patch lives and whether to patch or fork; check the upstream license.
+
 ## 2026-11-03 (late night): Pico2Maple received
 
 **Done**
@@ -12,7 +23,7 @@ Newest first. "Done" is what actually happened; "To do" is what is still open.
 - This is the stock upstream build, not the owner's modified firmware. Function names come from the decompiler's author; nothing was run on hardware. License of the firmware repository not found.
 
 **To do**
-- Get the modified firmware; decide on `0x21` (C-9); check the license.
+- Decide on `0x21` (C-9); check the license.
 
 ## 2026-11-03 (night): DreamDash license and openMenu on both networks
 

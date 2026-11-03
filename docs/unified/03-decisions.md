@@ -19,7 +19,7 @@ Decisions made by the project owner. Newest first. Each one says what it changes
 
 ## Still open
 
-1. Pico2Maple: the stock 2026-06-14 build was analysed (`05-pico2maple.md`); the owner's **modified** firmware is still to come. Open from that analysis: use Maple `0x21` as the game-id message in the new channel (C-9), and the firmware's license.
+1. Pico2Maple: the stock 2026-06-14 build was analysed (`05-pico2maple.md`); the owner's modified firmware (a composite keyboard/mouse toggle patch of that build) arrived and is in the same file. Open from that analysis: where the patch lives, patch or fork, use Maple `0x21` as the game-id message in the new channel (C-9), and the firmware's license.
 2. The new control channel's design (D-2).
 3. Whether DCNET's login also works on DCNow! (then openMenu could use one login for both): confirm on hardware.
 4. Final names: DC-BlueRetro's fate (D-1) and the openMenu repository, which is currently `DC-openMenu-Virtual-Folder-Bundle` while the project notes call the fork "DC-openMenu-Wave".

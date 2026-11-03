@@ -4,7 +4,7 @@ Supplements `01-feature-inventory.md` (adds the `PM-` ids and amends X-3, X-8, X
 
 ## What was analysed
 
-The owner supplied `pico2maple_decomp.zip` on 2026-11-03: a Ghidra decompilation (RP2040 and RP2350 images) of **`pico2maple_2026-06-14.uf2`, the stock USB-only build of cluoma/Pico2Maple-fw**, with reconstructed structs, a function map and a known-devices table. It is **not** the owner's modified firmware: that is still to come (open question). Names in the decompilation are the decompiler author's interpretation; the zip's own README says field names are "educated guesses unless noted". Nothing below was run on hardware.
+The owner supplied `pico2maple_decomp.zip` on 2026-11-03: a Ghidra decompilation (RP2040 and RP2350 images) of **`pico2maple_2026-06-14.uf2`, the stock USB-only build of cluoma/Pico2Maple-fw**, with reconstructed structs, a function map and a known-devices table. It is **not** the owner's modified firmware; that arrived afterwards and is described in the next section. Names in the decompilation are the decompiler author's interpretation; the zip's own README says field names are "educated guesses unless noted". Nothing below was run on hardware.
 
 Pico2Maple is a commercial Dreamcast adapter by Luoma Lab (cluoma): a Pico 2 W based USB/Bluetooth controller adapter that also acts as a VMU with 10 slots, flash or microSD storage, and an OLED showing the VMU screen. **The license of the firmware repository was not found** (the zip does not state it); check it before copying any code. The zip also bundles third-party libraries (pico-sdk, TinyUSB, tusb_xinput, no-OS-FatFS) whose licenses apply separately. The compiled images and Ghidra projects from the zip are not copied into the family repositories.
 
@@ -19,7 +19,24 @@ Pico2Maple is a commercial Dreamcast adapter by Luoma Lab (cluoma): a Pico 2 W b
 - **PM-B7 Settings:** 256 bytes at flash 0x3FC000 or `pico2maple_settings.bin` on SD (XOR checksum); fields: VMU slot, mapping, game id, game-id autoload.
 - **PM-B8 Hardware:** SSD1306 OLED (I²C 0x3C) shows the VMU LCD; buzzer; rumble; front button; SD on SPI1; alternative pin layout when GPIO15 is grounded; one UF2 holds the RP2040 and the RP2350 image.
 
-## What it means for the family
+## The owner's modified firmware: composite keyboard/mouse toggle (`PM-1`)
+
+Supplied as `composite_toggle_patch.zip`: `pico2maple_2026-06-14_composite-toggle.uf2` plus the patch source and build scripts (`composite_toggle.c` about 100 lines, `chips.py`, `build.py`, `patch.ld`, `emu_test.py`).
+
+- **What it is:** a **binary patch of the stock 2026-06-14 UF2**, not a source fork. New code is placed at `0x10030000`; three stock functions are hooked (HID mount, HID unmount, front-button poll); the heap limit is lowered by 2 KB to hold the patch's state. Addresses are hard-coded per chip in `chips.py`.
+- **What it does (per its README):** holding the GPIO8 front button for 3 seconds switches a USB receiver that exposes a boot keyboard and a boot mouse as two interfaces between a Dreamcast keyboard and a Dreamcast mouse. The OLED shows the keyboard or mouse icon and the device is re-announced to the Dreamcast (about 300 ms). A short press still selects the next VMU slot (the stock firmware detects the 3 s hold and ignores it). Gamepads and single-interface devices behave as before. Flashing the stock UF2 reverts it; VMU data and settings are not touched.
+- **Limitations it lists:** games may only notice the change at boot or on certain screens; receivers that put the mouse on a non-boot interface with report IDs are not covered; Logitech Lightspeed receivers keep the stock mouse-only behaviour; keys held during a toggle can look stuck.
+- **Checked here:** a byte comparison of the patched UF2 with the stock images found exactly what the README says and nothing else: RP2350, 11 patched call sites (2 mount, 8 unmount, 1 button poll), the 2-byte heap limit and the new code; RP2040, 10 call sites, the heap limit and the new code. **Not checked:** that `build.py` reproduces the UF2 (it needs an ARM GCC at a fixed path and the stock images next to it), the 14 emulator scenarios, and any behaviour on a console.
+
+What it means for the family:
+
+- It is purely local. There is still **no hello, no API and no network channel** in Pico2Maple; the patch adds only a button gesture. Everything the unified plan wants from it (the `0x21` game-id decision, a hello, VMU slot selection from openMenu, status to DreamDash) is new firmware work.
+- A binary patch ties the work to one stock build. When upstream releases a new version every address in `chips.py` has to be found again, and each new feature costs RAM and hooks. A source fork (if the upstream license allows it) would suit the family better; the decision is the owner's.
+- **License:** the patched UF2 contains the whole stock firmware, so it can only be shared under the upstream license (not found). The patch source and scripts are separate and can live in a repository of their own; the UF2 should not be committed. The patch's own license has not been set.
+- **X-4 (button gestures):** a 3 s hold is a button gesture like the 3/6/10 s holds on the iBlue adapter and the DreamDash GPIO buttons; one table of hold lengths and actions per device would make them comparable.
+- **X-14 (output kinds):** Keyboard and Mouse are chosen here by a hold at run time, in iBlue by the configured output mode. The shared vocabulary calls both an *output mode*.
+
+## What it means for the family (stock build)
 
 - **C-9 A game-id carrier already exists, and it is not the VMU block.** iBlueControlMod (main) takes the id from VMU block 200 (written by an openMenu branch, OM-15), the abandoned brctl/VMU-channel designs carried it differently, and Pico2Maple takes it from **Maple command 0x21**. Neither openMenu `unified` nor the iBlue firmware uses `0x21` today (searched). If openMenu is to work with several adapters, the game id should be sent the way the devices already read it. Proposal for the new channel (D-2): **keep 0x21 as the game-id message** and let adapters that cannot answer it use their own fallback. Needs the owner's decision, and a check of what openMenu 1.7.x and GDEMU really send.
 - **X-3 amended:** the de-facto game-id length is **12 characters** (Pico2Maple `gameid[12]`, iBlue `DC_<id>` 12 characters); the 16 of the abandoned VMU channel is the outlier. The shared record (`02`, section 7) should be 12.
@@ -31,7 +48,7 @@ Pico2Maple is a commercial Dreamcast adapter by Luoma Lab (cluoma): a Pico 2 W b
 
 ## Open
 
-1. The owner's **modified firmware** (source or build) to replace this stock decompilation as the basis.
-2. License of cluoma/Pico2Maple-fw and its permission for the family to include or mirror code.
+1. Where the patch lives: a repository of its own in the family (for example DC-Pico2Maple, patch source and scripts only) or inside an existing one; and whether to keep patching binaries or fork the upstream source.
+2. License of cluoma/Pico2Maple-fw and its permission for the family to include, mirror or fork code; and a license for the patch itself.
 3. Whether to adopt Maple `0x21` for the game id in the new channel (C-9).
 4. What openMenu and GDEMU actually send as GameID, and whether the Bluetooth build differs.

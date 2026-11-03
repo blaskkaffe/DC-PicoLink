@@ -8,7 +8,7 @@ These files are the same in every repository of the family (branch `unified`). T
 | [01-feature-inventory.md](01-feature-inventory.md) | Every feature found in every branch of the five repos, and where the same idea exists in several |
 | [02-unified-language.md](02-unified-language.md) | Draft shared vocabulary, naming and rules |
 | [03-decisions.md](03-decisions.md) | Decisions made by the owner and what is still open |
-| [05-pico2maple.md](05-pico2maple.md) | What the Pico2Maple firmware does (from a decompilation) and how it touches the other repos |
+| [05-pico2maple.md](05-pico2maple.md) | What the Pico2Maple firmware does (from a decompilation), the owner's composite-toggle patch, and how they touch the other repos |
 
 ## The repositories (branch `unified`)
 
@@ -20,7 +20,7 @@ These files are the same in every repository of the family (branch `unified`). T
 | [DC-BlueRetro](https://github.com/blaskkaffe/DC-BlueRetro/tree/unified) | BlueRetro for BlueRetro-style ESP32 wiring (upstream, archived by its author) | Apache-2.0 (software) |
 | [DC-openMenu-Virtual-Folder-Bundle](https://github.com/blaskkaffe/DC-openMenu-Virtual-Folder-Bundle/tree/unified) | openMenu fork with virtual folders and the GD MENU Card Manager | Modified BSD (openMenu), GPL-3.0 (Card Manager) |
 
-Pico2Maple (a commercial Dreamcast USB/Bluetooth adapter by Luoma Lab) is analysed in `05-pico2maple.md`; the owner's modified firmware will be added when supplied.
+Pico2Maple (a commercial Dreamcast USB/Bluetooth adapter by Luoma Lab) is analysed in `05-pico2maple.md`; the owner's modified firmware (a small patch of the stock build) is described there too.
 
 ## Licenses at a glance
 
