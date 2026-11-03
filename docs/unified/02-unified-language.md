@@ -87,4 +87,4 @@ Wanted but missing: DreamDash ↔ PicoLink status (X-11); Pi ↔ iBlue port stat
 1. Proof words (section 1), the network/link/channel wording (section 2), the hello (section 4).
 2. One game id format and who owns the per-game record.
 3. The new Dreamcast ↔ adapter channel (D-2) and what it does when no controller is connected (C-4).
-4. How openMenu connects while DCNET is selected (C-2).
+4. How openMenu's retry works in detail (D-5): which login first, and what it shows when the selected and the connected network differ. The Pi side (`NET` and `CALL` in the poll reply) exists.

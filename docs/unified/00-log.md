@@ -2,6 +2,16 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (night): DreamDash license and openMenu on both networks
+
+**Done**
+- D-6: `LICENSE` (MIT) added to DC-DreamDash `unified`, README license section and the shared license overview updated.
+- D-5: the openMenu poll reply of DC-DreamDash has a new `CALL dcnow|dcnet` line (the network of the current call, from the hook's state file), beside `NET` (the selected network). Two new tests; the openMenu tests pass. Documented in `docs/openmenu.md` and `docs/hook.md`. **Not run with a real openMenu or call.**
+
+**To do**
+- The openMenu side (OM-P11): retry the login with the other network's, show/act when `NET` and `CALL` differ. Cannot be built here (no KallistiOS), so it needs a build environment.
+- Confirm on hardware whether DCNET's login also works on DCNow! (openMenu's own header says DreamPi accepts any login on DCNow!).
+
 ## 2026-11-03 (evening): decisions applied
 
 **Done**
@@ -12,7 +22,6 @@ Newest first. "Done" is what actually happened; "To do" is what is still open.
 
 **Found while doing it**
 - With DCNET selected, openMenu's connect is routed to DCNET and its login can fail (C-2). Needs a decision.
-- DC-DreamDash has no license file (only third-party notices). Needs a decision.
 - BlueRetro's artwork in `static/` is CC BY-ND 4.0 (no derivatives) and its hardware is CERN-OHL-P-2.0; software Apache-2.0.
 - The openMenu repository is `DC-openMenu-Virtual-Folder-Bundle`, not "DC-openMenu-Wave".
 

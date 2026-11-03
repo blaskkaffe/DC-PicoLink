@@ -90,6 +90,8 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
   - Open hardware questions it lists itself: can the Pi connect outside the 60 s pairing window, and does a config connection take a Bluetooth slot and shift ports.
 - DD-5 Later idea: read what a wired port holds from openMenu over the modem/serial link, since the adapter cannot see it.
 
+**Done on `unified` (D-5):** the openMenu poll reply carries `CALL dcnow|dcnet`, the network of the current call, beside `NET`, the selected one. **Done on `unified` (D-6):** MIT `LICENSE`.
+
 **Done on `unified` (D-3):** the numbers module, number matching, hang-up numbers and busy tone, and the `switcher` actions are removed; the hook only routes a call to DCNET when DCNET is selected. `tests/test_hook_routing.py` replaces the old number tests (609 tests pass). The Hang up button (restarts DreamPi) and the debug log stay.
 
 ### DC-iBlueControlMod (ESP32 BlueRetro fork for the internal Dreamcast adapter)
@@ -166,6 +168,7 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 - OM-P8 Flash partition compaction before the ISP editor.
 - OM-P9 File menu hardware: VMU slot selection and GameID box (VM2, VMU Pro, pico2maple), controller type per port, **Bluetooth pairing per port**, cheats in the X popup.
 - OM-P10 No-DreamPi network (a todo noted in CLAUDE.md).
+- OM-P11 **(D-5)** Work equally well on DCNow! and DCNET: try DCNET's login as well as its own, read `NET` (selected) and `CALL` (connected) from the poll reply, say so when they differ, and offer `POST /dcnow` / `POST /dcnet`. Pi side done (`CALL` line).
 
 ---
 
@@ -194,7 +197,7 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 ## 4. Conflicts and collisions
 
 - **C-1 BLE command 0x4B.** DD-4 assumes `0x4B` = port status (firmware branch `claude/port-status`, which is not on the remote). IB integration already uses `0x4B` = get motion settings, and 0x4C-0x4F for motion. Port status itself is not implemented anywhere. Needs a reserved command table. *Open.*
-- **C-2 Network-select numbers.** ~~Three different schemes.~~ **Resolved by D-3:** no numbers at all. **New consequence:** with DCNET selected, openMenu's connect (its fixed dial number and login) is routed to DCNET and its login can fail, and openMenu can only `POST /dcnow` after it is connected. *Open, see `03-decisions.md`.*
+- **C-2 Network-select numbers.** ~~Three different schemes.~~ **Resolved by D-3:** no numbers at all. **New consequence:** with DCNET selected, openMenu's connect is routed to DCNET and its login can fail. **Decided (D-5):** openMenu tries DCNET's login too and reads the connected and selected network from the API (Pi side done, openMenu side OM-P11). *Open until the openMenu side exists.*
 - **C-3 brctl vs VMU channel.** *Resolved by D-2:* both are ideas, a new channel will be designed. The openMenu Controllers screen (OM-14) and IB-P1/IB-P2 wait for it.
 - **C-4 Reachability.** brctl and the VMU channel only exist on a port with a connected Bluetooth controller (hotplug on), so openMenu cannot configure an empty adapter. DD-4 has the mirror problem over BLE (pairing window). *The new channel must say what it does here.*
 - **C-5 Two branch lineages in iBlue.** `integration` holds test-fw + web-config + restructure's *layout*, but not restructure's brctl/hotkey/profile code. With D-2 the brctl-based parts are not ported; the profile hotkey (IB-17) and per-game keep-through-reset (IB-20) are the pieces still worth porting by hand.
@@ -206,11 +209,10 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 
 ## 5. Decisions and what is still open
 
-Decided on 2026-11-03 (details in `03-decisions.md`): D-1 BlueRetro-wiring firmware = another build of DC-iBlueControlMod (tentative); D-2 a new control channel; D-3 no telephone numbers (done in DC-DreamDash); D-4 docs and cross-linked READMEs and licenses in every `unified`.
+Decided on 2026-11-03 (details in `03-decisions.md`): D-1 BlueRetro-wiring firmware = another build of DC-iBlueControlMod (tentative); D-2 a new control channel; D-3 no telephone numbers (done in DC-DreamDash); D-4 docs and cross-linked READMEs and licenses in every `unified`; D-5 openMenu works on both networks and learns both from the API; D-6 DC-DreamDash is MIT.
 
 Still open:
 1. The new control channel's design.
-2. openMenu's connect while DCNET is selected (C-2).
+2. The openMenu side of D-5 (OM-P11), and whether DCNET's login also works on DCNow!.
 3. Pico2maple: the owner will paste its firmware; it needs its own `PM-` section.
-4. A license for DC-DreamDash (none today).
-5. DC-BlueRetro's final name/fate, and the openMenu repository name.
+4. DC-BlueRetro's final name/fate, and the openMenu repository name.
