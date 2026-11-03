@@ -2,6 +2,22 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-03 (late night, 5): the iBlue game id now follows Maple 0x21
+
+**Done**
+- DC-iBlueControlMod `unified`: the VMU-block game id (block 200, `iBGI`) is removed. The memory card unit now acknowledges Maple command `0x21` with the 12-byte id (the way openMenu already sends it to VM2-class devices) and applies it as BlueRetro's game id. Rules as Pico2Maple's: `DCBIOS` ignored, empty id = no game, repeats ignored, only letters/digits/`-`/`_`.
+- **Found on the way:** openMenu only sends the id to devices whose extended device info (command `0x02`) starts with a known 16-byte marker. The iBlue answered that request with the short normal reply, so openMenu would never have sent anything. The adapter now answers with the full 48-word reply and the marker `iBlueControlMod `; the openMenu fork recognises it (`vm2_api.c`, three small additions).
+- **Found on the way:** text on the Maple bus is word-reversed (every 4 bytes); the existing strings in `maple.c` are stored that way. The first draft read the id and sent the marker in the wrong order; fixed, and the host test covers it.
+- Host tests: 19 checks for the game id (valid/invalid/repeat/padded/word order), the other host tests still pass (sanitizers on). Docs (`docs/led-and-gameid.md`, `docs/TODO.md`, Kconfig help) updated.
+- D-9: patch source and scripts in DC-Pico2Maple are MIT (`patches/composite-toggle/LICENSE`).
+
+**Limits**
+- Not built with ESP-IDF (not available here), not run on a console. The extended-info reply is longer than before: worth checking on hardware that the BIOS and games still enumerate the VMU normally. No CRC check on the frame (the existing code has none for writes either).
+- The openMenu change is not built (no KallistiOS).
+
+**To do**
+- Build the iBlue firmware in CI, flash, start a game from openMenu, check the game id in blueretro.io; check on a console that the VMU still works. The openMenu fork needs a build with the marker.
+
 ## 2026-11-03 (late night, 4): Pico2Maple answers
 
 **Done**
