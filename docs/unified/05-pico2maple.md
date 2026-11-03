@@ -43,7 +43,7 @@ What it means for the family:
 - **X-8 amended:** a second SD layout exists: `/pico2maple/vmuNN.bin`, `/pico2maple/gameid/<ID>/<ID>-N.bin`, `/pico2maple/internal/vmu_internalNN.bin`. openMenu Serial VMU (`/sd/OPENMENU/SAVES/<GAMEID>/SLOTn.VMU`) and its safety tag (OM-16) must not clash with a Pico2Maple VMU on the same port, which is the very case OM-16 names. Both are 128 KB images, so they could be made interchangeable.
 - **X-14 amended:** output kinds Pico2Maple presents (controller, Racing, keyboard, mouse) overlap with iBlue's (Normal, Dual stick, Keyboard, Mouse, Racing, Maracas). Maracas and dual stick are not in the Pico2Maple list.
 - **X-2 / mapping:** a third mapping format (28×4 text file) next to BlueRetro's `map_cfg` and the removed brctl one; per-game mapping may exist (`autoload`, unclear).
-- **X-9 hello:** the Dreamcast reads the usual Maple device info (name strings above) and nothing else was found; there is no Pico2Maple API for slot selection from the Dreamcast apart from `0x21`. OM-P9 (VMU slot selection from openMenu) therefore needs new firmware work, which is probably what the owner's modified firmware adds.
+- **X-9 hello:** the Dreamcast reads the usual Maple device info (name strings above) and nothing else was found; there is no Pico2Maple API for slot selection from the Dreamcast apart from `0x21`. OM-P9 (VMU slot selection from openMenu) therefore needs new firmware work; the owner's composite-toggle patch (`PM-1`) does not add it.
 - **Same device, same port:** Pico2Maple, the iBlue adapter and a real VMU may sit on one controller port; the new channel must say how a client tells them apart (hello, section 4 of `02`).
 
 ## Open
