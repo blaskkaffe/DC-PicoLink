@@ -56,3 +56,16 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
    gets `AT\r`).
 5. Under *dc1 to the cable* try `set link.serial.baud 115200`, then `get link.*`.
 6. Plug the cable into a Pi/PC with DreamPi running: serial and network go to USB again.
+
+## Second test: the Internet on the Dreamcast (E-3)
+
+1. Save your home Wi-Fi on the page. Use the *Internet for the Dreamcast (serial)* card: both
+   boxes ticked.
+2. On the Dreamcast start a program that dials with the serial cable as its modem (a game's
+   online setup, any serial-PPP test). Any phone number works, no login is checked.
+3. **Expect** on the page: *Status lines* `Dreamcast dialled; starting PPP`, then
+   `PPP is up: Dreamcast 10.64.0.2, DNS and gateway 10.64.0.1`; the card says `online`, DNS
+   questions count up and `last:` shows the newest name, `DCNow!: session started` and
+   `DCNow!: domain sent: ...`. The Dreamcast shows up on the DCNow! page after about 15 s.
+4. If the call does not come up, copy the *Status lines* and the *Serial port* box (it shows the
+   AT conversation until PPP starts) into your report.

@@ -112,9 +112,10 @@ void app_main(void) {
         nvs_flash_erase();
         nvs_flash_init();
     }
-    const char *hi = "DC-PicoLink ESP32 side starting (step E-2: link + web page)";
+    const char *hi = "DC-PicoLink ESP32 side starting (steps E-1..E-3: link, web page, Internet over serial)";
     log_add("esp32", hi, strlen(hi));
     wifi_start();
     link_start();
+    ppp_srv_start();
     web_start();
 }

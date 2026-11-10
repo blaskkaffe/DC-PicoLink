@@ -4,13 +4,13 @@ Firmware for an **ESP32-S3** (ESP32-S3-Zero) connected to the cable over UART, s
 Dreamcast can go online without a Raspberry Pi. Design and plan: the project's
 `07-esp32-link.md` (steps E-1 to E-11). Wiring: [../hardware/ESP32.md](../hardware/ESP32.md).
 
-**Status: step E-2 (written, builds, not yet tried on hardware).**
+**Status: step E-3 (written, builds, host-tested; not yet tried on hardware).**
 
 | Step | What | State |
 |---|---|---|
 | E-1 | link to the cable (shared framing `../firmware/link_model.h`) | done in the cable firmware |
-| E-2 | Wi-Fi setup network + web page: link state, the cable's hello, status lines, serial monitor, dc1 box, home Wi-Fi | **this** |
-| E-3 | DCNow! over serial PPP (Hayes stub, PPP server, DNS, NAT, DCNow! reports) | next |
+| E-2 | Wi-Fi setup network + web page: link state, the cable's hello, status lines, serial monitor, dc1 box, home Wi-Fi | done |
+| E-3 | Internet and DCNow! over serial PPP: Hayes stub, PPP server, DNS, NAT, TTL 64 and PowerSmash SYN rule, DCNow! reports | **this** |
 | E-4 | DCNow! over the cable's W5500 frames | |
 | E-5 | NAT rewrite list, UPnP + STUN, DreamPi's helpers | |
 | E-6 | DCNET | |
@@ -36,12 +36,39 @@ Join **DC-PicoLink-XXXX** (password `dreamcast`, change it in menuconfig) and op
 http://192.168.4.1. Save your home network under *Wi-Fi*; the page is then also on the
 address shown there. The setup network stays on.
 
+## Internet for the Dreamcast over serial (E-3)
+
+Dial anything from a serial-PPP program on the Dreamcast: the ESP32 answers like a modem
+(`AT` → `OK`, `ATD…` → `CONNECT 33600`), then runs the PPP server. The Dreamcast gets
+10.64.0.2, the ESP32 (10.64.0.1) is its gateway and DNS, and everything else is NAT'd out
+through your Wi-Fi. What a DreamPi does around that, and how it is done here:
+
+| DreamPi | ESP32 |
+|---|---|
+| fake Hayes modem (Python) | `../firmware/hayes_model.h`, `main/ppp_srv.c` |
+| pppd, no login needed | lwIP PPP server (`main/ppp_srv.c`) |
+| dnsmasq: revival servers 46.101.91.123 / 209.50.50.129, `dreampi_dns.conf`, domain-needed, bogus-priv | `main/dnsd.c`, `../firmware/dns_model.h`; the file is fetched from dreamcast.online when Wi-Fi is up and every 6 h |
+| iptables MASQUERADE | lwIP NAPT on the PPP interface |
+| iptables TTL 64; drop double SYN from ports 3200-3205 (PowerSmash) | `../firmware/hdlc_model.h`, applied to the PPP frames before lwIP sees them |
+| `dcnow.py` every 15 s | `main/dcnow.c`, `../firmware/dcnow_model.h`; can be switched off on the page |
+
+Not yet: the `dcnatrules` list, UPnP and the game helpers (E-5), DCNET (E-6), the VPN (E-7), the
+modem (E-9). Games that need an incoming connection will not work until E-5/E-7.
+
+Tests: `tools/run-tests.sh` (Hayes, frame filter, DNS and DCNow! rules) and
+`esp32/tests/run-ppp-test.sh` (ESP-IDF's lwIP PPP server on the PC, talked to like a
+Dreamcast: LCP, IPCP with address and DNS, ping, hang up). The real Dreamcast is still to be tried.
+
 ## Files
 
 | | |
 |---|---|
 | `main/link.c` | UART1 link: reader task, packet queue, asks the cable `get hello` every second |
 | `main/wifi.c` | setup network + home network (NVS) |
+| `main/ppp_srv.c` | Hayes stub, PPP server, NAT, call control |
+| `main/dnsd.c` | DNS server for the Dreamcast, downloaded DNS file |
+| `main/dcnow.c` | DCNow! reports |
 | `main/web.c` | the page and `/api/*` |
 | `main/main.c` | status-line ring, serial monitor ring, start-up |
 | `../firmware/link_model.h` | framing, shared with the cable (tested in `firmware/tests/test_link.c`) |
+| `../firmware/hayes_model.h`, `hdlc_model.h`, `dns_model.h`, `dcnow_model.h` | the E-3 rules, host-compilable (tests `test_hayes.c`, `test_hdlc.c`, `test_dns.c`) |

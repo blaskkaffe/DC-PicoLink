@@ -112,8 +112,7 @@ static void deliver(void) {
         break;
     case LINK_CH_SER:
         st.ser_in += rx.n;
-        ser_mon_add(true, rx.payload, rx.n);
-        /* E-3: the Hayes stub / PPP server takes these bytes */
+        ser_from_dc(rx.payload, rx.n);        /* E-3: Hayes stub + PPP server (also feeds the monitor) */
         break;
     case LINK_CH_ETH:
         st.eth_in++;

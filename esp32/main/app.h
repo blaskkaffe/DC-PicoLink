@@ -32,6 +32,24 @@ size_t log_since(uint32_t since, char *json_out, size_t cap, uint32_t *next);
 void ser_mon_add(bool from_dc, const uint8_t *p, size_t n);
 size_t ser_mon_since(uint32_t since, char *json_out, size_t cap, uint32_t *next);
 
+/* ---- Internet for the Dreamcast over the serial cable (E-3) ---- */
+/* ppp_srv.c: the Hayes modem stub and the PPP server on the serial channel */
+void ppp_srv_start(void);
+void ser_from_dc(const uint8_t *p, size_t n);          /* serial bytes from the Dreamcast */
+void ppp_srv_set_enabled(bool on);                      /* off: serial bytes only go to the monitor */
+size_t net_info_json(char *out, size_t cap);            /* one JSON object for the web page */
+/* dnsd.c: the small DNS server for the Dreamcast */
+void dnsd_start(void);
+void dnsd_set_online(bool on, uint32_t ip_host_order);  /* address to listen on while a call is up */
+void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap);
+/* dcnow.c: DCNow! reports */
+void dcnow_start(void);
+void dcnow_note_domain(const char *domain);
+void dcnow_set_online(bool on);
+void dcnow_set_enabled(bool on);
+bool dcnow_enabled(void);
+void dcnow_info(uint32_t *ok, uint32_t *fail);
+
 /* ---- Wi-Fi (wifi.c) ---- */
 void wifi_start(void);
 void wifi_set_sta(const char *ssid, const char *pass);
