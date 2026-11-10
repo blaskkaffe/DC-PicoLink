@@ -234,6 +234,16 @@ while a modem Dreamcast is online through DreamPi (`ppp0`), whose address it is 
 Log: `journalctl -u dcusb0-vpn`. Off: `VPN_MAP=no` in `/etc/dcusb0.conf`, then
 `sudo systemctl restart dcusb0-vpn`. Without the VPN nothing is mapped (outbound NAT only).
 
+**Which traffic uses the VPN (`VPN_ROUTE`, default `all`).** The mapping above only
+covers addresses inside the VPN. With `VPN_ROUTE=all` the Dreamcast's Internet traffic
+goes through `tun0` too (policy routing for the Dreamcast's address only, table 217,
+source = its VPN address), as long as the VPN server forwards to the Internet: that is
+checked with a ping through `tun0` (`VPN_PROBE`, default 1.1.1.1) and repeated every
+minute; if it fails, only VPN addresses use the VPN and the log says why. A list
+(`VPN_ROUTE="20.102.63.253 192.246.40.56/32"`) routes only those destinations; `none`
+restores the old behaviour. Without the VPN the Dreamcast uses the LAN as before.
+Test (root, network namespaces): `tools/test-dcusb0-vpn.sh`.
+
 ## Logic capture (diagnostics)
 
 The cable can record its four bus pins (CLK, MOSI, MISO, CS) like a small logic

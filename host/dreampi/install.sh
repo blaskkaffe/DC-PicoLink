@@ -44,6 +44,7 @@ install -m 755 dcusb0-vpn /usr/local/sbin/dcusb0-vpn
 install -m 644 dcusb0-vpn.service /etc/systemd/system/dcusb0-vpn.service
 # options added later: append them to an existing /etc/dcusb0.conf
 grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,$p' dcusb0.conf >> /etc/dcusb0.conf
+grep -q '^VPN_ROUTE=' /etc/dcusb0.conf || sed -n '/^# Which of the Dreamcast.s traffic/,$p' dcusb0.conf >> /etc/dcusb0.conf
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/90-dcusb0.conf
 # emulated SD card
 [ -f /etc/dcsd.conf ] || install -m 644 dcsd.conf /etc/dcsd.conf
