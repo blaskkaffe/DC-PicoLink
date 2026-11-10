@@ -111,8 +111,33 @@ jobs:
           name: dctest
           path: dist-dctest/*
 
+  # ESP32 side (esp32/): ESP-IDF's own CI image, pinned to 5.4.1
+  esp32:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.4.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . $IDF_PATH/export.sh
+          cd esp32
+          idf.py set-target esp32s3
+          idf.py build
+          ver=$(git describe --tags --always --dirty)
+          mkdir -p ../dist-esp32
+          (cd build && esptool.py --chip esp32s3 merge_bin -o ../../dist-esp32/dc-picolink-esp32-$ver-merged.bin @flash_args)
+          ls -l ../dist-esp32
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dc-picolink-esp32
+          path: dist-esp32/*
+
   release:
-    needs: [build, dctest]
+    needs: [build, dctest, esp32]
     # the firmware release goes out even if the KOS build breaks; dctest.elf is added when it worked
     if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04

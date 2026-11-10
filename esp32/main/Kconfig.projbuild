@@ -1,0 +1,17 @@
+menu "DC-PicoLink ESP32"
+    config DCL_LINK_TX
+        int "Link TX pin (to the cable's GPIO13)"
+        default 5
+    config DCL_LINK_RX
+        int "Link RX pin (from the cable's GPIO12)"
+        default 6
+    config DCL_LINK_RTS
+        int "Link RTS pin (to the cable's GPIO14, CTS)"
+        default 7
+    config DCL_LINK_CTS
+        int "Link CTS pin (from the cable's GPIO15, RTS)"
+        default 8
+    config DCL_AP_PASSWORD
+        string "Password of the setup Wi-Fi (8+ characters, empty = open)"
+        default "dreamcast"
+endmenu

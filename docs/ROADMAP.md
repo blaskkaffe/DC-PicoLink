@@ -29,6 +29,10 @@
 * macOS, Windows: network sharing instructions/scripts, serial port names.
 * Android: investigate.
 * A PPP server for serial games without DreamPi (like Netlink), per platform.
+* **ESP32-S3 instead of a computer** (`esp32/`, plan E-1 to E-11 in the project's
+  `07-esp32-link.md`): E-1 link and E-2 web page written; next E-3 DCNow! over serial PPP
+  (PPP server, DNS to the revival servers, NAT, DCNow! reports), E-4 the W5500 frames, then
+  NAT rewrites/UPnP/DreamPi's helpers, DCNET, power from the serial port, the modem.
 * Own USB VID/PID (pid.codes for open-source hardware) instead of the TinyUSB test ID
   (`cafe:4dc5`).
 

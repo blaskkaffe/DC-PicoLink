@@ -5,3 +5,7 @@ dist/
 *.o
 __pycache__/
 .DS_Store
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/managed_components/
+esp32/dependencies.lock

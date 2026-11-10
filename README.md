@@ -3,7 +3,8 @@
 An RP2040-based Dreamcast serial-port adapter: a full coder's cable (serial and serial
 PPP), W5500 Ethernet emulation over USB networking, and SD card emulation (used by
 openMenu for its settings and VMU backups). Works with DreamPi or a regular computer,
-as a cheaper, faster alternative to separate coder's cables and W5500 adapters.
+as a cheaper, faster alternative to separate coder's cables and W5500 adapters, and (being
+built) with an ESP32-S3 instead of a computer: [hardware/ESP32.md](hardware/ESP32.md), [esp32/](esp32).
 
 One small board on the Dreamcast's serial port shows up on the computer as one USB
 device with three functions. It works out by itself which one the Dreamcast is using:
@@ -49,7 +50,8 @@ Logs: `journalctl -fu dcsd` (the cable's own status lines), `journalctl -u dcusb
 |---|---|
 | [`firmware/`](firmware) | RP2040 firmware (Pico SDK, PIO) and its host-side tests (`firmware/tests`) |
 | [`host/`](host) | software for the computer side: `dreampi/` today; `linux/`, `macos/`, `windows/` planned |
-| [`hardware/`](hardware) | wiring and build notes, [SD slot](hardware/SD-SLOT.md) |
+| [`esp32/`](esp32) | ESP32-S3 firmware: the cable's link to Wi-Fi without a computer (being built) |
+| [`hardware/`](hardware) | wiring and build notes, [SD slot](hardware/SD-SLOT.md), [ESP32](hardware/ESP32.md) |
 | [`docs/`](docs) | [architecture](docs/ARCHITECTURE.md), [technical reference](docs/REFERENCE.md), [roadmap](docs/ROADMAP.md), [testing](docs/TESTING.md), [development log](docs/DEVLOG.md) |
 | [`tools/`](tools) | test runner, DreamPi installer builder |
 

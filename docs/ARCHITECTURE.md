@@ -74,7 +74,17 @@ RP2040, Pico SDK, runs from RAM (no flash-cache stalls), 250 MHz recommended.
 | macOS | works | planned: Internet Sharing | — (SD slot) |
 | Windows | works | planned: built-in NCM driver (Windows 11) + Internet Connection Sharing | — (SD slot) |
 | Android | possible | possible (USB tethering stack) | — |
+| **ESP32-S3** (no computer, `esp32/`) | over the UART link (GPIO12-15) | over the UART link | — (SD slot) |
 | iOS | no USB serial / network access for apps | — | — |
+
+**ESP32 link.** Instead of (or beside) USB, the cable can talk to an ESP32-S3 over UART0
+(GPIO12 TX, 13 RX, 14 CTS, 15 RTS; 3 Mbaud, RTS/CTS), so a Dreamcast goes online without a
+Pi. One framing for every kind of traffic (`link_model.h`: COBS, CRC32, channels for dc1
+messages, status lines, serial bytes, Ethernet frames); dc1 keys in `cable_api.h`. Polled
+on core0 without DMA: a side that can't take a packet stops reading, and hardware flow
+control pauses the sender, so nothing is dropped. A computer on USB wins: serial goes to
+the ESP32 only while no program has the USB serial port open, network frames only while USB
+is not mounted. Wiring: [hardware/ESP32.md](../hardware/ESP32.md).
 
 DreamPi additions are kept as a separate add-on (own files, own services, own iptables
 chains, no edits to DreamPi's scripts) so they can be merged into DreamPi later.

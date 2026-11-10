@@ -39,7 +39,10 @@
 #include "tusb.h"
 #include "pico/multicore.h"
 #include "uart.pio.h"
+#include "hardware/uart.h"
 #include "dcmode.h"
+#include "link_model.h"
+#include "cable_api.h"
 #define W5_PUSH(b) ((void)(b))
 #include "w5500_model.h"
 
@@ -88,6 +91,34 @@ static bool rts_asserted;
 
 static uint8_t tx_buf[2][TX_CHUNK];
 static int tx_cur = 0;
+
+/* ---- ESP32 link (link_model.h): UART0 on GPIO12-15 beside USB ---------------
+   A computer on USB wins: serial goes to the ESP32 only while no program has the
+   USB serial port open, network frames only while USB is not mounted. */
+#define PIN_LINK_TX   12
+#define PIN_LINK_RX   13
+#define PIN_LINK_CTS  14
+#define PIN_LINK_RTS  15
+#define LINK_UART     uart0
+#define LINK_TX_BITS  13                         /* 8 KiB ring to the ESP32 */
+#define LINK_TX_SIZE  (1u << LINK_TX_BITS)
+#define SER_IN_SIZE   4096u                      /* ESP32 -> DC serial bytes */
+static uint8_t link_txr[LINK_TX_SIZE];
+static uint32_t link_tx_wr, link_tx_rd;
+static uint8_t link_seq;
+static link_rx_t link_rx;
+static bool link_pending;                        /* link_rx holds a packet not delivered yet */
+static bool link_up;
+static uint32_t link_last_rx;
+static uint32_t link_stat_drop, link_ser_drop, link_eth_drop;
+static uint8_t ser_in[SER_IN_SIZE];
+static uint32_t ser_in_wr, ser_in_rd;
+static bool link_send(uint8_t ch, const void *p, size_t n);
+static void request_baud(uint32_t b, uint32_t queued_bytes);
+static inline bool ser_to_link(void) { return link_up && !tud_cdc_connected(); }
+static inline bool eth_to_link(void) { return link_up && !tud_mounted(); }
+/* someone reads the status lines: dcsd on the Pi, or the ESP32 */
+static inline bool log_up(void) { return sd_link_up || link_up; }
 
 static uint32_t cur_baud = 0;             /* rate the host (DreamPi, dc-tool) asked for */
 static float wire_baud = 0;               /* rate actually on the wire */
@@ -250,7 +281,12 @@ static void usb_to_dc(void) {
         if (limit > pending_old_bytes) limit = pending_old_bytes;
     }
 
-    uint32_t n = tud_cdc_available() ? tud_cdc_read(tx_buf[tx_cur], limit) : 0;
+    uint32_t n = 0;
+    if (ser_to_link()) {                          /* bytes from the ESP32 */
+        while (n < limit && ser_in_rd != ser_in_wr)
+            tx_buf[tx_cur][n++] = ser_in[ser_in_rd++ % SER_IN_SIZE];
+    } else if (tud_cdc_available())
+        n = tud_cdc_read(tx_buf[tx_cur], limit);
     if (!n) return;
     if (pending_baud) pending_old_bytes -= n;
     dma_channel_transfer_from_buffer_now(dma_tx, tx_buf[tx_cur], n);
@@ -364,7 +400,24 @@ static void dc_to_usb(void) {
         used = RX_WORDS / 2;
     }
 
-    if (used && tud_cdc_connected()) {
+    if (used && ser_to_link()) {          /* to the ESP32, up to 256 bytes per packet */
+        uint8_t buf[256];
+        while (used) {
+            uint32_t take = used < sizeof buf ? used : sizeof buf, n = 0;
+            if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) break;   /* no room: RTS logic below holds the DC */
+            for (uint32_t i = 0; i < take; i++) {
+                uint32_t wd = rx_ring[(rx_rd + i) & (RX_WORDS - 1)];
+                bool ok = rx_ok(wd);
+                if (ok) buf[n++] = rx_decode(wd);
+                else rx_fe_count++;
+#if DC_DIAG
+                ppm_char(wd, ok);
+#endif
+            }
+            if (n) link_send(LINK_CH_SER, buf, n);
+            rx_rd += take; used -= take;
+        }
+    } else if (used && tud_cdc_connected()) {
         uint8_t buf[64];
         uint32_t room = tud_cdc_write_available();
         while (used && room) {
@@ -397,13 +450,9 @@ static void dc_to_usb(void) {
 /* ---- TinyUSB callbacks ------------------------------------------------ */
 void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lc) {
     if (itf != 0) return;               /* only the coder's-cable port has a baud rate */
-    uint32_t b = lc->bit_rate;
-    if (b == 0 || b == cur_baud) { pending_baud = 0; return; }
-    if (dc_mode != MODE_SERIAL) { pending_baud = 0; apply_baud(b); return; }
     /* bytes already received over USB belong to the old rate (dc-tool sends the
        new speed and reopens the port immediately) */
-    pending_old_bytes = tud_cdc_available();
-    pending_baud = b;
+    request_baud(lc->bit_rate, tud_cdc_available());
 }
 
 /* No 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate here, and a test tool or terminal that
@@ -467,7 +516,7 @@ static void console_task(void) {
         uint8_t c = rx_ok(wd) ? rx_decode(wd) : 0;
         if (c == '\r') continue;
         if (c == '\n' || n >= sizeof line - 1) {
-            if (!junk && n >= 3 && sd_link_up) {
+            if (!junk && n >= 3 && log_up()) {
                 if (now - sent_t > 1000000u) { sent_t = now; sent_n = 0; }
                 if (sent_n++ < 40) { line[n] = 0; status("dc console: %s", line); }
             }
@@ -478,7 +527,7 @@ static void console_task(void) {
         line[n++] = (char)c;
     }
     if (n && now - last > 200000u) {               /* text without a newline */
-        if (!junk && n >= 3 && sd_link_up) { line[n] = 0; status("dc console: %s", line); }
+        if (!junk && n >= 3 && log_up()) { line[n] = 0; status("dc console: %s", line); }
         n = 0; junk = false;
     }
 }
@@ -516,10 +565,21 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
 void tud_network_init_cb(void) { }
 
 static void net_task(void) {
-    w5.link_up = tud_mounted();
+    w5.link_up = tud_mounted() || link_up;
     w5_txd_t *d = w5_net_tx_peek();
     if (d) {
-        if (!tud_mounted()) w5_net_tx_pop();          /* nobody to send to */
+        if (eth_to_link()) {                          /* to the ESP32 */
+            static uint8_t f[1514];
+            if (d->len > sizeof f) { w5_net_tx_pop(); link_eth_drop++; }
+            else if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) >= LINK_MAX_WIRE) {
+                w5_net_tx_copy(d, f);
+                uint16_t n = d->len;
+                w5_net_tx_pop();
+                link_send(LINK_CH_ETH, f, n);
+                net_out++;
+            }
+        }
+        else if (!tud_mounted()) w5_net_tx_pop();     /* nobody to send to */
         else if (tud_network_can_xmit(d->len)) tud_network_xmit(d, 0);
     }
     if (net_rx_retry) {
@@ -531,17 +591,28 @@ static void net_task(void) {
 /* ---- status lines for the Pi (logged by dcsd: journalctl -u dcsd) -------- */
 #include <stdio.h>
 #include <stdarg.h>
-static void status(const char *fmt, ...) {
+/* to_usb: dcsd on the Pi (when it is there); to_link: the ESP32 (when the link is up) */
+static void vstatus_to(bool to_usb, bool to_link, const char *fmt, va_list ap) {
     char t[200];
-    va_list ap; va_start(ap, fmt);
     int n = vsnprintf(t + 2, sizeof t - 2, fmt, ap);
-    va_end(ap);
     if (n < 0) return;
     if (n > (int)sizeof t - 3) n = sizeof t - 3;
-    if (!sd_link_up) return;
+    if (to_link && link_up && !link_send(LINK_CH_STAT, t + 2, (size_t)n)) link_stat_drop++;
+    if (!to_usb || !sd_link_up) return;
     t[0] = 'S'; t[1] = (char)n;
     host_write(t, (uint32_t)n + 2);
     tud_vendor_write_flush();
+}
+static void status(const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    vstatus_to(true, true, fmt, ap);
+    va_end(ap);
+}
+static void status_to(bool to_usb, bool to_link, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+static void status_to(bool to_usb, bool to_link, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    vstatus_to(to_usb, to_link, fmt, ap);
+    va_end(ap);
 }
 
 /* ---- hello + pin/heartbeat report while the cable is offline --------------- */
@@ -551,7 +622,7 @@ static void force_task(void) {
     force_req = 0xFF;
     if (r > FORCE_SD) r = FORCE_AUTO;
     static const char *const names[] = { "auto", "serial only", "SPI (W5500 + SD)", "W5500 only", "SD only" };
-    if (r != dc_force) status("mode setting from the Pi: %s", names[r]);
+    if (r != dc_force) status("mode setting from the host: %s", names[r]);
     dc_force = r;
 }
 
@@ -665,19 +736,25 @@ static void capture_task(void) {
 #endif
 
 static void hello_task(void) {
-    static bool said;
+    static bool said_usb, said_link;
     static uint32_t last, beat0;
     uint32_t now = time_us_32();
-    if (!sd_link_up) { said = false; return; }
-    if (!said) {
-        said = true; last = now; beat0 = core1_beat;
+    if (!sd_link_up) said_usb = false;
+    if (!link_up) said_link = false;
+    if (!log_up()) return;
+    bool new_usb = sd_link_up && !said_usb, new_link = link_up && !said_link;
+    if (new_usb || new_link) {
+        said_usb |= new_usb; said_link |= new_link;
+        last = now; beat0 = core1_beat;
         static const char *const names[] = { "serial", "SPI (SD/W5500)", "offline" };
 #ifndef DC_VERSION
 #define DC_VERSION "dev"
 #endif
-        status("DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s",
-               names[dc_mode], w5.common[W5C_VERSIONR],
-               DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
+        /* the first line a new reader gets: only to that reader */
+        status_to(new_usb, new_link,
+                  "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s",
+                  names[dc_mode], w5.common[W5C_VERSIONR],
+                  DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
         return;
     }
     if (dc_mode != MODE_OFFLINE || now - last < 10000000u) return;
@@ -797,7 +874,7 @@ static void power_sense_task(void) {
 }
 
 static void sense_report_task(void) {
-    if (!sense_note || !sd_link_up) return;
+    if (!sense_note || !log_up()) return;
     status("power sense GPIO%d: %s", DC_POWER_PIN, sense_note);
     sense_note = 0;
 }
@@ -812,7 +889,7 @@ static void autobaud_task(void) {
     uint32_t now = time_us_32();
 
     static uint32_t warned_baud;
-    if (baud_wrapped && cur_baud != warned_baud && sd_link_up) {
+    if (baud_wrapped && cur_baud != warned_baud && log_up()) {
         warned_baud = cur_baud;
         status("serial: host asked %lu baud; above 1562500 dcload's divider wraps and the DC runs at %.0f baud "
                "(the cable matches it). The DC's fastest rate is 1562500: use -b 1500000 or -b 1562500",
@@ -936,6 +1013,122 @@ static void sd_task(void) {
     tud_vendor_write_flush();
 }
 
+/* ---- ESP32 link ------------------------------------------------------------ */
+static void link_init(void) {
+    uart_init(LINK_UART, LINK_BAUD);
+    uart_set_format(LINK_UART, 8, 1, UART_PARITY_NONE);
+    uart_set_hw_flow(LINK_UART, true, true);
+    uart_set_fifo_enabled(LINK_UART, true);
+    gpio_set_function(PIN_LINK_TX, GPIO_FUNC_UART);
+    gpio_set_function(PIN_LINK_RX, GPIO_FUNC_UART);
+    gpio_set_function(PIN_LINK_CTS, GPIO_FUNC_UART);
+    gpio_set_function(PIN_LINK_RTS, GPIO_FUNC_UART);
+    gpio_pull_up(PIN_LINK_RX);      /* no ESP32: idle line, no garbage */
+    gpio_pull_up(PIN_LINK_CTS);     /* no ESP32: "not clear", nothing is sent */
+    link_rx_init(&link_rx);
+}
+
+/* Queue one packet for the ESP32. false (and nothing queued) if there is no room. */
+static bool link_send(uint8_t ch, const void *p, size_t n) {
+    static uint8_t w[LINK_MAX_WIRE];
+    if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) return false;
+    size_t k = link_build(ch, link_seq, p, n, w);
+    if (!k) return false;
+    link_seq++;
+    for (size_t i = 0; i < k; i++) link_txr[(link_tx_wr + i) & (LINK_TX_SIZE - 1)] = w[i];
+    link_tx_wr += (uint32_t)k;
+    return true;
+}
+
+static void request_baud(uint32_t b, uint32_t queued_bytes) {
+    if (b == 0 || b == cur_baud) { pending_baud = 0; return; }
+    if (dc_mode != MODE_SERIAL) { pending_baud = 0; apply_baud(b); return; }
+    pending_old_bytes = queued_bytes;   /* bytes already received belong to the old rate */
+    pending_baud = b;
+}
+
+/* Deliver the packet in link_rx. false = not now (no room): keep it, stop reading. */
+static bool link_deliver(void) {
+    const uint8_t *p = link_rx.payload;
+    size_t n = link_rx.n;
+    switch (link_rx.ch) {
+    case LINK_CH_API: {
+        static char out[600];
+        if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) return false;
+        cable_api_t s = { .version = DC_VERSION, .mode = dc_mode, .baud = cur_baud, .wire = (uint32_t)(wire_baud + 0.5f),
+                          .force = dc_force, .route_ser = ser_to_link() ? "esp32" : "usb",
+                          .route_eth = eth_to_link() ? "esp32" : "usb" };
+        size_t k = cable_api_handle(&s, (const char *)p, n, out, sizeof out);
+        if (s.set_baud) request_baud(s.set_baud, ser_in_wr - ser_in_rd);
+        if (s.set_force != 0xFF) force_req = s.set_force;
+        if (k) link_send(LINK_CH_API, out, k);
+        return true;
+    }
+    case LINK_CH_SER:
+        if (!ser_to_link() || dc_mode != MODE_SERIAL) { link_ser_drop += (uint32_t)n; return true; }
+        if (SER_IN_SIZE - (ser_in_wr - ser_in_rd) < n) return false;
+        for (size_t i = 0; i < n; i++) ser_in[ser_in_wr++ % SER_IN_SIZE] = p[i];
+        return true;
+    case LINK_CH_ETH:
+        if (!eth_to_link() || dc_mode != MODE_W5500 || !w5.sock_open || n > 1514) { link_eth_drop++; return true; }
+        if (!w5_net_rx(p, (uint16_t)n)) { net_in_full++; return false; }
+        net_in++;
+        return true;
+    default:                         /* STAT, SD (reserved): nothing for the cable */
+        return true;
+    }
+}
+
+static void link_task(void) {
+    uint32_t now = time_us_32();
+    /* to the ESP32: as much as the FIFO takes (CTS holds it when the ESP32 is busy) */
+    while (link_tx_rd != link_tx_wr && uart_is_writable(LINK_UART))
+        uart_get_hw(LINK_UART)->dr = link_txr[link_tx_rd++ & (LINK_TX_SIZE - 1)];
+    /* from the ESP32 */
+    if (link_pending) {
+        if (!link_deliver()) goto done;
+        link_pending = false;
+    }
+    for (int budget = 256; budget-- && uart_is_readable(LINK_UART);) {
+        uint32_t dr = uart_get_hw(LINK_UART)->dr;
+        if (dr & 0xF00) {            /* framing/parity/break/overrun: let the CRC catch it */
+            uart_get_hw(LINK_UART)->rsr = 0;
+        }
+        if (link_rx_byte(&link_rx, (uint8_t)dr)) {
+            link_last_rx = now;
+            if (!link_up) {
+                link_up = true;
+                link_tx_rd = link_tx_wr;  /* drop anything queued before (nothing should be) */
+            }
+            if (!link_deliver()) { link_pending = true; break; }
+        }
+    }
+done:
+    if (link_up && now - link_last_rx > 3000000u) {
+        link_up = false;
+        link_tx_rd = link_tx_wr;
+        ser_in_rd = ser_in_wr;                /* serial goes back to USB */
+        status("esp32 link: down (nothing heard for 3 s); %lu good packets, %lu bad checksums, %lu lost",
+               (unsigned long)link_rx.good, (unsigned long)link_rx.crc_bad, (unsigned long)link_rx.lost);
+    }
+    static bool said_up;
+    if (link_up && !said_up) {
+        status("esp32 link: up at %lu baud; serial goes to %s, network to %s",
+               (unsigned long)LINK_BAUD, ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
+               eth_to_link() ? "the ESP32" : "USB (mounted)");
+    }
+    said_up = link_up;
+    static uint32_t rep_t, rep_sig;
+    uint32_t sig = link_rx.crc_bad + link_rx.cobs_bad + link_rx.too_long + link_rx.lost + link_stat_drop;
+    if (link_up && sig != rep_sig && now - rep_t > 10000000u) {
+        rep_sig = sig; rep_t = now;
+        status("esp32 link: %lu good packets, %lu bad checksums, %lu broken, %lu lost; %lu status lines dropped (link busy)",
+               (unsigned long)link_rx.good, (unsigned long)link_rx.crc_bad,
+               (unsigned long)(link_rx.cobs_bad + link_rx.too_long + link_rx.bad_hdr), (unsigned long)link_rx.lost,
+               (unsigned long)link_stat_drop);
+    }
+}
+
 int main(void) {
 #ifdef DC_SYS_KHZ
     /* optional overclock for more SPI reply headroom, e.g. -DDC_SYS_KHZ=250000 */
@@ -946,6 +1139,7 @@ int main(void) {
     serial_init();
     w5500_spi_init();
     cap_init();
+    link_init();
     tusb_init();
     multicore_launch_core1(core1_main);
     while (true) {
@@ -957,7 +1151,9 @@ int main(void) {
         } else {
             uint8_t junk[64];             /* serial port idle in W5500 mode */
             while (tud_cdc_available()) tud_cdc_read(junk, sizeof(junk));
+            ser_in_rd = ser_in_wr;
         }
+        link_task();
         net_task();
         spi_report();
         console_task();
