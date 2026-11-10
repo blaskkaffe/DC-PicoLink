@@ -31,8 +31,9 @@
 * A PPP server for serial games without DreamPi (like Netlink), per platform.
 * **ESP32-S3 instead of a computer** (`esp32/`, plan E-1 to E-11 in the project's
   `07-esp32-link.md`): E-1 link, E-2 web page, E-3 Internet/DCNow! over serial PPP (Hayes stub, PPP server,
-  DNS to the revival servers, NAT, DCNow! reports) and E-4 the same over the W5500 frames are written, not yet tried on hardware; next
-  NAT rewrites/UPnP/DreamPi's helpers, DCNET, power from the serial port, the modem.
+  DNS to the revival servers, NAT, DCNow! reports) E-4 the same over the W5500 frames and E-7 an OpenVPN client for Dreamcast Live (connects, keeps the tunnel up;
+  no traffic through it yet) are written, not yet tried on hardware; next
+  NAT rewrites/UPnP/DreamPi's helpers (and traffic through the VPN), DCNET, power from the serial port, the modem.
 * Own USB VID/PID (pid.codes for open-source hardware) instead of the TinyUSB test ID
   (`cafe:4dc5`).
 

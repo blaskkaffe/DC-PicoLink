@@ -79,3 +79,18 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
    `Ethernet: the Dreamcast got 192.168.99.x by DHCP`. In the card: *cable network (W5500)* counts
    frames in and out, `DNS:` counts questions, `DCNow!: ... sent` goes up every 15 s.
 4. Try a web page or a game server. If frames come in but nothing goes out (or reverse), send the card's text.
+
+## Fourth test: the VPN (E-7)
+
+Needs a firmware built with the profiles in `esp32/vpn/` (the image you were given has them; keep it private).
+
+1. Wi-Fi joined (page: Wi-Fi up). Tick *VPN (Dreamcast Live)* in the card and Save.
+2. **Expect** in *Status lines* within about 10 s: `VPN: connecting to <server>`, then
+   `VPN: connected to <server>, tunnel address 10.x.x.x`, then `VPN: tunnel works, N ms to the server's gateway`.
+   The card's *VPN:* line shows the same, how long it has been up and how often it connected/failed.
+3. If it says `cannot find <server>`: DNS/Wi-Fi. `server does not answer`: UDP 9091 blocked or the server is down;
+   the next server in `server.list` is tried. `TLS handshake: ... (certificate not accepted)`: the profile or the
+   server's certificate changed. Send me the status lines.
+4. Leave it up for an hour or two: the server renegotiates keys (`VPN server renegotiates`, `VPN now sends with key N`)
+   and the tunnel should stay up.
+

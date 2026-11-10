@@ -114,7 +114,9 @@ jobs:
   # ESP32 side (esp32/): ESP-IDF's own CI image, pinned to 5.4.1
   esp32:
     runs-on: ubuntu-24.04
-    container: espressif/idf:v5.4.1
+    container:
+      image: espressif/idf:v5.4.1
+      options: --cap-add=NET_ADMIN --device /dev/net/tun
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,6 +124,14 @@ jobs:
       - name: PPP server host test (ESP-IDF's lwIP behind the frame filter)
         shell: bash
         run: esp32/tests/run-ppp-test.sh
+      - name: OpenVPN client test (real OpenVPN server on localhost, ESP-IDF's mbedTLS)
+        shell: bash
+        # not seen green on a runner yet (needs /dev/net/tun): do not let it block the release
+        continue-on-error: true
+        run: |
+          apt-get update -qq && apt-get install -y -qq openvpn iproute2
+          esp32/tests/ovpn/run-ovpn-test.sh full
+          esp32/tests/ovpn/run-ovpn-test.sh reneg
       - name: Build
         shell: bash
         run: |

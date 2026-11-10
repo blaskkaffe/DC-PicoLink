@@ -118,5 +118,6 @@ void app_main(void) {
     link_start();
     ppp_srv_start();
     dc_eth_start();
+    vpn_start();
     web_start();
 }

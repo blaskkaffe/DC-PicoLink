@@ -21,10 +21,9 @@
 #define P_CONTROL_V1                   4
 #define P_ACK_V1                       5
 #define P_DATA_V1                      6
-#define P_DATA_V2                      9
 
 #define CTL_MAX      1100      /* control payload per packet (OpenVPN's default is 1250) */
-#define CTL_POOL     24
+#define CTL_POOL     12
 #define CTL_WINDOW   4         /* packets in flight */
 #define ACK_MAX      8
 #define RXS_SIZE     12288     /* TLS bytes received but not yet read by mbedTLS */
@@ -33,6 +32,8 @@
 #define RESEND_MS    2000
 #define RESEND_MAX   10
 #define HANDSHAKE_MS 45000
+#define SWITCH_MS    1000      /* new key must be this old before we send with it */
+#define RETIRE_MS    10000     /* old key is kept this long after the switch */
 
 static const uint8_t PING_MAGIC[16] = {0x2a, 0x18, 0x7b, 0xf3, 0x64, 0x1e, 0xb4, 0xcb,
                                        0x07, 0xed, 0x2d, 0x0a, 0x98, 0x1f, 0xc7, 0x48};
@@ -50,6 +51,34 @@ typedef struct {
     int      ok;
 } dkey_t;
 
+/* One key: its own reliable control channel, TLS session and data keys. */
+typedef struct ks {
+    struct ovpn *o;
+    uint8_t  kid;
+    int      first;             /* 1: initial key (hard reset), 0: renegotiated (soft reset) */
+    ovpn_state_t st;            /* RESET, TLS, KEYS, PUSH (first key only), UP = keys ready */
+
+    ctl_t    pool[CTL_POOL];
+    uint32_t tx_next, rx_next;
+    uint32_t ackq[ACK_MAX];
+    int      nack;
+
+    mbedtls_ssl_context ssl;
+    int      ssl_ok;
+    uint8_t  rxs[RXS_SIZE]; size_t rxs_len;
+    uint8_t  app[APP_SIZE]; size_t app_len;
+    uint8_t  wr[WR_SIZE];   size_t wr_len;
+    uint8_t  pre_master[48], r1[32], r2[32];
+    int      sent_keymethod;
+
+    dkey_t   enc, dec;
+    uint32_t pid_tx, pid_rx_max;
+    uint64_t pid_rx_bits;
+
+    uint32_t t_born, t_keys, t_push, t_retire;
+    uint32_t seq;               /* creation order: only a newer key takes over */
+} ks_t;
+
 struct ovpn {
     ovpn_conf_t cf;
     ovpn_ops_t  ops;
@@ -59,44 +88,27 @@ struct ovpn {
     /* tls-auth */
     uint8_t  ta_send[32], ta_recv[32];
     int      ta;
-    uint32_t ta_pid_tx, ta_pid_rx;
-    uint32_t ta_time_rx;
+    uint32_t ta_pid_tx, ta_pid_rx, ta_time_rx;
 
     /* session */
     uint8_t  sid[8], rsid[8];
     int      have_rsid;
-    uint8_t  kid;
 
-    /* reliable control channel */
-    ctl_t   *pool;
-    uint32_t tx_next;           /* next message id to send */
-    uint32_t rx_next;           /* next message id to accept */
-    uint32_t ackq[ACK_MAX];
-    int      nack;
+    ks_t    *slot[2];
+    int      cur;               /* slot that sends data, -1 before the first key is ready */
+    int      keylen;
 
-    /* TLS */
-    mbedtls_ssl_context  ssl;
     mbedtls_ssl_config   conf;
     mbedtls_x509_crt     ca, cert;
     mbedtls_pk_context   key;
     int      tls_ready;
-    uint8_t *rxs; size_t rxs_len;
-    uint8_t *app; size_t app_len;
-    uint8_t  wr[WR_SIZE]; size_t wr_len;
-    uint8_t  pre_master[48], r1[32], r2[32];
-    int      sent_keymethod;
-
-    /* data channel */
-    dkey_t   enc, dec;
-    int      keylen;
-    uint32_t pid_tx, pid_rx_max;
-    uint64_t pid_rx_bits;
 
     ovpn_info_t info;
     ovpn_stats_t st;
 
-    uint32_t t_start, t_last_rx, t_last_tx, t_push;
+    uint32_t t_start, t_last_rx, t_last_tx;
     uint32_t now;
+    uint32_t nseq;
 };
 
 static void logf_(ovpn_t *o, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -279,23 +291,24 @@ static uint32_t unix_now(ovpn_t *o)
 }
 
 /* Build and send one control packet (op != P_ACK_V1 carries `id` and `payload`). */
-static void ctl_emit(ovpn_t *o, int op, uint32_t id, const uint8_t *pl, size_t n)
+static void ctl_emit(ks_t *k, int op, uint32_t id, const uint8_t *pl, size_t n)
 {
+    ovpn_t *o = k->o;
     uint8_t b[1500];
     size_t i = 0;
-    b[i++] = (uint8_t)(op << 3 | o->kid);
+    b[i++] = (uint8_t)(op << 3 | k->kid);
     memcpy(b + i, o->sid, 8); i += 8;
     i += 32;                                    /* hmac, filled in below */
     put32(b + i, ++o->ta_pid_tx); i += 4;
     put32(b + i, unix_now(o)); i += 4;
-    int na = o->have_rsid ? o->nack : 0;
+    int na = o->have_rsid ? k->nack : 0;
     if (na > 4) na = 4;
     b[i++] = (uint8_t)na;
-    for (int k = 0; k < na; k++) { put32(b + i, o->ackq[k]); i += 4; }
+    for (int x = 0; x < na; x++) { put32(b + i, k->ackq[x]); i += 4; }
     if (na) {
         memcpy(b + i, o->rsid, 8); i += 8;
-        memmove(o->ackq, o->ackq + na, (size_t)(o->nack - na) * sizeof o->ackq[0]);
-        o->nack -= na;
+        memmove(k->ackq, k->ackq + na, (size_t)(k->nack - na) * sizeof k->ackq[0]);
+        k->nack -= na;
     }
     if (op != P_ACK_V1) { put32(b + i, id); i += 4; memcpy(b + i, pl, n); i += n; }
     if (ta_mac(o->ta_send, b, i, b + 9) != 0) return;
@@ -303,75 +316,79 @@ static void ctl_emit(ovpn_t *o, int op, uint32_t id, const uint8_t *pl, size_t n
     o->t_last_tx = o->now;
 }
 
-static void queue_ack(ovpn_t *o, uint32_t id)
+static void queue_ack(ks_t *k, uint32_t id)
 {
-    for (int k = 0; k < o->nack; k++) if (o->ackq[k] == id) return;
-    if (o->nack < ACK_MAX) o->ackq[o->nack++] = id;
+    for (int x = 0; x < k->nack; x++) if (k->ackq[x] == id) return;
+    if (k->nack < ACK_MAX) k->ackq[k->nack++] = id;
 }
 
-static void flush_acks(ovpn_t *o)
+static void flush_acks(ks_t *k)
 {
-    while (o->nack > 0 && o->have_rsid) ctl_emit(o, P_ACK_V1, 0, NULL, 0);
+    while (k->nack > 0 && k->o->have_rsid) ctl_emit(k, P_ACK_V1, 0, NULL, 0);
 }
 
-static int pool_free(const ovpn_t *o)
+static int pool_free(const ks_t *k)
 {
     int f = 0;
-    for (int k = 0; k < CTL_POOL; k++) if (!o->pool[k].used) f++;
+    for (int x = 0; x < CTL_POOL; x++) if (!k->pool[x].used) f++;
     return f;
 }
 
-static int inflight(const ovpn_t *o)
+static int inflight(const ks_t *k)
 {
     int f = 0;
-    for (int k = 0; k < CTL_POOL; k++) if (o->pool[k].used && o->pool[k].tries) f++;
+    for (int x = 0; x < CTL_POOL; x++) if (k->pool[x].used && k->pool[x].tries) f++;
     return f;
+}
+
+static int first_op(const ks_t *k, uint32_t id)
+{
+    if (id != 0) return P_CONTROL_V1;
+    return k->first ? P_CONTROL_HARD_RESET_CLIENT_V2 : P_CONTROL_SOFT_RESET_V1;
 }
 
 /* Queue a reliable message; sent as soon as the window allows. */
-static int ctl_queue(ovpn_t *o, int op, const uint8_t *d, size_t n)
+static int ctl_queue(ks_t *k, const uint8_t *d, size_t n)
 {
-    for (int k = 0; k < CTL_POOL; k++) {
-        ctl_t *c = &o->pool[k];
+    for (int x = 0; x < CTL_POOL; x++) {
+        ctl_t *c = &k->pool[x];
         if (c->used) continue;
-        c->used = 1; c->tries = 0; c->len = (uint16_t)n; c->id = o->tx_next++;
+        c->used = 1; c->tries = 0; c->len = (uint16_t)n; c->id = k->tx_next++;
         c->sent = 0;
         memcpy(c->data, d, n);
-        (void)op;
-        return k;
+        return x;
     }
     return -1;
 }
 
-/* opcode per slot: only the very first message is a reset, everything else is P_CONTROL_V1 */
-static void ctl_pump_tx(ovpn_t *o)
+static void ctl_pump_tx(ks_t *k)
 {
-    /* send the lowest ids first */
     for (;;) {
-        if (inflight(o) >= CTL_WINDOW) return;
+        if (inflight(k) >= CTL_WINDOW) return;
         ctl_t *best = NULL;
-        for (int k = 0; k < CTL_POOL; k++) {
-            ctl_t *c = &o->pool[k];
+        for (int x = 0; x < CTL_POOL; x++) {
+            ctl_t *c = &k->pool[x];
             if (c->used && !c->tries && (!best || (int32_t)(c->id - best->id) < 0)) best = c;
         }
         if (!best) return;
         best->tries = 1;
-        best->sent = o->now;
-        ctl_emit(o, best->id == 0 ? P_CONTROL_HARD_RESET_CLIENT_V2 : P_CONTROL_V1, best->id, best->data, best->len);
+        best->sent = k->o->now;
+        ctl_emit(k, first_op(k, best->id), best->id, best->data, best->len);
     }
 }
 
-static void ctl_retransmit(ovpn_t *o)
+static void ctl_retransmit(ks_t *k)
 {
-    for (int k = 0; k < CTL_POOL; k++) {
-        ctl_t *c = &o->pool[k];
+    ovpn_t *o = k->o;
+    for (int x = 0; x < CTL_POOL; x++) {
+        ctl_t *c = &k->pool[x];
         if (!c->used || !c->tries) continue;
         if ((uint32_t)(o->now - c->sent) < RESEND_MS) continue;
         if (c->tries >= RESEND_MAX) { fail(o, "server does not answer"); return; }
         c->tries++;
         c->sent = o->now;
         o->st.ctl_resend++;
-        ctl_emit(o, c->id == 0 ? P_CONTROL_HARD_RESET_CLIENT_V2 : P_CONTROL_V1, c->id, c->data, c->len);
+        ctl_emit(k, first_op(k, c->id), c->id, c->data, c->len);
     }
 }
 
@@ -379,25 +396,25 @@ static void ctl_retransmit(ovpn_t *o)
 
 static int bio_send(void *ctx, const unsigned char *d, size_t n)
 {
-    ovpn_t *o = ctx;
+    ks_t *k = ctx;
     size_t chunks = (n + CTL_MAX - 1) / CTL_MAX;
-    if ((size_t)pool_free(o) < chunks) return MBEDTLS_ERR_SSL_WANT_WRITE;
+    if ((size_t)pool_free(k) < chunks) return MBEDTLS_ERR_SSL_WANT_WRITE;
     for (size_t off = 0; off < n; off += CTL_MAX) {
         size_t m = n - off < CTL_MAX ? n - off : CTL_MAX;
-        ctl_queue(o, P_CONTROL_V1, d + off, m);
+        ctl_queue(k, d + off, m);
     }
-    ctl_pump_tx(o);
+    ctl_pump_tx(k);
     return (int)n;
 }
 
 static int bio_recv(void *ctx, unsigned char *d, size_t n)
 {
-    ovpn_t *o = ctx;
-    if (!o->rxs_len) return MBEDTLS_ERR_SSL_WANT_READ;
-    if (n > o->rxs_len) n = o->rxs_len;
-    memcpy(d, o->rxs, n);
-    o->rxs_len -= n;
-    memmove(o->rxs, o->rxs + n, o->rxs_len);
+    ks_t *k = ctx;
+    if (!k->rxs_len) return MBEDTLS_ERR_SSL_WANT_READ;
+    if (n > k->rxs_len) n = k->rxs_len;
+    memcpy(d, k->rxs, n);
+    k->rxs_len -= n;
+    memmove(k->rxs, k->rxs + n, k->rxs_len);
     return (int)n;
 }
 
@@ -448,59 +465,61 @@ static int tls1_prf(const char *label, const uint8_t *secret, size_t sl, const u
     return 0;
 }
 
-static int dkey_init(ovpn_t *o, dkey_t *k, const uint8_t *cipher, const uint8_t *hmac)
+static int dkey_init(ovpn_t *o, dkey_t *d, const uint8_t *cipher, const uint8_t *hmac)
 {
-    mbedtls_gcm_init(&k->gcm);
-    if (mbedtls_gcm_setkey(&k->gcm, MBEDTLS_CIPHER_ID_AES, cipher, (unsigned)o->keylen * 8)) return -1;
-    memcpy(k->iv, hmac, 8);
-    k->ok = 1;
+    if (d->ok) mbedtls_gcm_free(&d->gcm);
+    mbedtls_gcm_init(&d->gcm);
+    if (mbedtls_gcm_setkey(&d->gcm, MBEDTLS_CIPHER_ID_AES, cipher, (unsigned)o->keylen * 8)) return -1;
+    memcpy(d->iv, hmac, 8);
+    d->ok = 1;
     return 0;
 }
 
-static int derive_keys(ovpn_t *o, const uint8_t sr1[32], const uint8_t sr2[32])
+static int derive_keys(ks_t *k, const uint8_t sr1[32], const uint8_t sr2[32])
 {
-    uint8_t master[48], seed[64 + 16], key2[256], s1[64];
-    memcpy(s1, o->r1, 32); memcpy(s1 + 32, sr1, 32);
-    if (tls1_prf("OpenVPN master secret", o->pre_master, 48, s1, 64, master, 48)) return -1;
-    memcpy(seed, o->r2, 32); memcpy(seed + 32, sr2, 32);
+    ovpn_t *o = k->o;
+    uint8_t master[48], seed[80], key2[256], s1[64];
+    memcpy(s1, k->r1, 32); memcpy(s1 + 32, sr1, 32);
+    if (tls1_prf("OpenVPN master secret", k->pre_master, 48, s1, 64, master, 48)) return -1;
+    memcpy(seed, k->r2, 32); memcpy(seed + 32, sr2, 32);
     memcpy(seed + 64, o->sid, 8); memcpy(seed + 72, o->rsid, 8);
     if (tls1_prf("OpenVPN key expansion", master, 48, seed, 80, key2, 256)) return -1;
     /* the client sends with key[0] and receives with key[1] */
-    if (dkey_init(o, &o->enc, key2 + 0, key2 + 64)) return -1;
-    if (dkey_init(o, &o->dec, key2 + 128, key2 + 192)) return -1;
+    if (dkey_init(o, &k->enc, key2 + 0, key2 + 64)) return -1;
+    if (dkey_init(o, &k->dec, key2 + 128, key2 + 192)) return -1;
     memset(master, 0, sizeof master);
     memset(key2, 0, sizeof key2);
     return 0;
 }
 
-static void tls_put(ovpn_t *o, const void *d, size_t n)
+static void tls_put(ks_t *k, const void *d, size_t n)
 {
-    if (o->wr_len + n > WR_SIZE) { fail(o, "internal: write buffer full"); return; }
-    memcpy(o->wr + o->wr_len, d, n);
-    o->wr_len += n;
+    if (k->wr_len + n > WR_SIZE) { fail(k->o, "internal: write buffer full"); return; }
+    memcpy(k->wr + k->wr_len, d, n);
+    k->wr_len += n;
 }
 
-static void send_keymethod(ovpn_t *o)
+static void send_keymethod(ks_t *k)
 {
     static const char opts[] = "V4,dev-type tun,link-mtu 1549,tun-mtu 1500,proto UDPv4,cipher AES-128-GCM,"
                                "auth [null-digest],keysize 128,key-method 2,tls-client";
     char peer[160];
     int pl = snprintf(peer, sizeof peer, "IV_VER=2.6.0\nIV_PLAT=freertos\nIV_NCP=2\nIV_CIPHERS=%s\n"
-                      "IV_GUI_VER=DC-PicoLink\n", o->cf.cipher);
+                      "IV_GUI_VER=DC-PicoLink\n", k->o->cf.cipher);
     uint8_t z[4] = {0, 0, 0, 0}, m = 2, l[2];
-    tls_put(o, z, 4);
-    tls_put(o, &m, 1);
-    tls_put(o, o->pre_master, 48);
-    tls_put(o, o->r1, 32);
-    tls_put(o, o->r2, 32);
+    tls_put(k, z, 4);
+    tls_put(k, &m, 1);
+    tls_put(k, k->pre_master, 48);
+    tls_put(k, k->r1, 32);
+    tls_put(k, k->r2, 32);
     l[0] = (sizeof opts) >> 8; l[1] = (sizeof opts) & 255;
-    tls_put(o, l, 2); tls_put(o, opts, sizeof opts);
+    tls_put(k, l, 2); tls_put(k, opts, sizeof opts);
     l[0] = 0; l[1] = 0;
-    tls_put(o, l, 2);                 /* user */
-    tls_put(o, l, 2);                 /* password */
+    tls_put(k, l, 2);                 /* user */
+    tls_put(k, l, 2);                 /* password */
     l[0] = (uint8_t)((pl + 1) >> 8); l[1] = (uint8_t)((pl + 1) & 255);
-    tls_put(o, l, 2); tls_put(o, peer, (size_t)pl + 1);
-    o->sent_keymethod = 1;
+    tls_put(k, l, 2); tls_put(k, peer, (size_t)pl + 1);
+    k->sent_keymethod = 1;
 }
 
 static uint32_t ip_a(const char *s)
@@ -510,14 +529,14 @@ static uint32_t ip_a(const char *s)
     return a << 24 | b << 16 | c << 8 | d;
 }
 
-static void handle_push_reply(ovpn_t *o, char *msg)
+static void handle_push_reply(ks_t *k, char *msg)
 {
+    ovpn_t *o = k->o;
     ovpn_info_t *in = &o->info;
     memset(in, 0, sizeof *in);
     in->mtu = 1500;
     cpy(in->cipher, sizeof in->cipher, o->cf.cipher);
     char *save = NULL;
-    int topo_subnet = 0;
     for (char *t = strtok_r(msg, ",", &save); t; t = strtok_r(NULL, ",", &save)) {
         char a[40], b[40], c[40];
         int n = sscanf(t, "%39s %39s %39s", a, b, c);
@@ -525,12 +544,10 @@ static void handle_push_reply(ovpn_t *o, char *msg)
         if (!strcmp(a, "ifconfig") && n >= 3) {
             in->ip = ip_a(b);
             uint32_t x = ip_a(c);
-            if (x && (x >> 24) == 255) { in->mask = x; topo_subnet = 1; }   /* topology subnet */
+            if (x && (x >> 24) == 255) in->mask = x;       /* topology subnet */
             else in->peer = x;
         } else if (!strcmp(a, "route-gateway") && n >= 2) {
             in->gateway = ip_a(b);
-        } else if (!strcmp(a, "topology") && n >= 2) {
-            topo_subnet = !strcmp(b, "subnet");
         } else if (!strcmp(a, "route") && n >= 2 && in->nroute < 8) {
             in->route[in->nroute].net = ip_a(b);
             in->route[in->nroute].mask = n >= 3 ? ip_a(c) : 0xffffff00u;
@@ -550,51 +567,60 @@ static void handle_push_reply(ovpn_t *o, char *msg)
             cpy(in->cipher, sizeof in->cipher, b);
         }
     }
-    (void)topo_subnet;
     if (!in->ip) { fail(o, "server pushed no address"); return; }
     if (!in->mask) in->mask = 0xfffffffcu;     /* net30 / p2p */
     if (in->ping_s) o->cf.ping_s = in->ping_s;
     if (in->restart_s) o->cf.restart_s = in->restart_s;
 
-    /* data cipher may have changed through NCP */
     int want = !strcmp(in->cipher, "AES-256-GCM") ? 32 : !strcmp(in->cipher, "AES-128-GCM") ? 16 : 0;
     if (!want) { fail(o, "server wants cipher %s", in->cipher); return; }
     if (want != o->keylen) { fail(o, "server picked %s, only the profile's cipher is built in", in->cipher); return; }
+    k->st = OVPN_UP;
     o->state = OVPN_UP;
+    o->cur = k == o->slot[0] ? 0 : 1;
     o->t_last_rx = o->t_last_tx = o->now;
-    logf_(o, "VPN is up: %u.%u.%u.%u/%u.%u.%u.%u", in->ip >> 24, (in->ip >> 16) & 255, (in->ip >> 8) & 255, in->ip & 255,
-          in->mask >> 24, (in->mask >> 16) & 255, (in->mask >> 8) & 255, in->mask & 255);
+    logf_(o, "VPN is up: %u.%u.%u.%u/%u.%u.%u.%u", (unsigned)(in->ip >> 24), (unsigned)((in->ip >> 16) & 255),
+          (unsigned)((in->ip >> 8) & 255), (unsigned)(in->ip & 255), (unsigned)(in->mask >> 24),
+          (unsigned)((in->mask >> 16) & 255), (unsigned)((in->mask >> 8) & 255), (unsigned)(in->mask & 255));
 }
 
 /* stream of plaintext from the TLS session */
-static void app_consume(ovpn_t *o)
+static void app_consume(ks_t *k)
 {
+    ovpn_t *o = k->o;
     for (;;) {
-        if (o->state == OVPN_KEYS) {
+        if (k->st == OVPN_KEYS) {
             /* 4 zero, method, random1, random2, options (u16 len) */
-            if (o->app_len < 4 + 1 + 64 + 2) return;
-            uint32_t ol = (uint32_t)o->app[69] << 8 | o->app[70];
-            if (o->app_len < 71 + ol) return;
-            if (get32(o->app) != 0 || o->app[4] != 2) { fail(o, "server uses another key method"); return; }
-            if (derive_keys(o, o->app + 5, o->app + 37)) { fail(o, "key derivation failed"); return; }
+            if (k->app_len < 4 + 1 + 64 + 2) return;
+            uint32_t ol = (uint32_t)k->app[69] << 8 | k->app[70];
+            if (k->app_len < 71 + ol) return;
+            if (get32(k->app) != 0 || k->app[4] != 2) { fail(o, "server uses another key method"); return; }
+            if (derive_keys(k, k->app + 5, k->app + 37)) { fail(o, "key derivation failed"); return; }
             size_t used = 71 + ol;
-            o->app_len -= used;
-            memmove(o->app, o->app + used, o->app_len);
-            o->state = OVPN_PUSH;
-            o->t_push = o->now - 5000;      /* ask now */
-            logf_(o, "VPN keys exchanged");
+            k->app_len -= used;
+            memmove(k->app, k->app + used, k->app_len);
+            k->t_keys = o->now;
+            if (k->first) {
+                k->st = OVPN_PUSH;
+                o->state = OVPN_PUSH;
+                k->t_push = o->now - 5000;      /* ask now */
+                logf_(o, "VPN keys exchanged");
+            } else {
+                k->st = OVPN_UP;
+                logf_(o, "VPN new key %u ready", k->kid);
+            }
             continue;
         }
-        if (o->state == OVPN_PUSH || o->state == OVPN_UP) {
-            uint8_t *z = memchr(o->app, 0, o->app_len);
+        if (k->st == OVPN_PUSH || k->st == OVPN_UP) {
+            uint8_t *z = memchr(k->app, 0, k->app_len);
             if (!z) return;
-            size_t l = (size_t)(z - o->app);
+            size_t l = (size_t)(z - k->app);
             char msg[APP_SIZE];
-            memcpy(msg, o->app, l + 1);
+            memcpy(msg, k->app, l + 1);
             size_t used = l + 1;
-            o->app_len -= used;
-            memmove(o->app, o->app + used, o->app_len);
-            if (!strncmp(msg, "PUSH_REPLY", 10) && o->state == OVPN_PUSH) handle_push_reply(o, msg);
+            k->app_len -= used;
+            memmove(k->app, k->app + used, k->app_len);
+            if (!strncmp(msg, "PUSH_REPLY", 10) && k->st == OVPN_PUSH) handle_push_reply(k, msg);
             else if (!strncmp(msg, "AUTH_FAILED", 11)) { fail(o, "server refused: %s", msg); return; }
             else if (!strncmp(msg, "RESTART", 7) || !strncmp(msg, "HALT", 4)) { fail(o, "server says %s", msg); return; }
             else if (msg[0]) logf_(o, "VPN server message: %.60s", msg);
@@ -604,57 +630,99 @@ static void app_consume(ovpn_t *o)
     }
 }
 
-static void tls_pump(ovpn_t *o)
+static void tls_pump(ks_t *k)
 {
-    for (int guard = 0; guard < 8 && o->state >= OVPN_RESET && o->state < OVPN_FAILED; guard++) {
+    ovpn_t *o = k->o;
+    for (int guard = 0; guard < 8 && k->st >= OVPN_TLS && k->st <= OVPN_UP && o->state != OVPN_FAILED; guard++) {
         int progress = 0;
-        if (o->state == OVPN_TLS) {
-            int r = mbedtls_ssl_handshake(&o->ssl);
+        if (k->st == OVPN_TLS) {
+            int r = mbedtls_ssl_handshake(&k->ssl);
             if (r == 0) {
-                const mbedtls_x509_crt *pc = mbedtls_ssl_get_peer_cert(&o->ssl);
+                const mbedtls_x509_crt *pc = mbedtls_ssl_get_peer_cert(&k->ssl);
                 if (!pc || mbedtls_x509_crt_check_extended_key_usage(pc, MBEDTLS_OID_SERVER_AUTH,
                                                                       MBEDTLS_OID_SIZE(MBEDTLS_OID_SERVER_AUTH)) != 0) {
                     fail(o, "server certificate is not for a server");
                     return;
                 }
-                logf_(o, "VPN TLS up (%s)", mbedtls_ssl_get_ciphersuite(&o->ssl));
-                o->state = OVPN_KEYS;
-                if (!o->sent_keymethod) send_keymethod(o);
+                logf_(o, "VPN TLS up (%s)", mbedtls_ssl_get_ciphersuite(&k->ssl));
+                k->st = OVPN_KEYS;
+                if (k->first) o->state = OVPN_KEYS;
+                if (!k->sent_keymethod) send_keymethod(k);
                 progress = 1;
             } else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
                 char eb[80];
                 mbedtls_strerror(r, eb, sizeof eb);
-                uint32_t vf = mbedtls_ssl_get_verify_result(&o->ssl);
+                uint32_t vf = mbedtls_ssl_get_verify_result(&k->ssl);
                 fail(o, "TLS handshake: %s%s", eb, vf && vf != (uint32_t)-1 ? " (certificate not accepted)" : "");
                 return;
             }
         }
-        if (o->wr_len && o->state >= OVPN_KEYS) {
-            int r = mbedtls_ssl_write(&o->ssl, o->wr, o->wr_len);
+        if (k->wr_len && k->st >= OVPN_KEYS) {
+            int r = mbedtls_ssl_write(&k->ssl, k->wr, k->wr_len);
             if (r > 0) {
-                o->wr_len -= (size_t)r;
-                memmove(o->wr, o->wr + r, o->wr_len);
+                k->wr_len -= (size_t)r;
+                memmove(k->wr, k->wr + r, k->wr_len);
                 progress = 1;
             } else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
                 fail(o, "TLS write failed (%d)", r);
                 return;
             }
         }
-        if (o->state >= OVPN_KEYS) {
-            int r = mbedtls_ssl_read(&o->ssl, o->app + o->app_len, APP_SIZE - o->app_len);
-            if (r > 0) { o->app_len += (size_t)r; progress = 1; app_consume(o); if (o->state == OVPN_FAILED) return; }
-            else if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || r == 0) { fail(o, "server closed the TLS session"); return; }
+        if (k->st >= OVPN_KEYS) {
+            int r = mbedtls_ssl_read(&k->ssl, k->app + k->app_len, APP_SIZE - k->app_len);
+            if (r > 0) { k->app_len += (size_t)r; progress = 1; app_consume(k); if (o->state == OVPN_FAILED) return; }
+            else if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || r == 0) {
+                if (k->first || k->st != OVPN_UP) { fail(o, "server closed the TLS session"); return; }
+            }
             else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) { fail(o, "TLS read failed (%d)", r); return; }
         }
         if (!progress) break;
     }
 }
 
+/* ======================= slots ======================= */
+
+static ks_t *slot_new(ovpn_t *o, int idx, uint8_t kid, int first)
+{
+    ks_t *k = calloc(1, sizeof *k);
+    if (!k) return NULL;
+    k->o = o;
+    k->kid = kid;
+    k->first = first;
+    k->st = first ? OVPN_RESET : OVPN_TLS;
+    k->t_born = o->now;
+    k->seq = ++o->nseq;
+    mbedtls_ssl_init(&k->ssl);
+    k->ssl_ok = 1;
+    int r = mbedtls_ssl_setup(&k->ssl, &o->conf);
+    if (r != 0) { fail(o, "TLS set-up failed (%d)", r); mbedtls_ssl_free(&k->ssl); free(k); return NULL; }
+    mbedtls_ssl_set_bio(&k->ssl, k, bio_send, bio_recv, NULL);
+    if (rnd(o, k->pre_master, 48) || rnd(o, k->r1, 32) || rnd(o, k->r2, 32)) {
+        fail(o, "no random numbers");
+        mbedtls_ssl_free(&k->ssl);
+        free(k);
+        return NULL;
+    }
+    o->slot[idx] = k;
+    return k;
+}
+
+static void slot_free(ovpn_t *o, int idx)
+{
+    ks_t *k = o->slot[idx];
+    if (!k) return;
+    if (k->ssl_ok) mbedtls_ssl_free(&k->ssl);
+    if (k->enc.ok) mbedtls_gcm_free(&k->enc.gcm);
+    if (k->dec.ok) mbedtls_gcm_free(&k->dec.gcm);
+    memset(k, 0, sizeof *k);
+    free(k);
+    o->slot[idx] = NULL;
+}
+
 /* ======================= data channel ======================= */
 
-static int data_crypt(ovpn_t *o, int enc, const uint8_t *in, size_t n, const uint8_t pid[4], uint8_t *out, uint8_t tag[16])
+static int data_crypt(dkey_t *k, int enc, const uint8_t *in, size_t n, const uint8_t pid[4], uint8_t *out, uint8_t *tag)
 {
-    dkey_t *k = enc ? &o->enc : &o->dec;
     uint8_t iv[12];
     memcpy(iv, pid, 4);
     memcpy(iv + 4, k->iv, 8);
@@ -665,10 +733,11 @@ static int data_crypt(ovpn_t *o, int enc, const uint8_t *in, size_t n, const uin
 static int send_data(ovpn_t *o, const uint8_t *pt, size_t n)
 {
     uint8_t b[1 + 4 + 16 + 1700];
-    if (n > 1700 || !o->enc.ok) return -1;
-    b[0] = (uint8_t)(P_DATA_V1 << 3 | o->kid);
-    put32(b + 1, ++o->pid_tx);
-    if (data_crypt(o, 1, pt, n, b + 1, b + 21, b + 5)) return -1;
+    ks_t *k = o->cur >= 0 ? o->slot[o->cur] : NULL;
+    if (n > 1700 || !k || !k->enc.ok) return -1;
+    b[0] = (uint8_t)(P_DATA_V1 << 3 | k->kid);
+    put32(b + 1, ++k->pid_tx);
+    if (data_crypt(&k->enc, 1, pt, n, b + 1, b + 21, b + 5)) return -1;
     o->st.tx_pkts++;
     o->st.tx_bytes += (uint32_t)n;
     o->t_last_tx = o->now;
@@ -678,21 +747,22 @@ static int send_data(ovpn_t *o, const uint8_t *pt, size_t n)
 static void recv_data(ovpn_t *o, const uint8_t *d, size_t n)
 {
     uint8_t pt[1700];
-    if (n < 21 || n > 21 + sizeof pt || !o->dec.ok) { o->st.bad_data++; return; }
+    ks_t *k = NULL;
+    for (int x = 0; x < 2; x++) if (o->slot[x] && o->slot[x]->kid == (d[0] & 7) && o->slot[x]->dec.ok) k = o->slot[x];
+    if (!k || n < 21 || n > 21 + sizeof pt) { o->st.bad_data++; return; }
     uint32_t pid = get32(d + 1);
-    /* replay window of 64 */
     if (pid == 0) { o->st.bad_data++; return; }
-    if (pid <= o->pid_rx_max) {
-        uint32_t diff = o->pid_rx_max - pid;
-        if (diff >= 64 || (o->pid_rx_bits >> diff & 1)) { o->st.bad_data++; return; }
+    if (pid <= k->pid_rx_max) {                   /* replay window of 64 */
+        uint32_t diff = k->pid_rx_max - pid;
+        if (diff >= 64 || (k->pid_rx_bits >> diff & 1)) { o->st.bad_data++; return; }
     }
-    if (data_crypt(o, 0, d + 21, n - 21, d + 1, pt, (uint8_t *)d + 5)) { o->st.bad_data++; return; }
-    if (pid > o->pid_rx_max) {
-        uint32_t sh = pid - o->pid_rx_max;
-        o->pid_rx_bits = sh >= 64 ? 1 : (o->pid_rx_bits << sh) | 1;
-        o->pid_rx_max = pid;
+    if (data_crypt(&k->dec, 0, d + 21, n - 21, d + 1, pt, (uint8_t *)d + 5)) { o->st.bad_data++; return; }
+    if (pid > k->pid_rx_max) {
+        uint32_t sh = pid - k->pid_rx_max;
+        k->pid_rx_bits = sh >= 64 ? 1 : (k->pid_rx_bits << sh) | 1;
+        k->pid_rx_max = pid;
     } else {
-        o->pid_rx_bits |= 1ull << (o->pid_rx_max - pid);
+        k->pid_rx_bits |= 1ull << (k->pid_rx_max - pid);
     }
     o->t_last_rx = o->now;
     size_t m = n - 21;
@@ -730,35 +800,64 @@ static void recv_control(ovpn_t *o, int op, const uint8_t *d, size_t n)
         memcpy(o->rsid, d + 1, 8);
         o->have_rsid = 1;
     }
-    o->t_last_rx = o->now;
-    for (int k = 0; k < na; k++) {
-        uint32_t id = get32(acks + 4 * k);
-        for (int s = 0; s < CTL_POOL; s++) if (o->pool[s].used && o->pool[s].tries && o->pool[s].id == id) o->pool[s].used = 0;
+
+    /* which key? */
+    uint8_t kid = d[0] & 7;
+    ks_t *k = NULL;
+    for (int x = 0; x < 2; x++) if (o->slot[x] && o->slot[x]->kid == kid) k = o->slot[x];
+    if (!k) {
+        if (op != P_CONTROL_SOFT_RESET_V1 || o->state != OVPN_UP) return;
+        int idx = o->slot[0] ? (o->slot[1] ? -1 : 1) : 0;
+        if (idx < 0) return;                       /* both slots busy: the server will ask again */
+        k = slot_new(o, idx, kid, 0);
+        if (!k) return;
+        logf_(o, "VPN server renegotiates (key %u)", kid);
+        ctl_queue(k, (const uint8_t *)"", 0);      /* our soft reset, message id 0 */
     }
-    if (op == P_ACK_V1) { ctl_pump_tx(o); return; }
+    o->t_last_rx = o->now;
+    for (int x = 0; x < na; x++) {
+        uint32_t id = get32(acks + 4 * x);
+        for (int s = 0; s < CTL_POOL; s++) if (k->pool[s].used && k->pool[s].tries && k->pool[s].id == id) k->pool[s].used = 0;
+    }
+    if (op == P_ACK_V1) { ctl_pump_tx(k); return; }
     if (n < i + 4) return;
     uint32_t id = get32(d + i);
     i += 4;
     size_t pl = n - i;
-    if (id == o->rx_next) {
+    if (id == k->rx_next) {
         if (op == P_CONTROL_V1) {
-            if (o->rxs_len + pl > RXS_SIZE) return;                                     /* no room: peer resends */
-            memcpy(o->rxs + o->rxs_len, d + i, pl);
-            o->rxs_len += pl;
-        } else if (op == P_CONTROL_SOFT_RESET_V1) {
-            fail(o, "server asked for a new key (renegotiation not built yet)");
-            return;
+            if (k->rxs_len + pl > RXS_SIZE) return;                                     /* no room: peer resends */
+            memcpy(k->rxs + k->rxs_len, d + i, pl);
+            k->rxs_len += pl;
         } else if (op == P_CONTROL_HARD_RESET_SERVER_V2) {
-            if (o->state == OVPN_RESET) o->state = OVPN_TLS;
+            if (k->st == OVPN_RESET) { k->st = OVPN_TLS; o->state = OVPN_TLS; }
         }
-        o->rx_next++;
-        queue_ack(o, id);
-    } else if ((int32_t)(id - o->rx_next) < 0) {
-        queue_ack(o, id);                                                               /* ours was lost, ack again */
+        k->rx_next++;
+        queue_ack(k, id);
+    } else if ((int32_t)(id - k->rx_next) < 0) {
+        queue_ack(k, id);                                                               /* ours was lost, ack again */
     }
-    ctl_pump_tx(o);
-    tls_pump(o);
-    flush_acks(o);
+    ctl_pump_tx(k);
+    tls_pump(k);
+    flush_acks(k);
+}
+
+/* the new key takes over once it is a second old and everything we said on it is acknowledged */
+static void keys_housekeeping(ovpn_t *o)
+{
+    for (int x = 0; x < 2; x++) {
+        ks_t *k = o->slot[x];
+        if (!k) continue;
+        if (x != o->cur && o->cur >= 0 && o->slot[o->cur] && k->seq > o->slot[o->cur]->seq && k->st == OVPN_UP && !k->first && inflight(k) == 0 &&
+            (uint32_t)(o->now - k->t_keys) >= SWITCH_MS) {
+            ks_t *old = o->slot[o->cur];
+            if (old) old->t_retire = o->now + RETIRE_MS;
+            o->cur = x;
+            logf_(o, "VPN now sends with key %u", k->kid);
+        } else if (x != o->cur && k->t_retire && (int32_t)(o->now - k->t_retire) >= 0) {
+            slot_free(o, x);
+        }
+    }
 }
 
 /* ======================= public API ======================= */
@@ -769,12 +868,8 @@ ovpn_t *ovpn_new(const ovpn_conf_t *c, const ovpn_ops_t *ops)
     if (!o) return NULL;
     o->cf = *c;
     o->ops = *ops;
-    o->kid = 0;
+    o->cur = -1;
     o->keylen = !strcmp(c->cipher, "AES-256-GCM") ? 32 : 16;
-    o->pool = calloc(CTL_POOL, sizeof(ctl_t));
-    o->rxs = malloc(RXS_SIZE);
-    o->app = malloc(APP_SIZE);
-    if (!o->pool || !o->rxs || !o->app) { ovpn_free(o); return NULL; }
 
     uint8_t sk[256];
     if (parse_static_key(c->tlsauth, sk) || c->key_direction < 0) { snprintf(o->err, sizeof o->err, "bad tls-auth key"); o->state = OVPN_FAILED; return o; }
@@ -784,7 +879,6 @@ ovpn_t *ovpn_new(const ovpn_conf_t *c, const ovpn_ops_t *ops)
     o->ta = 1;
     memset(sk, 0, sizeof sk);
 
-    mbedtls_ssl_init(&o->ssl);
     mbedtls_ssl_config_init(&o->conf);
     mbedtls_x509_crt_init(&o->ca);
     mbedtls_x509_crt_init(&o->cert);
@@ -808,13 +902,11 @@ ovpn_t *ovpn_new(const ovpn_conf_t *c, const ovpn_ops_t *ops)
     mbedtls_ssl_conf_authmode(&o->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
     mbedtls_ssl_conf_ca_chain(&o->conf, &o->ca, NULL);
     mbedtls_ssl_conf_verify(&o->conf, verify_cb, o);
-    if ((r = mbedtls_ssl_conf_own_cert(&o->conf, &o->cert, &o->key)) != 0 ||
-        (r = mbedtls_ssl_setup(&o->ssl, &o->conf)) != 0) {
+    if ((r = mbedtls_ssl_conf_own_cert(&o->conf, &o->cert, &o->key)) != 0) {
         snprintf(o->err, sizeof o->err, "TLS set-up failed (%d)", r);
         o->state = OVPN_FAILED;
         return o;
     }
-    mbedtls_ssl_set_bio(&o->ssl, o, bio_send, bio_recv, NULL);
     o->tls_ready = 1;
     return o;
 }
@@ -822,29 +914,27 @@ ovpn_t *ovpn_new(const ovpn_conf_t *c, const ovpn_ops_t *ops)
 void ovpn_free(ovpn_t *o)
 {
     if (!o) return;
-    if (o->tls_ready) { mbedtls_ssl_free(&o->ssl); }
+    slot_free(o, 0);
+    slot_free(o, 1);
     mbedtls_ssl_config_free(&o->conf);
     mbedtls_x509_crt_free(&o->ca);
     mbedtls_x509_crt_free(&o->cert);
     mbedtls_pk_free(&o->key);
-    if (o->enc.ok) mbedtls_gcm_free(&o->enc.gcm);
-    if (o->dec.ok) mbedtls_gcm_free(&o->dec.gcm);
-    free(o->pool); free(o->rxs); free(o->app);
     memset(o, 0, sizeof *o);
     free(o);
 }
 
 void ovpn_start(ovpn_t *o, uint32_t now)
 {
-    if (o->state != OVPN_IDLE) return;
+    if (o->state != OVPN_IDLE || !o->tls_ready) return;
     o->now = now;
     o->t_start = now;
-    if (rnd(o, o->sid, 8) || rnd(o, o->pre_master, 48) || rnd(o, o->r1, 32) || rnd(o, o->r2, 32)) { fail(o, "no random numbers"); return; }
+    if (rnd(o, o->sid, 8)) { fail(o, "no random numbers"); return; }
+    ks_t *k = slot_new(o, 0, 0, 1);
+    if (!k) { fail(o, "out of memory"); return; }
     o->state = OVPN_RESET;
-    o->tx_next = 0;
-    uint8_t empty = 0;
-    ctl_queue(o, P_CONTROL_HARD_RESET_CLIENT_V2, &empty, 0);
-    ctl_pump_tx(o);
+    ctl_queue(k, (const uint8_t *)"", 0);         /* the hard reset */
+    ctl_pump_tx(k);
 }
 
 void ovpn_input(ovpn_t *o, const uint8_t *d, size_t n, uint32_t now)
@@ -862,21 +952,27 @@ void ovpn_tick(ovpn_t *o, uint32_t now)
     o->now = now;
     if (o->state < OVPN_RESET || o->state == OVPN_FAILED) return;
     if (o->state < OVPN_UP && (uint32_t)(now - o->t_start) > HANDSHAKE_MS) { fail(o, "no tunnel after %d s", HANDSHAKE_MS / 1000); return; }
-    ctl_retransmit(o);
-    if (o->state == OVPN_FAILED) return;
-    ctl_pump_tx(o);
-    tls_pump(o);
-    if (o->state == OVPN_PUSH && (uint32_t)(now - o->t_push) >= 5000) {
-        static const char pr[] = "PUSH_REQUEST";
-        o->t_push = now;
-        tls_put(o, pr, sizeof pr);
-        tls_pump(o);
+    for (int x = 0; x < 2; x++) {
+        ks_t *k = o->slot[x];
+        if (!k) continue;
+        ctl_retransmit(k);
+        if (o->state == OVPN_FAILED) return;
+        ctl_pump_tx(k);
+        tls_pump(k);
+        if (o->state == OVPN_FAILED) return;
+        if (k->st == OVPN_PUSH && (uint32_t)(now - k->t_push) >= 5000) {
+            static const char pr[] = "PUSH_REQUEST";
+            k->t_push = now;
+            tls_put(k, pr, sizeof pr);
+            tls_pump(k);
+        }
+        flush_acks(k);
     }
+    keys_housekeeping(o);
     if (o->state == OVPN_UP) {
         if ((uint32_t)(now - o->t_last_tx) >= (uint32_t)o->cf.ping_s * 1000) send_data(o, PING_MAGIC, 16);
         if (o->cf.restart_s && (uint32_t)(now - o->t_last_rx) >= (uint32_t)o->cf.restart_s * 1000) fail(o, "server silent for %d s", o->cf.restart_s);
     }
-    flush_acks(o);
 }
 
 int ovpn_send_ip(ovpn_t *o, const uint8_t *ip, size_t n, uint32_t now)
@@ -889,10 +985,11 @@ int ovpn_send_ip(ovpn_t *o, const uint8_t *ip, size_t n, uint32_t now)
 void ovpn_stop(ovpn_t *o, uint32_t now)
 {
     o->now = now;
-    if (o->state == OVPN_UP && o->cf.explicit_exit) {
+    if (o->state == OVPN_UP && o->cf.explicit_exit && o->cur >= 0 && o->slot[o->cur]) {
         static const char ex[] = "EXIT";
-        tls_put(o, ex, sizeof ex);
-        tls_pump(o);
+        ks_t *k = o->slot[o->cur];
+        tls_put(k, ex, sizeof ex);
+        tls_pump(k);
     }
     if (o->state != OVPN_FAILED) { o->state = OVPN_FAILED; snprintf(o->err, sizeof o->err, "stopped"); }
 }

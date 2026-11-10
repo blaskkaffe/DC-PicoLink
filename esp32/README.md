@@ -73,6 +73,28 @@ its server. Static settings also work: IP 192.168.99.60, mask 255.255.255.0, gat
 Both sides can be used in the same session; DCNow! reports run while either is active.
 Not yet: the `dcnatrules` list, UPnP and the game helpers (E-5), DCNET (E-6), a wired uplink (W5500 on the ESP32).
 
+## VPN to Dreamcast Live (E-7)
+
+`main/ovpn.c` is a small OpenVPN client on mbedTLS for the profile DreamPi 2.1 uses (UDP, TLS 1.2,
+tls-auth, client certificate, AES-128/256-GCM, no compression, no password). `main/vpn.c` runs it:
+a task, a UDP socket, the tunnel as a lwIP interface `DC_VPN` with the address the server pushes,
+and a test ping to the server's gateway through the tunnel. Servers are tried in the order of
+`server.list`, the one that worked last time first. Key renegotiation started by the server is
+handled (a second key is set up while the first still carries traffic). Switch it on on the page
+(*VPN (Dreamcast Live)*); it is off by default.
+
+**The profiles are not in this repository.** Put the `.conf` files and `server.list` of a DreamPi
+2.1 image (`/etc/openvpn/client/`) into `esp32/vpn/` (git-ignored, see `vpn/README.md`); the build
+embeds them. A firmware built without them says *no VPN profiles in this firmware*. A firmware
+built *with* them contains Dreamcast Live's client keys: do not publish it.
+
+What it does not do yet: send the Dreamcast's traffic through the tunnel (NAT out of the tunnel and
+the inbound game ports come with E-5), fetch newer profiles from Dreamcast Live, pick the server by
+ping time. Tested on the PC against a real OpenVPN 2.6 server (`tests/ovpn/run-ovpn-test.sh`:
+handshake, pings of 0-1200 bytes in the tunnel, 12 s idle keepalive, renegotiation every 8 s,
+25 % packet loss while connecting) and with the four real profiles loading; **not yet tried against
+Dreamcast Live's servers or on the ESP32**.
+
 ## Files
 
 | | |
@@ -81,6 +103,8 @@ Not yet: the `dcnatrules` list, UPnP and the game helpers (E-5), DCNET (E-6), a 
 | `main/wifi.c` | setup network + home network (NVS) |
 | `main/ppp_srv.c` | Hayes stub, PPP server, NAT, call control |
 | `main/dc_eth.c` | the cable's W5500 network as an interface: DHCP, NAT, filter |
+| `main/ovpn.c`, `ovpn.h` | the OpenVPN client (no sockets, no tasks; same file in the PC test) |
+| `main/vpn.c` | VPN task, profiles, the `DC_VPN` interface |
 | `main/dnsd.c` | DNS server for the Dreamcast, downloaded DNS file |
 | `main/dcnow.c` | DCNow! reports |
 | `main/web.c` | the page and `/api/*` |

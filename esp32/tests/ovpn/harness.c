@@ -24,7 +24,14 @@ static uint32_t now_ms(void)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
-static int op_send(void *c, const uint8_t *d, size_t n) { (void)c; return (int)sendto(sock, d, n, 0, (void *)&srv, sizeof srv); }
+static int loss_pct;
+static int lossy(void) { return loss_pct && rand() % 100 < loss_pct; }
+static int op_send(void *c, const uint8_t *d, size_t n)
+{
+    (void)c;
+    if (lossy()) return (int)n;
+    return (int)sendto(sock, d, n, 0, (void *)&srv, sizeof srv);
+}
 static void op_log(void *c, const char *m) { (void)c; printf("  [%5u ms] %s\n", now_ms() - t0, m); }
 static int op_rand(void *c, uint8_t *b, size_t n)
 {
@@ -81,7 +88,7 @@ static void run(ovpn_t *o, int ms)
         if (poll(&p, 1, 20) > 0) {
             uint8_t b[2000];
             ssize_t n = recv(sock, b, sizeof b, 0);
-            if (n > 0) ovpn_input(o, b, (size_t)n, now_ms());
+            if (n > 0 && !lossy()) ovpn_input(o, b, (size_t)n, now_ms());
         }
         ovpn_tick(o, now_ms());
         if (ovpn_state(o) == OVPN_FAILED) return;
@@ -94,11 +101,22 @@ int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr, "usage: harness client.conf port [mode]\n"); return 2; }
     const char *mode = argc > 3 ? argv[3] : "full";
+    if (getenv("LOSS")) { loss_pct = atoi(getenv("LOSS")); srand(7); }
     char *text = slurp(argv[1]);
     ovpn_conf_t cf;
     int r = ovpn_conf_parse(text, &cf);
     CHECK(r == 0, "config parses");
     printf("config: remote %s:%d key-direction %d cipher %s ping %d restart %d\n", cf.host, cf.port, cf.key_direction, cf.cipher, cf.ping_s, cf.restart_s);
+    if (!strcmp(mode, "parse")) {            /* no server: does the profile load? */
+        ovpn_ops_t po = {.random = op_rand};
+        ovpn_t *p = ovpn_new(&cf, &po);
+        CHECK(p && ovpn_state(p) != OVPN_FAILED, p ? ovpn_error(p) : "ovpn_new");
+        printf("profile ok: %s:%d\n", cf.host, cf.port);
+        ovpn_free(p);
+        ovpn_conf_free(&cf);
+        free(text);
+        return 0;
+    }
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     srv.sin_family = AF_INET; srv.sin_port = htons((uint16_t)atoi(argv[2])); srv.sin_addr.s_addr = htonl(0x7f000001);
     connect(sock, (void *)&srv, sizeof srv);
@@ -113,10 +131,27 @@ int main(int argc, char **argv)
     const ovpn_info_t *in = ovpn_info(o);
     printf("ifconfig %u.%u.%u.%u mask %08x gw %08x peer %08x routes %d cipher %s\n", in->ip >> 24, (in->ip >> 16) & 255,
            (in->ip >> 8) & 255, in->ip & 255, in->mask, in->gateway, in->peer, in->nroute, in->cipher);
+    uint8_t pk[1600];
+    if (!strcmp(mode, "reneg")) {
+        /* the server renegotiates every few seconds: pings must keep being answered */
+        int sent = 0, ok = 0, bad_run = 0;
+        for (int i = 0; i < 70; i++) {
+            got_echo = 0;
+            size_t n = make_ping(pk, in->ip, in->gateway, 64, i);
+            ovpn_send_ip(o, pk, n, now_ms()); sent++;
+            for (int w = 0; w < 25 && !got_echo; w++) run(o, 20);
+            if (got_echo) { ok++; bad_run = 0; } else if (++bad_run > 2) break;
+            if (ovpn_state(o) != OVPN_UP) break;
+            run(o, 400);
+        }
+        printf("  pings answered %d of %d, state %s\n", ok, sent, ovpn_state_name(ovpn_state(o)));
+        CHECK(ovpn_state(o) == OVPN_UP && ok >= sent - 1, "tunnel survives renegotiation");
+        printf("vpn: ok (renegotiation)\n");
+        return 0;
+    }
     if (!strcmp(mode, "up")) { ovpn_stop(o, now_ms()); printf("vpn: ok (up only)\n"); return 0; }
 
     uint32_t dst = in->gateway ? in->gateway : in->peer;
-    uint8_t pk[1600];
     int sizes[] = {0, 56, 400, 1200};
     for (int k = 0; k < 4; k++) {
         got_echo = 0;

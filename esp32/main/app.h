@@ -54,7 +54,14 @@ void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
 
+/* ---- VPN to Dreamcast Live (vpn.c, E-7) ---- */
+void vpn_start(void);
+void vpn_set_enabled(bool on);
+bool vpn_enabled(void);
+size_t vpn_info_json(char *out, size_t cap);
+
 /* ---- Wi-Fi (wifi.c) ---- */
+bool wifi_sta_up(void);
 void wifi_start(void);
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);

@@ -75,6 +75,8 @@ void wifi_set_sta(const char *ssid, const char *pass) {
     apply_sta(ssid, pass);
 }
 
+bool wifi_sta_up(void) { return sta_up; }
+
 size_t wifi_info_json(char *out, size_t cap) {
     char s[80], a[80];
     json_escape(s, sizeof s, sta_ssid, strlen(sta_ssid));

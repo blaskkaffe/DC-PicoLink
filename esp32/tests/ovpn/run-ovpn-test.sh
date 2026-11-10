@@ -3,12 +3,13 @@
 # OpenVPN server with the DreamPi 2.1 settings (UDP, AES-128-GCM, SHA256, tls-auth, client
 # certificate, no compression) and pings through the tunnel.
 # Needs: openvpn, openssl, a C compiler, ESP-IDF (IDF_PATH) for the mbedTLS sources, root + /dev/net/tun.
-# usage: run-ovpn-test.sh [mode]      mode: full (default, ~20 s) | up | ...
+# usage: [LOSS=25] run-ovpn-test.sh [mode]   mode: full (default, ~15 s) | up | reneg (server renegotiates every 8 s)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 idf=${IDF_PATH:-/home/claude/esp-idf}
 work=${OVPN_TEST_DIR:-/tmp/ovpn-test}
 mode=${1:-full}
+[ "$mode" = reneg ] && export OVPN_SERVER_EXTRA="reneg-sec 8"
 mkdir -p "$work"
 mb=$idf/components/mbedtls/mbedtls
 
@@ -23,6 +24,14 @@ if [ ! -f "$work/libmbedtls-pc.a" ]; then
     ar rcs "$work/libmbedtls-pc.a" "$work"/mb/*.o
 fi
 gcc -O1 -Wall -Wextra -Werror -I"$mb/include" "$here/harness.c" "$here/../../main/ovpn.c" "$work/libmbedtls-pc.a" -o "$work/ovpn-harness"
+
+# --- the real DreamPi profiles, when they are in esp32/vpn/ (git-ignored): they must load
+if [ "$mode" = full ] || [ "$mode" = parse ]; then
+    for f in "$here"/../../vpn/*.conf; do
+        [ -f "$f" ] && "$work/ovpn-harness" "$f" 0 parse
+    done
+    [ "$mode" = parse ] && exit 0
+fi
 
 # --- keys and certificates (fresh each run)
 pki=$work/pki; rm -rf "$pki"; mkdir -p "$pki"; cd "$pki"
@@ -52,6 +61,7 @@ auth SHA256
 server 10.88.0.0 255.255.255.0
 topology subnet
 keepalive 5 30
+${OVPN_SERVER_EXTRA}
 persist-key
 verb 3
 EOS
