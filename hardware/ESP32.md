@@ -69,3 +69,13 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
    `DCNow!: domain sent: ...`. The Dreamcast shows up on the DCNow! page after about 15 s.
 4. If the call does not come up, copy the *Status lines* and the *Serial port* box (it shows the
    AT conversation until PPP starts) into your report.
+
+## Third test: the Internet over the cable's network (E-4)
+
+1. The cable must not be mounted by a computer (no USB host) and the ESP32 must be linked (page: link up).
+2. Start a Dreamcast program that uses the network adapter driver (DHCP). Or set a static address:
+   IP 192.168.99.60, mask 255.255.255.0, gateway and DNS 192.168.99.1.
+3. **Expect** in *Status lines*: `Ethernet: the Dreamcast is sending`, then
+   `Ethernet: the Dreamcast got 192.168.99.x by DHCP`. In the card: *cable network (W5500)* counts
+   frames in and out, `DNS:` counts questions, `DCNow!: ... sent` goes up every 15 s.
+4. Try a web page or a game server. If frames come in but nothing goes out (or reverse), send the card's text.

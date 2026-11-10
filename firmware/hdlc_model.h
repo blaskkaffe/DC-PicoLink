@@ -1,16 +1,9 @@
 /*
  * PPP frame filter for the bytes coming from the Dreamcast (host-compilable, used by the ESP32).
  *
- * Does what DreamPi does with iptables, before the frames reach lwIP:
- *   - TTL: every IPv4 packet leaves with TTL 64 (lwIP then forwards it at 63; DreamPi's
- *     "-t mangle FORWARD -i ppp0 -j TTL --ttl-set 64" gives 64 on the wire, so we set 65 here)
- *   - PowerSmash: a TCP SYN from source port 3200-3205 is dropped if another SYN to the same
- *     destination address was seen less than a second ago (the game sends every SYN twice).
- *     Same as DreamPi's "recent" rule: a dropped SYN also renews the one-second timer.
- *   - bad FCS: dropped (lwIP would do the same)
- *
- * Every frame is decoded, looked at, and encoded again with every control character escaped
- * (valid under any ACCM). Frames that are not IPv4 pass unchanged in content.
+ * Every frame is decoded, its IPv4 packet goes through ipfilter_model.h (TTL 64, PowerSmash
+ * double SYN), and it is encoded again with every control character escaped (valid under any
+ * ACCM). Bad FCS: dropped (lwIP would do the same). Frames that are not IPv4 pass unchanged in content.
  * "AT" as the first two bytes of a frame (or before the first flag) means the Dreamcast is
  * talking to a modem again (reset, or a game that hung up without PPP shutdown): saw_at is set.
  */
@@ -19,10 +12,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include "ipfilter_model.h"
 
 #define HDLC_MAX_FRAME  1700            /* decoded bytes incl. FCS; PPP MRU is 1500 */
-#define HDLC_SYN_SLOTS  8
-#define HDLC_TTL_OUT    65
 
 typedef void (*hdlc_emit_fn)(void *ctx, const uint8_t *p, size_t n);
 
@@ -32,9 +24,9 @@ typedef struct {
     bool in, esc, overflow;
     uint8_t stray_prev;                  /* last byte seen outside a frame */
     bool saw_at;                         /* "AT" seen where a frame should start (cleared by the reader) */
-    struct { uint32_t dst; uint32_t ms; bool used; } syn[HDLC_SYN_SLOTS];
+    ipf_t ipf;                           /* TTL / SYN rules and their counters */
     /* counters */
-    uint32_t frames, ip_frames, ttl_fixed, syn_dropped, fcs_bad, too_long, aborted;
+    uint32_t frames, fcs_bad, too_long, aborted;
     hdlc_emit_fn emit; void *ctx;
 } hdlc_t;
 
@@ -66,30 +58,6 @@ static inline size_t hdlc_encode(const uint8_t *p, size_t n, uint8_t *out) {
     return o;
 }
 
-static inline uint16_t hdlc__ipsum(const uint8_t *p, size_t n) {
-    uint32_t s = 0;
-    for (size_t i = 0; i + 1 < n; i += 2) s += (uint32_t)(p[i] << 8 | p[i + 1]);
-    while (s >> 16) s = (s & 0xFFFF) + (s >> 16);
-    return (uint16_t)~s;
-}
-
-/* the one-second "recent" list; true = drop this SYN */
-static inline bool hdlc__syn_drop(hdlc_t *h, uint32_t dst, uint32_t now_ms) {
-    int free_i = -1, old_i = 0;
-    for (int i = 0; i < HDLC_SYN_SLOTS; i++) {
-        if (h->syn[i].used && h->syn[i].dst == dst) {
-            bool recent = (uint32_t)(now_ms - h->syn[i].ms) < 1000;
-            h->syn[i].ms = now_ms;               /* --update and --set both refresh the time */
-            return recent;
-        }
-        if (!h->syn[i].used) free_i = i;
-        else if ((uint32_t)(now_ms - h->syn[i].ms) > (uint32_t)(now_ms - h->syn[old_i].ms)) old_i = i;
-    }
-    int i = free_i >= 0 ? free_i : old_i;
-    h->syn[i].used = true; h->syn[i].dst = dst; h->syn[i].ms = now_ms;
-    return false;
-}
-
 static inline void hdlc__frame(hdlc_t *h, uint32_t now_ms) {
     uint8_t *b = h->buf;
     size_t n = h->n;
@@ -105,30 +73,8 @@ static inline void hdlc__frame(hdlc_t *h, uint32_t now_ms) {
     else if (p + 1 < n) { proto = (uint16_t)(b[p] << 8 | b[p + 1]); p += 2; }
     else return;
 
-    if (proto == 0x0021 && n - p >= 20 && (b[p] >> 4) == 4) {
-        uint8_t *ip = b + p;
-        size_t ihl = (size_t)(ip[0] & 15) * 4;
-        if (ihl >= 20 && ihl <= n - p) {
-            h->ip_frames++;
-            /* PowerSmash: SYN from 3200-3205 */
-            if (ip[9] == 6 && ((ip[6] & 0x1F) | ip[7]) == 0 && n - p >= ihl + 14) {
-                const uint8_t *t = ip + ihl;
-                uint16_t sport = (uint16_t)(t[0] << 8 | t[1]);
-                uint8_t fl = t[13];
-                if (sport >= 3200 && sport <= 3205 && (fl & 0x17) == 0x02) {   /* SYN, no ACK/RST/FIN */
-                    uint32_t dst = (uint32_t)ip[16] << 24 | (uint32_t)ip[17] << 16 | (uint32_t)ip[18] << 8 | ip[19];
-                    if (hdlc__syn_drop(h, dst, now_ms)) { h->syn_dropped++; return; }
-                }
-            }
-            if (ip[8] != HDLC_TTL_OUT) {
-                ip[8] = HDLC_TTL_OUT;
-                ip[10] = ip[11] = 0;
-                uint16_t c = hdlc__ipsum(ip, ihl);
-                ip[10] = (uint8_t)(c >> 8); ip[11] = (uint8_t)c;
-                h->ttl_fixed++;
-            }
-        }
-    }
+    if (proto == 0x0021 && !ipf_packet(&h->ipf, b + p, n - p, now_ms)) return;
+
     uint8_t out[2 * (HDLC_MAX_FRAME + 2) + 2];
     size_t k = hdlc_encode(b, n, out);
     h->emit(h->ctx, out, k);

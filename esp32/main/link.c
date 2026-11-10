@@ -116,7 +116,7 @@ static void deliver(void) {
         break;
     case LINK_CH_ETH:
         st.eth_in++;
-        /* E-4: second network interface */
+        eth_from_dc(rx.payload, rx.n);        /* E-4: second network interface */
         break;
     default:
         break;

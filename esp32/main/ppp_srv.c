@@ -104,7 +104,7 @@ static void teardown_locked(void) {
     if (!freed) { ESP_LOGE(TAG, "call did not end"); say("PPP: the call would not end, restart the box if it hangs"); return; }
     pcb = NULL;
     session++;
-    if (up) { up = false; dnsd_set_online(false, 0); dcnow_set_online(false); }
+    if (up) { up = false; dnsd_set_listen(0, false, 0); dcnow_set_online(0, false); }
     st = ST_CMD;
 }
 
@@ -194,8 +194,8 @@ static void ctl_task(void *arg) {
         if (c.what == C_UP) {
             up = true;
             say("PPP is up: Dreamcast 10.64.0.2, DNS and gateway 10.64.0.1");
-            dnsd_set_online(true, 0x0A400001);
-            dcnow_set_online(true);
+            dnsd_set_listen(0, true, 0x0A400001);
+            dcnow_set_online(0, true);
         } else {
             static const char *const why[] = { "ended", "bad parameter", "could not open", "no device", "out of memory",
                 "closed", "connection lost", "login refused", "protocol failed", "no answer from the Dreamcast",
@@ -224,7 +224,7 @@ size_t net_info_json(char *out, size_t cap) {
         "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu}}",
         enabled ? "true" : "false", st == ST_PPP ? "ppp" : "command", up ? "true" : "false",
         (unsigned long)cnt.sessions, (unsigned long)cnt.dials, (unsigned long)cnt.stray,
-        (unsigned long)flt.frames, (unsigned long)flt.ttl_fixed, (unsigned long)flt.syn_dropped,
+        (unsigned long)flt.frames, (unsigned long)flt.ipf.ttl_fixed, (unsigned long)flt.ipf.syn_dropped,
         (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop,
         (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
         dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail);

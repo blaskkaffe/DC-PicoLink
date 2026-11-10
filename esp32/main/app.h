@@ -38,14 +38,18 @@ void ppp_srv_start(void);
 void ser_from_dc(const uint8_t *p, size_t n);          /* serial bytes from the Dreamcast */
 void ppp_srv_set_enabled(bool on);                      /* off: serial bytes only go to the monitor */
 size_t net_info_json(char *out, size_t cap);            /* one JSON object for the web page */
+/* dc_eth.c: the cable's W5500 network as a second interface (E-4) */
+void dc_eth_start(void);
+void eth_from_dc(const uint8_t *p, size_t n);          /* one Ethernet frame from the Dreamcast */
+size_t eth_info_json(char *out, size_t cap);
 /* dnsd.c: the small DNS server for the Dreamcast */
 void dnsd_start(void);
-void dnsd_set_online(bool on, uint32_t ip_host_order);  /* address to listen on while a call is up */
+void dnsd_set_listen(int which, bool on, uint32_t ip_host_order);   /* 0 = PPP call, 1 = Ethernet side */
 void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap);
 /* dcnow.c: DCNow! reports */
 void dcnow_start(void);
 void dcnow_note_domain(const char *domain);
-void dcnow_set_online(bool on);
+void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = Ethernet side; reports while any is on */
 void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);

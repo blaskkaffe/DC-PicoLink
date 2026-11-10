@@ -77,13 +77,13 @@ int main(void) {
     CHECK(frl[0] == 4 + n && fr[0][0] == 0xFF && fr[0][1] == 3 && fr[0][2] == 0 && fr[0][3] == 0x21);
     CHECK(fr[0][4 + 8] == 65);                               CHECK(ip_sum_ok(fr[0] + 4));
     CHECK(!memcmp(fr[0] + 4 + 12, ip + 12, n - 12));         /* everything after the TTL/checksum is the same */
-    CHECK(h.ttl_fixed == 2);
+    CHECK(h.ipf.ttl_fixed == 2);
 
     /* already 65: unchanged; protocol field compression and no address/control are understood */
     outn = 0; n = ip_packet(ip, 65, 17, 0x08080808, 5000, 0, 10);
     send(&h, f, ppp_ip(f, ip, n, true), 0);
     nf = decode_out();                                       CHECK(nf == 1 && frl[0] == 1 + n);
-    CHECK(fr[0][0] == 0x21 && fr[0][1 + 8] == 65);           CHECK(h.ttl_fixed == 2);
+    CHECK(fr[0][0] == 0x21 && fr[0][1 + 8] == 65);           CHECK(h.ipf.ttl_fixed == 2);
     outn = 0; n = ip_packet(ip, 3, 1, 0x01010101, 0, 0, 20);
     send(&h, f, ppp_ip(f, ip, n, true), 0);
     nf = decode_out();                                       CHECK(nf == 1 && fr[0][1 + 8] == 65 && ip_sum_ok(fr[0] + 1));
@@ -92,9 +92,9 @@ int main(void) {
     outn = 0; n = ip_packet(ip, 64, 17, 0x7E7D7E7D, 7000, 0, 1400);
     for (size_t i = 20 + 8; i < n; i++) ip[i] = (uint8_t)(i % 5 == 0 ? 0x7E : i % 5 == 1 ? 0x7D : i % 32);
     uint8_t raw[8192]; size_t k = mkframe(f, ppp_ip(f, ip, n, false), raw);
-    uint32_t before = h.ttl_fixed;
+    uint32_t before = h.ipf.ttl_fixed;
     for (size_t i = 0; i < k; i += 7) hdlc_feed(&h, raw + i, k - i < 7 ? k - i : 7, 0);
-    nf = decode_out();                                       CHECK(nf == 1 && h.ttl_fixed == before + 1);
+    nf = decode_out();                                       CHECK(nf == 1 && h.ipf.ttl_fixed == before + 1);
     CHECK(!memcmp(fr[0] + 4 + 20, ip + 20, n - 20));
 
     /* LCP / IPCP: same bytes in, same bytes out (content), not touched */
@@ -106,10 +106,10 @@ int main(void) {
        while retries come faster than once a second (DreamPi's "recent --update") */
     outn = 0; n = ip_packet(ip, 64, 6, 0x0A0B0C0D, 3202, 0x02, 0);
     send(&h, f, ppp_ip(f, ip, n, false), 1000);              CHECK(decode_out() == 1);
-    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 1005);    CHECK(decode_out() == 0 && h.syn_dropped == 1);
-    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 1900);    CHECK(decode_out() == 0 && h.syn_dropped == 2);   /* 895 ms after the drop at 1005 */
-    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 2950);    CHECK(decode_out() == 1 && h.syn_dropped == 2);   /* 1050 ms after the drop at 1900: passes */
-    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 3100);    CHECK(decode_out() == 0 && h.syn_dropped == 3);   /* and that one counts again */
+    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 1005);    CHECK(decode_out() == 0 && h.ipf.syn_dropped == 1);
+    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 1900);    CHECK(decode_out() == 0 && h.ipf.syn_dropped == 2);   /* 895 ms after the drop at 1005 */
+    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 2950);    CHECK(decode_out() == 1 && h.ipf.syn_dropped == 2);   /* 1050 ms after the drop at 1900: passes */
+    outn = 0; send(&h, f, ppp_ip(f, ip, n, false), 3100);    CHECK(decode_out() == 0 && h.ipf.syn_dropped == 3);   /* and that one counts again */
     /* a different destination is its own entry; other source ports, SYN+ACK and other protocols are not looked at */
     outn = 0; n = ip_packet(ip, 64, 6, 0x0A0B0C0E, 3205, 0x02, 0);
     send(&h, f, ppp_ip(f, ip, n, false), 4001);              CHECK(decode_out() == 1);
@@ -154,6 +154,6 @@ int main(void) {
     hdlc_init(&g, emit, NULL);                                /* before the first flag too, and right after a frame */
     hdlc_feed(&g, (const uint8_t *)"at\r", 3, 0);            CHECK(g.saw_at);
 
-    printf("hdlc: ok (frames %u, ttl fixed %u, syn dropped %u)\n", h.frames, h.ttl_fixed, h.syn_dropped);
+    printf("hdlc: ok (frames %u, ttl fixed %u, syn dropped %u)\n", h.frames, h.ipf.ttl_fixed, h.ipf.syn_dropped);
     return 0;
 }

@@ -65,6 +65,6 @@ int main(void) {
         }
         sys_check_timeouts();
     }
-    fprintf(stderr, "STATS frames=%u ttl=%u syn=%u fcs_bad=%u\n", flt.frames, flt.ttl_fixed, flt.syn_dropped, flt.fcs_bad);
+    fprintf(stderr, "STATS frames=%u ttl=%u syn=%u fcs_bad=%u\n", flt.frames, flt.ipf.ttl_fixed, flt.ipf.syn_dropped, flt.fcs_bad);
     return 0;
 }

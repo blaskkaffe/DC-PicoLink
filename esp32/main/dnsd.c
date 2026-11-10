@@ -1,6 +1,6 @@
 /*
  * Small DNS server for the Dreamcast (what dnsmasq does on a DreamPi). Listens on the PPP
- * address while a call is up. Rules and parsing: ../../firmware/dns_model.h.
+ * address while a call is up and on the Ethernet side's address (dc_eth.c) while that is up. Rules and parsing: ../../firmware/dns_model.h.
  *   - names with an "address=/name/ip" line are answered here
  *   - plain names and private reverse lookups are refused (domain-needed, bogus-priv)
  *   - everything else goes to the revival servers (and any server= lines of the downloaded file)
@@ -28,14 +28,16 @@ static const char *TAG = "dnsd";
 
 static dns_conf_t conf;
 static SemaphoreHandle_t conf_lk;
-static volatile bool online;
-static volatile uint32_t bind_ip;
+#define LISTEN_N 2                              /* 0: the PPP call, 1: the Ethernet side (E-4) */
+static volatile bool online[LISTEN_N];
+static volatile uint32_t bind_ip[LISTEN_N];
 static struct { uint32_t q, fwd, ovr, nx; } cnt;
 static char last_name[DNS_NAME_MAX];
 
 static struct {
     bool used;
     struct sockaddr_in client;
+    int via;                                     /* which listening socket the Dreamcast asked on */
     uint16_t cid, uid;
     uint32_t ms;
     uint8_t tries;
@@ -47,7 +49,7 @@ static uint16_t next_uid = 1;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
-void dnsd_set_online(bool on, uint32_t ip) { bind_ip = ip; online = on; }
+void dnsd_set_listen(int which, bool on, uint32_t ip) { if (which < 0 || which >= LISTEN_N) return; bind_ip[which] = ip; online[which] = on; }
 
 void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap) {
     xSemaphoreTake(conf_lk, portMAX_DELAY);
@@ -71,7 +73,7 @@ static void send_up(int us, int i) {
     pend[i].ms = now_ms();
 }
 
-static void on_client(int ls, int us) {
+static void on_client(int via, int ls, int us) {
     uint8_t buf[PKT_MAX], out[PKT_MAX];
     struct sockaddr_in from; socklen_t fl = sizeof from;
     int n = recvfrom(ls, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
@@ -99,13 +101,13 @@ static void on_client(int ls, int us) {
         slot = 0;
         for (int i = 1; i < PENDING; i++) if (now_ms() - pend[i].ms > now_ms() - pend[slot].ms) slot = i;
     }
-    pend[slot].used = true; pend[slot].client = from; pend[slot].cid = q.id; pend[slot].uid = next_uid++;
+    pend[slot].used = true; pend[slot].client = from; pend[slot].via = via; pend[slot].cid = q.id; pend[slot].uid = next_uid++;
     pend[slot].tries = 0; pend[slot].plen = (size_t)n; memcpy(pend[slot].pkt, buf, (size_t)n);
     strlcpy(pend[slot].name, q.name, sizeof pend[slot].name);
     send_up(us, slot);
 }
 
-static void on_upstream(int ls, int us) {
+static void on_upstream(const int *ls, int us) {
     uint8_t buf[PKT_MAX];
     struct sockaddr_in from; socklen_t fl = sizeof from;
     int n = recvfrom(us, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
@@ -114,7 +116,8 @@ static void on_upstream(int ls, int us) {
     for (int i = 0; i < PENDING; i++)
         if (pend[i].used && pend[i].uid == uid) {
             buf[0] = (uint8_t)(pend[i].cid >> 8); buf[1] = (uint8_t)pend[i].cid;
-            sendto(ls, buf, (size_t)n, 0, (struct sockaddr *)&pend[i].client, sizeof pend[i].client);
+            if (ls[pend[i].via] >= 0)
+                sendto(ls[pend[i].via], buf, (size_t)n, 0, (struct sockaddr *)&pend[i].client, sizeof pend[i].client);
             pend[i].used = false;
             return;
         }
@@ -122,35 +125,44 @@ static void on_upstream(int ls, int us) {
 
 static void dns_task(void *arg) {
     (void)arg;
-    int ls = -1, us = -1;
+    int ls[LISTEN_N] = { -1, -1 }, us = -1;
     for (;;) {
-        if (!online) {
-            if (ls >= 0) { close(ls); ls = -1; }
+        bool any = false;
+        for (int i = 0; i < LISTEN_N; i++) {
+            if (!online[i]) {
+                if (ls[i] >= 0) { close(ls[i]); ls[i] = -1; for (int k = 0; k < PENDING; k++) if (pend[k].via == i) pend[k].used = false; }
+                continue;
+            }
+            any = true;
+            if (ls[i] < 0) {
+                ls[i] = socket(AF_INET, SOCK_DGRAM, 0);
+                struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = htonl(bind_ip[i]) };
+                if (ls[i] < 0 || bind(ls[i], (struct sockaddr *)&a, sizeof a) != 0) {
+                    ESP_LOGE(TAG, "cannot listen on port 53 (%d)", i);
+                    if (ls[i] >= 0) close(ls[i]);
+                    ls[i] = -1;
+                }
+            }
+        }
+        if (!any) {
             if (us >= 0) { close(us); us = -1; }
             memset(pend, 0, sizeof pend);
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        if (ls < 0) {
-            ls = socket(AF_INET, SOCK_DGRAM, 0);
+        if (us < 0) {
             us = socket(AF_INET, SOCK_DGRAM, 0);
-            struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = htonl(bind_ip) };
-            if (ls < 0 || us < 0 || bind(ls, (struct sockaddr *)&a, sizeof a) != 0) {
-                ESP_LOGE(TAG, "cannot listen on port 53");
-                if (ls >= 0) close(ls);
-                if (us >= 0) close(us);
-                ls = us = -1;
-                vTaskDelay(pdMS_TO_TICKS(500));
-                continue;
-            }
             struct sockaddr_in u = { .sin_family = AF_INET };
-            bind(us, (struct sockaddr *)&u, sizeof u);
+            if (us >= 0) bind(us, (struct sockaddr *)&u, sizeof u);
         }
-        fd_set rs; FD_ZERO(&rs); FD_SET(ls, &rs); FD_SET(us, &rs);
+        if (us < 0 || (ls[0] < 0 && ls[1] < 0)) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }
+        fd_set rs; FD_ZERO(&rs); FD_SET(us, &rs);
+        int mx = us;
+        for (int i = 0; i < LISTEN_N; i++) if (ls[i] >= 0) { FD_SET(ls[i], &rs); if (ls[i] > mx) mx = ls[i]; }
         struct timeval tv = { .tv_sec = 0, .tv_usec = 250000 };
-        int r = select((ls > us ? ls : us) + 1, &rs, NULL, NULL, &tv);
+        int r = select(mx + 1, &rs, NULL, NULL, &tv);
         if (r > 0) {
-            if (FD_ISSET(ls, &rs)) on_client(ls, us);
+            for (int i = 0; i < LISTEN_N; i++) if (ls[i] >= 0 && FD_ISSET(ls[i], &rs)) on_client(i, ls[i], us);
             if (FD_ISSET(us, &rs)) on_upstream(ls, us);
         }
         uint32_t t = now_ms();

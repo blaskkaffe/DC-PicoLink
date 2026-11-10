@@ -24,6 +24,7 @@ static const char *TAG = "dcnow";
 static dcnow_t dn;
 static SemaphoreHandle_t lk;
 static volatile bool online, enabled = true;
+static bool src_on[2];
 static volatile uint32_t ok_n, fail_n;
 static volatile bool last_failed;
 
@@ -39,13 +40,19 @@ void dcnow_note_domain(const char *d) {
     xSemaphoreGive(lk);
 }
 
-void dcnow_set_online(bool on) {
+void dcnow_set_online(int source, bool on) {
+    if (source < 0 || source > 1) return;
     xSemaphoreTake(lk, portMAX_DELAY);
-    if (on) dcnow_reset(&dn);
+    bool was = src_on[0] || src_on[1];
+    src_on[source] = on;
+    bool now = src_on[0] || src_on[1];
+    if (now && !was) dcnow_reset(&dn);                       /* a new session */
     xSemaphoreGive(lk);
-    online = on;
-    if (on && enabled) { const char *m = "DCNow!: session started"; log_add("esp32", m, strlen(m)); }
-    if (!on && enabled) { const char *m = "DCNow!: session ended"; log_add("esp32", m, strlen(m)); }
+    online = now;
+    if (enabled && now != was) {
+        const char *m = now ? "DCNow!: session started" : "DCNow!: session ended";
+        log_add("esp32", m, strlen(m));
+    }
 }
 
 bool dcnow_enabled(void) { return enabled; }

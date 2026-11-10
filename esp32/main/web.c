@@ -37,8 +37,8 @@ static const char PAGE[] =
 "<div class=c><h2>Serial port (orange: from the Dreamcast)</h2><pre id=ser></pre>"
 "<form id=sf><input id=sv placeholder='text to the Dreamcast, e.g. AT' style='flex:1'><button>Send</button></form></div>"
 "<div class=c><h2>dc1 to the cable</h2><form id=df><input id=dv value='get link.*' style='flex:1'><button>Send</button></form><pre id=ans class=m></pre></div>"
-"<div class=c><h2>Internet for the Dreamcast (serial)</h2><pre id=net class=m></pre><form id=nf>"
-"<label><input type=checkbox id=np> Internet over the serial cable</label><label><input type=checkbox id=nd> report to DCNow!</label><button>Save</button></form></div>"
+"<div class=c><h2>Internet for the Dreamcast</h2><pre id=net class=m></pre><form id=nf>"
+"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><button>Save</button></form></div>"
 "<div class=c><h2>Wi-Fi</h2><pre id=wf class=m></pre><form id=wfm><input id=ws placeholder='home network name'>"
 "<input id=wp type=password placeholder=password><button>Save</button></form></div>"
 "</main><script>"
@@ -54,7 +54,7 @@ static const char PAGE[] =
 "const S=$('ser');for(const e of j.ser){const sp=document.createElement('span');sp.className=e.d=='dc'?'dc':'';sp.textContent=hexs(e.hex);S.appendChild(sp)}"
 "while(S.childNodes.length>600)S.removeChild(S.firstChild);S.scrollTop=S.scrollHeight;sn=j.sernext;"
 "if(j.answer.seq!=asq){asq=j.answer.seq;$('ans').textContent=j.answer.text}"
-"const n=j.net;$('net').textContent=n.on?`${n.mode=='ppp'?(n.up?'online':'connecting'):'waiting for the Dreamcast to dial'}; calls ${n.calls}\nDNS: ${n.dns.queries} questions (${n.dns.forwarded} sent on, ${n.dns.overridden} answered here, ${n.dns.refused} refused), ${n.dns.overrides} overrides, ${n.dns.servers} servers; last: ${n.dns.last||'-'}\nPPP frames ${n.frames}, TTL set ${n.ttl_fixed}, double SYN dropped ${n.syn_dropped}, bad checksum ${n.fcs_bad}\nDCNow!: ${n.dcnow.on?`on, ${n.dcnow.ok} sent, ${n.dcnow.failed} failed`:'off'}`:'off: serial bytes only go to the monitor above';"
+"const n=j.net,e=j.eth;$('net').textContent=(n.on?`serial PPP: ${n.mode=='ppp'?(n.up?'online':'connecting'):'waiting for the Dreamcast to dial'}; calls ${n.calls}\nPPP frames ${n.frames}, TTL set ${n.ttl_fixed}, double SYN dropped ${n.syn_dropped}, bad checksum ${n.fcs_bad}`:'serial PPP: off (serial bytes only go to the monitor above)')+`\ncable network (W5500): ${e.active?'Dreamcast active':'quiet'}, ${e.frames_in} frames in, ${e.frames_out} out (${e.out_dropped} dropped), DHCP leases ${e.leases}${e.dc_ip?' ('+e.dc_ip+')':''}, TTL set ${e.ttl_fixed}, double SYN dropped ${e.syn_dropped}\nDNS: ${n.dns.queries} questions (${n.dns.forwarded} sent on, ${n.dns.overridden} answered here, ${n.dns.refused} refused), ${n.dns.overrides} overrides, ${n.dns.servers} servers; last: ${n.dns.last||'-'}\nDCNow!: ${n.dcnow.on?`on, ${n.dcnow.ok} sent, ${n.dcnow.failed} failed`:'off'}`;"
 "if(!nfx){$('np').checked=n.on;$('nd').checked=n.dcnow.on}"
 "const w=j.wifi;$('wf').textContent=`setup network: ${w.ap} (http://192.168.4.1)\\nhome network: ${w.ssid||'none saved'}`+(w.ssid?(w.up?` - connected, ${w.ip}`:' - not connected'):'');"
 "}catch(e){$('lkt').textContent='page lost the ESP32'}setTimeout(tick,1000)}"
@@ -95,6 +95,8 @@ static esp_err_t status(httpd_req_t *r) {
     n += wifi_info_json(o + n, cap - n);
     n += (size_t)snprintf(o + n, cap - n, ",\"net\":");
     n += net_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"eth\":");
+    n += eth_info_json(o + n, cap - n);
     uint32_t aseq;
     k = link_last_answer(t, sizeof t, &aseq);
     n += (size_t)snprintf(o + n, cap - n, ",\"answer\":{\"seq\":%lu,\"text\":\"", (unsigned long)aseq);
