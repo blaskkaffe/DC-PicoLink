@@ -244,6 +244,13 @@ minute; if it fails, only VPN addresses use the VPN and the log says why. A list
 restores the old behaviour. Without the VPN the Dreamcast uses the LAN as before.
 Test (root, network namespaces): `tools/test-dcusb0-vpn.sh`.
 
+**Quake 3 server list (`MASTER_FIX`, default `yes`).** The Dreamcast asks its master
+`getservers 43 dreamcast empty full`. The master at `MASTER_ADDR` (20.102.63.253) answers
+the same query without the word `dreamcast` (432 bytes) but not with it. `dcusb0-masterfix`
+(own service, own nat chain `DCUSB0_MASTER`) redirects the Dreamcast's UDP 27950 to that
+address to a relay on the Pi that removes the word and passes the answer back. Test:
+`tools/test-dcusb0-masterfix.sh`.
+
 ## Logic capture (diagnostics)
 
 The cable can record its four bus pins (CLK, MOSI, MISO, CS) like a small logic

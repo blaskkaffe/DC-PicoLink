@@ -42,9 +42,12 @@ install -m 755 dcusb0-dnsmasq.sh /usr/local/sbin/dcusb0-dnsmasq.sh
 install -m 644 dcusb0.service /etc/systemd/system/dcusb0.service
 install -m 755 dcusb0-vpn /usr/local/sbin/dcusb0-vpn
 install -m 644 dcusb0-vpn.service /etc/systemd/system/dcusb0-vpn.service
+install -m 755 dcusb0-masterfix /usr/local/sbin/dcusb0-masterfix
+install -m 644 dcusb0-masterfix.service /etc/systemd/system/dcusb0-masterfix.service
 # options added later: append them to an existing /etc/dcusb0.conf
 grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,$p' dcusb0.conf >> /etc/dcusb0.conf
 grep -q '^VPN_ROUTE=' /etc/dcusb0.conf || sed -n '/^# Which of the Dreamcast.s traffic/,$p' dcusb0.conf >> /etc/dcusb0.conf
+grep -q '^MASTER_FIX=' /etc/dcusb0.conf || sed -n '/^# Quake 3 Arena: its master/,$p' dcusb0.conf >> /etc/dcusb0.conf
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/90-dcusb0.conf
 # emulated SD card
 [ -f /etc/dcsd.conf ] || install -m 644 dcsd.conf /etc/dcsd.conf
@@ -68,6 +71,8 @@ echo "== activate"
 systemctl daemon-reload
 systemctl enable dcusb0.service
 systemctl enable dcusb0-vpn.service
+systemctl enable dcusb0-masterfix.service
+systemctl restart dcusb0-masterfix.service
 systemctl restart dcusb0-vpn.service
 systemctl enable dcsd.service
 systemctl restart dcsd.service   # creates the image on first start

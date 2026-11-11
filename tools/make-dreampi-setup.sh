@@ -22,7 +22,7 @@ for c in tar base64 gzip; do command -v $c >/dev/null || { echo "missing $c" >&2
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar xzf - -C "$tmp"
-chmod +x "$tmp"/dreampi/*.sh "$tmp"/dreampi/dcsd-* "$tmp"/dreampi/dcsd.py "$tmp"/dreampi/dcusb0-vpn
+chmod +x "$tmp"/dreampi/*.sh "$tmp"/dreampi/dcsd-* "$tmp"/dreampi/dcsd.py "$tmp"/dreampi/dcusb0-vpn "$tmp"/dreampi/dcusb0-masterfix
 bash "$tmp/dreampi/install.sh"
 exit 0
 __PAYLOAD_BELOW__

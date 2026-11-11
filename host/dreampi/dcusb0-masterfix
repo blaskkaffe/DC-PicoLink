@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# dcusb0-masterfix - lets Quake 3 Arena (Dreamcast) list servers from the master
+# at MASTER_ADDR (/etc/dcusb0.conf).
+#
+# The Dreamcast asks "getservers 43 dreamcast empty full"; the master answers
+# "getservers 43 empty full" (432 bytes) but is silent when the word "dreamcast"
+# is there (checked against 20.102.63.253). So: the Dreamcast's UDP 27950 packets
+# to MASTER_ADDR are redirected (own nat chain DCUSB0_MASTER) to this relay, which
+# removes the word, asks the master and sends the answer back. Seen from the
+# Dreamcast it is still the master talking. Nothing else is touched.
+#
+# Run by dcusb0-masterfix.service. "dcusb0-masterfix stop" removes the chain.
+import os, socket, subprocess, sys, time
+
+def conf():
+    c = {}
+    try:
+        for line in open('/etc/dcusb0.conf'):
+            line = line.split('#')[0].strip()
+            if '=' in line:
+                k, v = line.split('=', 1)
+                c[k.strip()] = v.strip().strip('"\'')
+    except OSError:
+        pass
+    return c
+
+def fix_query(d):
+    """Remove the 'dreamcast' keyword from a getservers query; other packets unchanged."""
+    if d[:4] == b'\xff\xff\xff\xff' and d[4:14] == b'getservers':
+        return d.replace(b' dreamcast', b'')
+    return d
+
+def ipt(*a, check=False):
+    return subprocess.run(['iptables', '-t', 'nat'] + list(a), stderr=subprocess.DEVNULL,
+                          stdout=subprocess.DEVNULL).returncode == 0
+
+def chain_off():
+    ipt('-D', 'PREROUTING', '-j', 'DCUSB0_MASTER')
+    ipt('-F', 'DCUSB0_MASTER')
+    ipt('-X', 'DCUSB0_MASTER')
+
+def chain_on(iface, master, port, pi, relay_port):
+    ipt('-N', 'DCUSB0_MASTER')
+    ipt('-F', 'DCUSB0_MASTER')
+    ipt('-A', 'DCUSB0_MASTER', '-i', iface, '-p', 'udp', '-d', master, '--dport', str(port),
+        '-j', 'DNAT', '--to-destination', '%s:%d' % (pi, relay_port))
+    if not ipt('-C', 'PREROUTING', '-j', 'DCUSB0_MASTER'):
+        ipt('-I', 'PREROUTING', '1', '-j', 'DCUSB0_MASTER')
+
+def log(m):
+    print('dcusb0-masterfix: ' + m, flush=True)
+
+def main():
+    c = conf()
+    master = os.environ.get('MASTER_ADDR') or c.get('MASTER_ADDR', '20.102.63.253')
+    port = int(os.environ.get('MASTER_PORT', 27950))
+    pi = os.environ.get('LISTEN') or c.get('PI_ADDR', '192.168.99.1')
+    relay_port = int(os.environ.get('RELAY_PORT', port))
+    iface = c.get('IFACE', 'dcusb0')
+    if len(sys.argv) > 1 and sys.argv[1] == 'stop':
+        chain_off(); return
+    if (os.environ.get('MASTER_FIX') or c.get('MASTER_FIX', 'yes')) != 'yes':
+        log('MASTER_FIX is not "yes": nothing to do'); time.sleep(10**9)
+    s = None
+    while s is None:            # dcusb0 may not have its address yet
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind((pi, relay_port))
+        except OSError as e:
+            s = None; log('waiting for %s: %s' % (pi, e)); time.sleep(5)
+    if not os.environ.get('NO_IPTABLES'):
+        chain_off(); chain_on(iface, master, port, pi, relay_port)
+    log('Quake 3 server list: queries to %s:%d go through %s:%d, "dreamcast" removed' % (master, port, pi, relay_port))
+    n = 0
+    while True:
+        d, a = s.recvfrom(4096)
+        q = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); q.settimeout(3)
+        got = 0
+        try:
+            q.sendto(fix_query(d), (master, port))
+            while True:                     # the list may come in several packets
+                r = q.recvfrom(4096)[0]
+                s.sendto(r, a); got += 1
+                q.settimeout(0.5)
+        except OSError:
+            pass
+        q.close()
+        n += 1
+        if n <= 3 or got == 0:
+            log('%s asked, %s' % (a[0], ('%d packet(s) back' % got) if got else 'the master did not answer'))
+
+if __name__ == '__main__':
+    main()
