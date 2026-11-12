@@ -30,14 +30,21 @@ int main(void) {
     /* 5. DC holds RTS high for 1.5 s (its buffer full): still obeyed */
     run(&s, &t, 1500000, 4, true);
     assert(s.obey);
+    /* 5b. Quake 3: toggles, then low and still for 10 s: stays obeyed (no flapping) */
+    rts_reset(&s); changes = 0;
+    while (!s.obey) { run(&s, &t, 200, 4, true); run(&s, &t, 200, 4, false); }
+    run(&s, &t, 10000000, 4, false);
+    assert(s.obey && changes == 1);
+    run(&s, &t, 1500000, 4, true);         /* buffer full 1.5 s: still obeyed */
+    assert(s.obey);
     /* 6. then a new program leaves RTS high: back to ignoring after 2 s quiet */
     run(&s, &t, 600000, 4, true);
-    assert(!s.obey && changes == 2);
+    assert(!s.obey && changes == 2);  /* high > 2 s in total */
     /* 7. wraparound of the 32-bit microsecond clock */
     rts_reset(&s); t = 0xFFFFF000u;
     while (!s.obey) { run(&s, &t, 300, 4, true); run(&s, &t, 300, 4, false); }
-    run(&s, &t, 2100000, 4, false);
+    run(&s, &t, 2100000, 4, true);
     assert(!s.obey);
-    printf("rts model: 7 cases ok\n");
+    printf("rts model: 8 cases ok\n");
     return 0;
 }
