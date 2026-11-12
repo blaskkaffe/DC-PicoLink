@@ -39,11 +39,12 @@ def chain_off():
     ipt('-F', 'DCUSB0_MASTER')
     ipt('-X', 'DCUSB0_MASTER')
 
-def chain_on(iface, master, port, pi, relay_port):
+def chain_on(ifaces, master, port, relay_port):
     ipt('-N', 'DCUSB0_MASTER')
     ipt('-F', 'DCUSB0_MASTER')
-    ipt('-A', 'DCUSB0_MASTER', '-i', iface, '-p', 'udp', '-d', master, '--dport', str(port),
-        '-j', 'DNAT', '--to-destination', '%s:%d' % (pi, relay_port))
+    for iface in ifaces:    # REDIRECT: to the Pi's own address on that interface
+        ipt('-A', 'DCUSB0_MASTER', '-i', iface, '-p', 'udp', '-d', master, '--dport', str(port),
+            '-j', 'REDIRECT', '--to-ports', str(relay_port))
     if not ipt('-C', 'PREROUTING', '-j', 'DCUSB0_MASTER'):
         ipt('-I', 'PREROUTING', '1', '-j', 'DCUSB0_MASTER')
 
@@ -54,9 +55,9 @@ def main():
     c = conf()
     master = os.environ.get('MASTER_ADDR') or c.get('MASTER_ADDR', '20.102.63.253')
     port = int(os.environ.get('MASTER_PORT', 27950))
-    pi = os.environ.get('LISTEN') or c.get('PI_ADDR', '192.168.99.1')
+    pi = os.environ.get('LISTEN', '0.0.0.0')
     relay_port = int(os.environ.get('RELAY_PORT', port))
-    iface = c.get('IFACE', 'dcusb0')
+    ifaces = (os.environ.get('MASTER_IFACES') or c.get('MASTER_IFACES', 'dcusb0 ppp0')).split()
     if len(sys.argv) > 1 and sys.argv[1] == 'stop':
         chain_off(); return
     if (os.environ.get('MASTER_FIX') or c.get('MASTER_FIX', 'yes')) != 'yes':
@@ -69,8 +70,8 @@ def main():
         except OSError as e:
             s = None; log('waiting for %s: %s' % (pi, e)); time.sleep(5)
     if not os.environ.get('NO_IPTABLES'):
-        chain_off(); chain_on(iface, master, port, pi, relay_port)
-    log('Quake 3 server list: queries to %s:%d go through %s:%d, "dreamcast" removed' % (master, port, pi, relay_port))
+        chain_off(); chain_on(ifaces, master, port, relay_port)
+    log('Quake 3 server list: queries to %s:%d from %s go through the Pi, "dreamcast" removed' % (master, port, ' '.join(ifaces)))
     n = 0
     while True:
         d, a = s.recvfrom(4096)
