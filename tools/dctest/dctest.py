@@ -29,7 +29,7 @@ REPLY = 0x80
 PAT_NAMES = ["random", "zero", "ones", "alt", "ramp", "walk", "ppp", "edges"]
 STAT_FIELDS = ["frames_ok", "crc_bad", "resync", "bytes_rx", "bytes_tx", "pat_bad", "seq_gap",
                "frames_tx", "baud", "uptime_ms", "reverts", "echo_frames", "sink_frames",
-               "scif_err", "scif_overrun", "flow_fixed", "fifo_polled", "rts_high"]
+               "scif_err", "scif_overrun", "flow_fixed", "rxq_hw", "gap_ms"]
 M32 = 0xFFFFFFFF
 
 
@@ -189,7 +189,12 @@ class SerialChan:
         self.baud = b
 
     def write(self, b):
-        self.s.write(b)
+        import serial
+        try:
+            self.s.write(b)
+        except serial.SerialTimeoutException:           # the cable took nothing for write_timeout seconds: a failed test, not the end of the run
+            self.s.reset_output_buffer()
+            self.write_timeouts = getattr(self, "write_timeouts", 0) + 1
 
     def read(self, timeout):
         end = time.perf_counter() + timeout
@@ -410,7 +415,8 @@ def frames_for(rate_bps, seconds, length, lo=3, hi=4000):
 
 
 TRACE_EVENTS = {1: "DC got frame", 2: "DC sent bytes", 3: "DC announce", 4: "DC transmitter slow, bytes left", 5: "DC baud change (x100)",
-                6: "DC found bytes in the serial FIFO that no interrupt was delivering, count"}
+                6: "DC found bytes in the serial FIFO that no interrupt was delivering, count",
+                7: "DC main loop was away for (ms)"}
 FRAME_NAMES = {HELLO: "HELLO", ECHO: "ECHO", SINK: "SINK", STATS: "STATS", CLEAR: "CLEAR", SRC: "SRC", SETBAUD: "SETBAUD", PROBE: "PROBE", TRACE: "TRACE"}
 
 
@@ -521,12 +527,11 @@ def echo_run(c, name, count, length, pat, seed, window=8, interval=0.0, **info):
                     pend.pop(f.seq)
                 elif f.type == HELLO | REPLY and f.seq == probe_id:
                     t_end = min(t_end, time.perf_counter() + 0.3)
-        s1 = link.stats(tries=2)
+        s1 = link.stats(tries=6)         # a stalled Dreamcast answers late: wait for it, its gap_ms says how long it was away
         if s0 and s1:
             diag = dict(dc_got=s1["echo_frames"] - s0["echo_frames"], dc_crc=s1["crc_bad"] - s0["crc_bad"],
                         dc_scif_err=s1["scif_err"] - s0["scif_err"], dc_ovr=s1["scif_overrun"] - s0["scif_overrun"],
-                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"], dc_polled=s1["fifo_polled"] - s0["fifo_polled"],
-                        dc_rts_hi=s1["rts_high"] - s0["rts_high"])
+                        dc_flow=s1["flow_fixed"] - s0["flow_fixed"], dc_rxq_hw=s1["rxq_hw"], dc_gap_ms=s1["gap_ms"])
         elif s0 and not s1:
             diag = dict(dc_stats="no answer")
     lost = len(pend)
@@ -1052,6 +1057,26 @@ def cmd_switch(c):
         echo_run(c, "echo-after", 50, 256, 0, c.rng.getrandbits(32), baud=b, cycle=i)
 
 
+def resync(c):
+    """After a failed operation: is the Dreamcast still where we think it is? It goes back to the start rate by itself after
+    20 s without a good frame, and a stalled link can leave host and Dreamcast at different rates."""
+    link = c.link
+    link.quiesce(0.2)
+    if hello(link, tries=3, timeout=0.5):
+        return True
+    old = c.baud
+    for b in (c.args.start_baud, old):
+        c.tr.set_baud(host_rate(b, getattr(c.args, "nominal_baud", False)))
+        c.baud = b
+        link.quiesce(0.3)
+        if hello(link, tries=6, timeout=0.5):
+            c.log.line("resync: the Dreamcast answers at %d baud%s" % (b, "" if b == old else " (it had gone back; carrying on there)"))
+            apply_flow(c, b)
+            return True
+    c.baud = old
+    raise RuntimeError("lost the Dreamcast: it does not answer at %d or %d baud" % (c.args.start_baud, old))
+
+
 def cmd_soak(c):
     end = time.time() + c.args.minutes * 60
     bauds = usable_bauds(c, parse_bauds(c.args.bauds))
@@ -1079,6 +1104,8 @@ def cmd_soak(c):
         else: src_run(c, "soak-src", cnt, ln, pat, seed, interval_us=int(iv * 1e6) if load < 1 else 0, **tag)
         if r.random() < 0.2:
             time.sleep(r.choice([0.05, 0.5, 3.0]))
+        if c.log.results and not c.log.results[-1].get("ok", True):
+            resync(c)
 
 
 
@@ -1285,6 +1312,14 @@ def selftest(args, log):
         t = time.time()
         back = hello(c.link, tries=20, timeout=0.5)
         check("Dreamcast returns to serial after the idle timeout (%.1f s)" % (time.time() - t), bool(back))
+    c.link.chan.close()
+    c = session(0, picolink, {"DCTEST_SILENT_MS": "1500"})
+    check("baud change accepted", set_baud(c, 57600))
+    s = c.link.stats()
+    check("Dreamcast runs at 57600", bool(s) and s["baud"] == 57600)
+    time.sleep(5.0)
+    s = c.link.stats(tries=8)
+    check("Dreamcast goes back to the start rate when no host talks to it", bool(s) and s["baud"] == 115200)
     c.link.chan.close()
     check("1200 baud is never used on a PicoLink", usable_bauds(_PL(), [1200, 9600]) == [9600])
 
@@ -1495,6 +1530,17 @@ def wait_for_dc(c, seconds):
     return False
 
 
+def restore_rate(c):
+    """Leave the Dreamcast at the start rate, where the next run of the tool looks for it (it goes back there by itself
+    after 20 s without a host, but a run right after this one should not have to wait)."""
+    try:
+        if c.baud != c.args.start_baud and c.link:
+            c.link.quiesce(0.05)
+            set_baud(c, c.args.start_baud)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1604,8 +1650,11 @@ def main():
                     log.line(NO_ANSWER % (args.port, args.start_baud, args.port))
                     return 2
             if args.cmd not in ("hello", "detect"):
-                {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
-                 "switch": cmd_switch, "soak": cmd_soak}[args.cmd](c)
+                try:
+                    {"serial": cmd_serial, "ramp": cmd_ramp, "hop": cmd_hop, "net": cmd_net, "auto": cmd_auto,
+                     "switch": cmd_switch, "soak": cmd_soak}[args.cmd](c)
+                finally:
+                    restore_rate(c)
             ok = log.summary() if args.cmd not in ("hello", "detect") else True
     except KeyboardInterrupt:
         log.line("interrupted")

@@ -42,6 +42,13 @@ int main(void) {
         printf("%s auto-baud ignores windows of equal pulses (zero bytes), accepts mixed data\n", ok ? "PASS" : "FAIL");
         fails += !ok;
     }
+    {
+        bool ok = ab_fraction(120192, 57870) && ab_fraction(120192, 60096) && ab_fraction(120192, 9766) && ab_fraction(1562500, 520833)
+                  && !ab_fraction(120192, 115200) && !ab_fraction(1562500, 1500000) && !ab_fraction(120192, 156250)
+                  && !ab_fraction(57870, 120192) && !ab_fraction(520833, 781250) && !ab_fraction(260417, 223214);
+        printf("%s auto-baud is slow to follow a rate that is a whole fraction of the wire rate\n", ok ? "PASS" : "FAIL");
+        fails += !ok;
+    }
     dc_effective_baud(115200);
     if (baud_wrapped) { printf("FAIL wrap flag stuck\n"); fails++; }
     printf(fails ? "FAILED: %u\n" : "OK: %u requests match dcload's DC rate\n", fails ? fails : n);
