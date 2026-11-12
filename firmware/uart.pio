@@ -1,6 +1,7 @@
 ; 8N1 UART for PIO, 8 PIO clocks per bit.
 
-; TX with CTS: waits for CTS (in pin 0) to be low before each start bit.
+; TX with CTS: waits for CTS (in pin 0) to be low before each start bit. The CPU swaps the
+; wait for a nop while the Dreamcast does not drive its RTS (main.c uart_tx_obey_rts, rts_model.h).
 .program uart_tx
 .side_set 1 opt
     pull       side 1 [7]   ; stop bit / idle high: 8 clocks here + 1 for the wait = 9/8 bit

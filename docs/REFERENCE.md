@@ -106,6 +106,13 @@ programs do all of this. The current pin order also helps them: CLK directly bel
 MOSI lets the W5500 program read the clock and the first data bit in one snapshot,
 and four pins in a row make the logic capture a single instruction.
 
+**The Dreamcast's RTS (GPIO5) is obeyed only while it toggles.** With the Dreamcast on,
+the pad reads high whenever the running program does not drive RTS (SCIF MCE off: games,
+current KallistiOS, dctest), so waiting for it would block every byte to the Dreamcast.
+dcload-serial drives it and toggles it during transfers. The cable ignores RTS by default
+and obeys it after 4 edges within 1 s, until it has been still for 2 s (`rts_model.h`,
+log lines `flow control on` / `flow control off`).
+
 ## What works with W5500 mode
 
 * KallistiOS programs built with a recent KOS (`w5500_adapter.c`, 2025+) and `INIT_NET`:

@@ -172,6 +172,16 @@ static void set_rts(bool assert) {
     gpio_put(PIN_RTS, assert ? 0 : 1);   /* active low */
 }
 
+/* The TX program's second instruction is "wait 0 pin 0" (CTS = the DC's RTS). It is swapped
+   for a nop (same 1 clock, so the stop bit timing is unchanged) while the cable ignores RTS.
+   One instruction-memory word write: safe while the state machine runs. */
+#define UART_TX_WAIT_IDX 1
+static void uart_tx_obey_rts(bool obey) {
+    uint16_t w = uart_tx_program.instructions[UART_TX_WAIT_IDX];
+    hard_assert((w & 0xE000u) == 0x2000u);   /* a WAIT: uart.pio changed? */
+    uart_pio->instr_mem[uart_off_tx + UART_TX_WAIT_IDX] = obey ? w : pio_encode_nop();
+}
+
 /* ---- setup ------------------------------------------------------------ */
 static void serial_init(void) {
     /* RTS out (through 1k into DC CTS); GPIO2 stays a plain input */
@@ -191,6 +201,7 @@ static void serial_init(void) {
     /* TX state machine */
     uart_sm_tx = pio_claim_unused_sm(uart_pio, true);
     uart_off_tx = pio_add_program(uart_pio, &uart_tx_program);
+    uart_tx_obey_rts(false);            /* ignore the DC's RTS until it is seen driven (rts_model.h) */
     pio_sm_set_pins_with_mask(uart_pio, uart_sm_tx, 1u << PIN_TX, 1u << PIN_TX);
     pio_sm_set_pindirs_with_mask(uart_pio, uart_sm_tx, 1u << PIN_TX, 1u << PIN_TX);
     pio_gpio_init(uart_pio, PIN_TX);
@@ -879,8 +890,6 @@ static void sense_report_task(void) {
     sense_note = 0;
 }
 
-/* The cable sends to the Dreamcast only while its RTS line (SD CS pad, GPIO5) is low. A bad contact there holds
-   the cable's transmitter (replies reach the Dreamcast seconds late) without corrupting a byte, so say so. */
 /* The six pads as the cable sees them right now (for hardware faults: a repaired adapter, a damaged pin). */
 static const char *pins_text(void) {
     static char t[96];
@@ -903,22 +912,20 @@ static void pins_offline_task(void) {
     if (sd_link_up) status("pads with the DC off or not started: %s", pins_text());
 }
 
+/* Obey the DC's RTS only while it is seen toggling (dcload); see rts_model.h. */
+#include "rts_model.h"
 static void rts_watch_task(void) {
-    static uint32_t n, hi, t0, shown_pct;
-    if (seen_mode != MODE_SERIAL) { n = hi = 0; return; }
-    uint32_t now = time_us_32();
-    if (!t0) t0 = now;
-    n++;
-    if (gpio_get(PIN_CTS)) hi++;
-    if (now - t0 < 5000000u) return;
-    uint32_t pct = n ? (uint32_t)((uint64_t)hi * 100u / n) : 0;
-    if (pct >= 2 && sd_link_up)
-        status("serial: the DC's RTS line (SD CS pad, GPIO%d) was high in %lu%% of %lu samples in 5 s: the cable cannot send to the DC while it is high (contact or wiring?) [%s]",
-               PIN_CTS, (unsigned long)pct, (unsigned long)n, pins_text());
-    else if (shown_pct >= 2 && pct < 2 && sd_link_up)
-        status("serial: the DC's RTS line is low again");
-    shown_pct = pct;
-    n = hi = 0; t0 = now;
+    static rts_state_t rs;
+    if (seen_mode != MODE_SERIAL) {
+        if (rs.obey) uart_tx_obey_rts(false);
+        rts_reset(&rs);
+        return;
+    }
+    if (!rts_step(&rs, time_us_32(), gpio_get(PIN_CTS))) return;
+    uart_tx_obey_rts(rs.obey);
+    if (sd_link_up)
+        status(rs.obey ? "serial: the DC drives its RTS line: flow control on"
+                       : "serial: the DC's RTS line is still: flow control off");
 }
 
 static void autobaud_task(void) {

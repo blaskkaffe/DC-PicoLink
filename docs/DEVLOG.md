@@ -249,3 +249,18 @@ Other notes:
 * AFO over serial reaches the lobby, but its game-room UDP gets no reply. That's
   probably on the server or VPN side, not the cable.
 * Always check the firmware banner time in a log: twice an older build was tested by mistake.
+
+## Serial: the Dreamcast's RTS (10-12 Nov 2026)
+
+Symptom: dctest serial failed at every rate (37 of 111) and replies reached the Dreamcast
+late, while a build with the RTS wait replaced by a nop passed 111 of 111. Measured with
+the cable's pad report: the RTS pad reads low while the Dreamcast boots, high at the menu,
+in games and in dctest, and only toggles during dcload transfers; with the Dreamcast off
+the cable reports nothing. The adapter is passive (micro-SD to SD, direct wires), so the
+high level comes from the Dreamcast when nothing drives the pin (the SH4's RTS2 is also
+the MD8 mode pin; current KallistiOS turns MCE off). Nothing was damaged and the wait in
+uart.pio was there from the first import: what changed was the Dreamcast program.
+dcload-serial 1.0.6 + dc-tool-ser 1.0.7 uploads clean at 1.5 Mbaud with the wait and
+without it; 1.6 Mbaud stops after the first block on both (the SCIF divider wraps).
+Fix: the wait instruction is swapped for a nop unless RTS is seen toggling (rts_model.h).
+
