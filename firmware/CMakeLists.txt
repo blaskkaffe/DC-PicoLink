@@ -28,6 +28,9 @@ target_link_libraries(dc_usb_serial PRIVATE pico_stdlib pico_unique_id pico_mult
 if(DC_SYS_KHZ)   # optional overclock: cmake -DDC_SYS_KHZ=250000 ..
     target_compile_definitions(dc_usb_serial PRIVATE DC_SYS_KHZ=${DC_SYS_KHZ})
 endif()
+if(DEFINED DC_SERIAL_PLAIN)   # test builds: serial like a plain FTDI cable
+    target_compile_definitions(dc_usb_serial PRIVATE DC_SERIAL_PLAIN=${DC_SERIAL_PLAIN})
+endif()
 if(DEFINED DC_TX_PACE_BITS)   # test builds only: idle bit times after each byte to the DC
     target_compile_definitions(dc_usb_serial PRIVATE DC_TX_PACE_BITS=${DC_TX_PACE_BITS})
 endif()

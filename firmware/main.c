@@ -782,6 +782,9 @@ static void hello_task(void) {
         /* the first line a new reader gets: only to that reader */
         status_to(new_usb, new_link,
                   "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s"
+#if DC_SERIAL_PLAIN
+                  "; TEST BUILD: plain serial (host rate, RTS ignored)"
+#endif
 #if DC_TX_PACE_BITS > 0
                   "; TEST BUILD: bytes to the DC paced (+" DC_STR(DC_TX_PACE_BITS) " bit times each)"
 #endif
@@ -872,6 +875,15 @@ static void spi_report(void) {
 }
 
 /* ---- follow the Dreamcast's real TX rate (auto-baud) --------------------- */
+/* DC_SERIAL_PLAIN=1 (test build): serial like a plain FTDI coder's cable: the wire runs at the
+   host's rate (no following the DC), and the DC's RTS is never obeyed (3-wire cable). */
+#ifndef DC_SERIAL_PLAIN
+#define DC_SERIAL_PLAIN 0
+#endif
+#if DC_SERIAL_PLAIN
+#undef DC_AUTOBAUD
+#define DC_AUTOBAUD 0
+#endif
 #ifndef DC_AUTOBAUD
 #define DC_AUTOBAUD 1
 #endif
@@ -943,6 +955,9 @@ static void rts_watch_task(void) {
         rts_reset(&rs);
         return;
     }
+#if DC_SERIAL_PLAIN
+    return;
+#endif
     if (!rts_step(&rs, time_us_32(), gpio_get(PIN_CTS))) return;
     uart_tx_obey_rts(rs.obey);
     if (sd_link_up)
