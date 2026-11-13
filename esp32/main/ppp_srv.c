@@ -108,6 +108,14 @@ static void teardown_locked(void) {
     st = ST_CMD;
 }
 
+/* packets to the Dreamcast pass the DreamPi helper rules (dc2k2, dcvoip: ipfilter_model.h) */
+static ipf_t ipf_in;
+static netif_output_fn ppp_output_orig;
+static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
+    if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
+    return ppp_output_orig(nif, p, dst);
+}
+
 static bool start_ppp(void) {
     teardown_locked();
     if (pcb) return false;
@@ -115,6 +123,8 @@ static bool start_ppp(void) {
     hdlc_init(&flt, emit_to_lwip, NULL);
     pcb = pppapi_pppos_create(&pppif, out_cb, status_cb, (void *)(uintptr_t)session);
     if (!pcb) { say("PPP: out of memory"); return false; }
+    ppp_output_orig = pppif.output;
+    pppif.output = ppp_output_to_dc;
     ip4_addr_t our, his;
     IP4_ADDR(&our, 10, 64, 0, 1);
     IP4_ADDR(&his, 10, 64, 0, 2);

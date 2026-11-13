@@ -55,6 +55,16 @@ chains() {      # create our chains and hook them in once
     iptables -C FORWARD -j DCUSB0_FWD 2>/dev/null || iptables -I FORWARD 1 -j DCUSB0_FWD
     # mangle POSTROUTING, not FORWARD: DreamPi puts RETURN rules for tun0 at the top of mangle FORWARD
     iptables -t mangle -C POSTROUTING -j DCUSB0_MSS 2>/dev/null || iptables -t mangle -I POSTROUTING 1 -j DCUSB0_MSS
+    # DreamPi's packet helpers (dcgamespy, dc2k2, dcvoip) tell the Dreamcast's direction by "came in
+    # on ppp0". Packets from the W5500 Dreamcast come in on dcusb0: dcgamespy's SYN+PSH fix is fed
+    # from here too (its handler does not look at the interface); dc2k2 and dcvoip would take them
+    # for packets *to* the Dreamcast and write the wrong address into them, so they skip them.
+    iptables -t mangle -N DCUSB0_HELP 2>/dev/null
+    iptables -t mangle -F DCUSB0_HELP
+    iptables -t mangle -A DCUSB0_HELP -i "$IF" -p tcp --tcp-flags ALL SYN,PSH -j NFQUEUE --queue-num 1 --queue-bypass
+    iptables -t mangle -A DCUSB0_HELP -i "$IF" -p tcp --dport 5011 -j ACCEPT
+    iptables -t mangle -A DCUSB0_HELP -i "$IF" -p udp --sport 1285 --dport 1285 -j ACCEPT
+    iptables -t mangle -C PREROUTING -j DCUSB0_HELP 2>/dev/null || iptables -t mangle -I PREROUTING 1 -j DCUSB0_HELP
 }
 
 flush() {
@@ -127,6 +137,9 @@ remove() {
     iptables -t nat -X DCUSB0_POST 2>/dev/null
     iptables -X DCUSB0_FWD 2>/dev/null
     iptables -t mangle -X DCUSB0_MSS 2>/dev/null
+    iptables -t mangle -D PREROUTING -j DCUSB0_HELP 2>/dev/null
+    iptables -t mangle -F DCUSB0_HELP 2>/dev/null
+    iptables -t mangle -X DCUSB0_HELP 2>/dev/null
 }
 
 if [ "${1:-run}" = stop ]; then remove; exit 0; fi

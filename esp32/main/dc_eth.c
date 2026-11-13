@@ -31,6 +31,7 @@ static const char *TAG = "dc_eth";
 
 static esp_netif_t *eth_if;
 static ipf_t ipf;                     /* only used from the link's reader task */
+static ipf_t ipf_in;                  /* packets to the Dreamcast (lwIP's task): DreamPi helper rules */
 static volatile int64_t last_dc_us = -QUIET_US * 2;
 static volatile bool active;
 static struct { uint32_t rx, tx, tx_drop, rx_drop, leases; char last_ip[16]; } cnt;
@@ -38,6 +39,7 @@ static struct { uint32_t rx, tx, tx_drop, rx_drop, leases; char last_ip[16]; } c
 static esp_err_t tx_cb(void *h, void *buf, size_t len) {
     (void)h;
     if (!link_is_up() || len > 1514) { cnt.tx_drop++; return ESP_OK; }
+    ipf_ether_to_dc(&ipf_in, buf, len);         /* dc2k2 / dcvoip rules (ipfilter_model.h) */
     for (int i = 0; i < 20; i++) {
         if (link_send(LINK_CH_ETH, buf, len)) { cnt.tx++; return ESP_OK; }
         vTaskDelay(1);
