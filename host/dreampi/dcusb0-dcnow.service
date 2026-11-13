@@ -1,0 +1,12 @@
+[Unit]
+Description=Dreamcast Now! reports for the W5500 Dreamcast (dcusb0)
+After=network-online.target dcusb0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dcusb0-dcnow
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

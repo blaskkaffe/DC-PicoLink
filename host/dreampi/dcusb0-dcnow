@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+# dcusb0-dcnow - Dreamcast Now! for the W5500 Dreamcast (dcusb0), as DreamPi's dcnow.py does
+# for a modem/serial Dreamcast: while the Dreamcast is online, every 15 s
+#   POST https://dcnow-2016.appspot.com/api/update/<sha256 of the Pi's MAC>/  dns_query=<sha256 of domain>
+# with the newest domain it looked up (DreamPi's dnsmasq logs it: DNS=auto in /etc/dcusb0.conf).
+# Same ID and rules as dcnow.py (appspot ignored; shared-host games sent once per session), and
+# off when ~pi/.dreampi.json says "enabled": false. Online = packets from the Dreamcast on dcusb0
+# in the last 60 s. While DreamPi has a modem/serial call up (ppp0), DreamPi reports, not this.
+import hashlib, json, os, re, subprocess, sys, time, urllib.parse, urllib.request, uuid
+
+API = "https://dcnow-2016.appspot.com/api/update/{}/"
+IF = "dcusb0"
+SHARED = ("gameloft", "onsen0.overworks.isao.net")
+SETTINGS = ("/home/pi/.dreampi.json", os.path.expanduser("~/.dreampi.json"))
+QUERY = re.compile(r"query\[A\] (\S+) from (\S+)")
+
+def log(m): print("dcusb0-dcnow: " + m, flush=True)
+
+def mac_id():
+    mac = "%012X" % uuid.getnode()
+    return hashlib.sha256(":".join(mac[i:i + 2] for i in range(0, 12, 2)).encode()).hexdigest()
+
+def enabled():
+    for p in SETTINGS:
+        try:
+            with open(p) as f: return bool(json.load(f).get("enabled", True))
+        except (OSError, ValueError): pass
+    return True
+
+def rx_packets():
+    try:
+        with open("/sys/class/net/%s/statistics/rx_packets" % IF) as f: return int(f.read())
+    except OSError: return None
+
+def ppp_up(): return os.path.exists("/sys/class/net/ppp0")
+
+def subnet_prefix():
+    try:
+        for line in open("/etc/dcusb0.conf"):
+            if line.startswith("PI_ADDR="): return line.split("=", 1)[1].strip().strip('"').rsplit(".", 1)[0] + "."
+    except OSError: pass
+    return "192.168.99."
+
+def newest_domain(since, prefix, sent_shared):
+    """Newest A query from the Dreamcast in the journal since `since`; rules as dcnow.py."""
+    try:
+        out = subprocess.run(["journalctl", "-u", "dnsmasq", "--since", "@%d" % since, "-o", "cat", "--no-pager"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        out = ""
+    if "query[" not in out:          # no journal for dnsmasq: syslog, as dcnow.py reads it
+        try:
+            out = subprocess.run(["tail", "-n", "200", "/var/log/syslog"], capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            return None
+    return pick_domain(out, prefix, sent_shared)
+
+def pick_domain(text, prefix, sent_shared):
+    for line in reversed(text.splitlines()):
+        m = QUERY.search(line)
+        if not m or not m.group(2).startswith(prefix): continue
+        d = m.group(1)
+        if "appspot" in d: continue
+        s = next((x for x in SHARED if x in d), None)
+        if s:
+            if s in sent_shared: return None
+            sent_shared.add(s)
+        return d
+    return None
+
+def post(mid, domain):
+    data = urllib.parse.urlencode({"dns_query": hashlib.sha256(domain.encode()).hexdigest()} if domain else {}).encode()
+    req = urllib.request.Request(API.format(mid), data, {"User-Agent": "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT), Dreamcast Now"})
+    urllib.request.urlopen(req, timeout=15).read()
+
+def main():
+    mid = mac_id(); prefix = subnet_prefix()
+    online = False; last_rx = rx_packets(); last_seen = 0.0; last_check = time.time(); sent_shared = set()
+    while True:
+        now = time.time()
+        rx = rx_packets()
+        if rx is not None and last_rx is not None and rx > last_rx: last_seen = now
+        last_rx = rx
+        want = rx is not None and now - last_seen < 60 and not ppp_up() and enabled()
+        if want != online:
+            online = want; sent_shared.clear(); last_check = now - 15
+            log("W5500 Dreamcast online: reporting to Dreamcast Now!" if online else "W5500 Dreamcast offline (or a modem call is up): not reporting")
+        if online:
+            d = newest_domain(int(last_check), prefix, sent_shared)
+            last_check = now
+            try:
+                post(mid, d)
+                if d: log("domain sent to Dreamcast Now!: " + d)
+            except Exception as e:
+                log("update failed: %s" % e)
+        time.sleep(15)
+
+if __name__ == "__main__":
+    main()

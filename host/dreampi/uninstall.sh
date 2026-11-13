@@ -5,6 +5,7 @@ systemctl disable --now dcusb0.service 2>/dev/null
 systemctl disable --now dcsd.service 2>/dev/null
 systemctl disable --now dcusb0-vpn.service 2>/dev/null
 systemctl disable --now dcusb0-masterfix.service 2>/dev/null
+systemctl disable --now dcusb0-dcnow.service 2>/dev/null
 /usr/local/sbin/dcusb0-masterfix stop 2>/dev/null
 /usr/local/sbin/dcusb0-vpn stop 2>/dev/null
 /usr/local/sbin/dcusb0-up.sh stop 2>/dev/null
@@ -12,7 +13,7 @@ command -v nft >/dev/null && nft delete table ip dcusb0 2>/dev/null
 rm -f /etc/udev/rules.d/70-dc-cable.rules /etc/systemd/system/dcusb0.service \
       /usr/local/sbin/dcusb0-up.sh /usr/local/sbin/dcusb0-dnsmasq.sh \
       /usr/local/sbin/dcusb0-vpn /etc/systemd/system/dcusb0-vpn.service \
-      /usr/local/sbin/dcusb0-masterfix /etc/systemd/system/dcusb0-masterfix.service /usr/local/bin/dreampi-snapshot \
+      /usr/local/sbin/dcusb0-masterfix /etc/systemd/system/dcusb0-masterfix.service /usr/local/bin/dreampi-snapshot /usr/local/sbin/dcusb0-dcnow /etc/systemd/system/dcusb0-dcnow.service \
       /etc/sysctl.d/90-dcusb0.conf /etc/NetworkManager/conf.d/90-dcusb0.conf \
       /etc/systemd/system/dcsd.service /usr/local/bin/dcsd.py \
       /usr/local/sbin/dcsd-mount /usr/local/sbin/dcsd-umount /usr/local/sbin/dcsd-mode /usr/local/sbin/dcsd-capture
