@@ -62,6 +62,10 @@ size_t vpn_info_json(char *out, size_t cap);
 
 /* ---- Wi-Fi (wifi.c) ---- */
 bool wifi_sta_up(void);
+
+/* pubip.c: our public Internet address (0 = not known yet) */
+uint32_t pubip_get(void);
+void pubip_start(void);
 void wifi_start(void);
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);

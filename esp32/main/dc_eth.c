@@ -39,6 +39,7 @@ static struct { uint32_t rx, tx, tx_drop, rx_drop, leases; char last_ip[16]; } c
 static esp_err_t tx_cb(void *h, void *buf, size_t len) {
     (void)h;
     if (!link_is_up() || len > 1514) { cnt.tx_drop++; return ESP_OK; }
+    ipf_in.public_ip = pubip_get();
     ipf_ether_to_dc(&ipf_in, buf, len);         /* dc2k2 / dcvoip rules (ipfilter_model.h) */
     for (int i = 0; i < 20; i++) {
         if (link_send(LINK_CH_ETH, buf, len)) { cnt.tx++; return ESP_OK; }
@@ -56,6 +57,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     uint8_t *c = malloc(n);
     if (!c) { cnt.rx_drop++; return; }
     memcpy(c, p, n);
+    ipf.public_ip = pubip_get();
     if (!ipf_ether(&ipf, c, n, (uint32_t)(esp_timer_get_time() / 1000))) { free(c); return; }
     last_dc_us = esp_timer_get_time();
     cnt.rx++;

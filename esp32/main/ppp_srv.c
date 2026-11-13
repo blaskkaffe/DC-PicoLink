@@ -112,6 +112,7 @@ static void teardown_locked(void) {
 static ipf_t ipf_in;
 static netif_output_fn ppp_output_orig;
 static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
+    ipf_in.public_ip = pubip_get();
     if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
     return ppp_output_orig(nif, p, dst);
 }
@@ -170,6 +171,7 @@ void ser_from_dc(const uint8_t *p, size_t n) {
                 i++;
             }
         } else {
+            flt.ipf.public_ip = pubip_get();
             hdlc_feed(&flt, &p[i], 1, (uint32_t)(esp_timer_get_time() / 1000));
             i++;
             if (flt.saw_at) {                   /* the Dreamcast is at its modem again: the call is over */

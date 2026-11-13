@@ -119,5 +119,6 @@ void app_main(void) {
     ppp_srv_start();
     dc_eth_start();
     vpn_start();
+    pubip_start();
     web_start();
 }
