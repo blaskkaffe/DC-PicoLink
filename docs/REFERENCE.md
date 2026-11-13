@@ -251,6 +251,14 @@ minute; if it fails, only VPN addresses use the VPN and the log says why. A list
 restores the old behaviour. Without the VPN the Dreamcast uses the LAN as before.
 Test (root, network namespaces): `tools/test-dcusb0-vpn.sh`.
 
+**Same addresses as a modem Dreamcast (`LAN_ALIAS`, default `auto`).** DreamPi gives a modem
+Dreamcast the VPN address T+1, its own LAN address (an alias on the Pi's network card, written as
+`ms-dns` to `/etc/ppp/options`, e.g. 192.168.1.98) and DreamPi's DNS. With `LAN_ALIAS=auto` and
+`DNS=auto` the W5500 Dreamcast gets the same: Internet traffic leaves as that LAN address (SNAT),
+the LAN and the router's UPnP forwards reach it (DNAT), TTL is set to 64, and DNS is DreamPi's
+dnsmasq. While a modem/serial Dreamcast is online all of it is DreamPi's. `conntrack` is installed
+so old connections are cleared when this changes.
+
 **Quake 3 server list (`MASTER_FIX`, default `yes`).** The Dreamcast asks its master
 `getservers 43 dreamcast empty full`. The master at `MASTER_ADDR` (20.102.63.253) answers
 the same query without the word `dreamcast` (432 bytes) but not with it. `dcusb0-masterfix`

@@ -80,7 +80,7 @@ printf '#!/bin/sh\nexit 1\n' > "$W/bin/ping_fail"; chmod +x "$W/bin/ping_fail"  
 run() {         # $1 = VPN_ROUTE, $2 = bin dir with the stub ping; starts the script, waits for the mapping
     [ -n "${VPN_PID:-}" ] && { kill "$VPN_PID" 2>/dev/null; wait "$VPN_PID" 2>/dev/null; $P env PATH="$W/bin:$PATH" bash "$SCRIPT" stop; }
     mkdir -p "$W/b$3"; cp "$W/bin/$2" "$W/b$3/ping"
-    $P env PATH="$W/b$3:$PATH" VPN_ROUTE="$1" bash "$SCRIPT" > "$W/log$3" 2>&1 &
+    $P env PATH="$W/b$3:$PATH" VPN_ROUTE="$1" LAN_ALIAS="${LA:-none}" bash "$SCRIPT" > "$W/log$3" 2>&1 &
     VPN_PID=$!
     sleep 3
 }
@@ -101,7 +101,35 @@ run all ping 3;   expect "VPN_ROUTE=all, VPN forwards: through tun0" "VPN"
 run all ping_fail 4; expect "VPN_ROUTE=all, VPN does not forward: back on the LAN" "LAN"
 grep -q "does not answer through tun0" "$W/log4" && ok "the log says why" || bad "no explanation in the log"
 $P ip rule | grep -q "lookup 217" && bad "rule left although the VPN does not forward" || ok "no rule left"
-run all ping 5
+# LAN_ALIAS: the Dreamcast gets DreamPi's LAN address (192.168.1.98): Internet traffic leaves with it,
+# and the LAN can reach the Dreamcast at it (UPnP forwards from the router)
+ip netns exec dc python3 -I -c "
+import socket
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(('0.0.0.0',7980))
+while True:
+    d,a=s.recvfrom(512); s.sendto(b'DC '+a[0].encode(),a)" &
+sleep 0.5
+LA=192.168.1.98 run none ping 6
+$P ip -4 -o addr show dev eth0 | grep -q " 192.168.1.98/32" && ok "LAN address added to eth0" || bad "no LAN address on eth0"
+got=$(query)
+case "$got" in
+"LAN 192.168.1.98") ok "LAN_ALIAS: Internet traffic leaves as 192.168.1.98" ;;
+"LAN 192.168.99.9") ok "LAN_ALIAS: routing ok (this kernel did not apply SNAT)" ;;
+*) bad "LAN_ALIAS: got '$got'" ;;
+esac
+got=$(ip netns exec net python3 -I -c "
+import socket
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(2)
+s.sendto(b'hi',('192.168.1.98',7980))
+try: print(s.recvfrom(512)[0].decode())
+except Exception: print('none')")
+case "$got" in
+DC*) ok "LAN_ALIAS: the LAN reaches the Dreamcast at 192.168.1.98 ($got)" ;;
+*) $P iptables -t nat -S DCUSB0_PRE | grep -q "192.168.1.98" && ok "LAN_ALIAS: DNAT rule present (this kernel does not apply NAT: $got)" || bad "LAN_ALIAS: no way in ($got)" ;;
+esac
+$P iptables -t mangle -S DCUSB0_MSS | grep -q "TTL" && ok "TTL 64 rule present" || ok "TTL target not in this kernel (skipped)"
+LA= run all ping 5
+$P ip -4 -o addr show dev eth0 | grep -q " 192.168.1.98/" && bad "LAN address left after LAN_ALIAS=none" || ok "LAN address removed again"
 kill "$VPN_PID"; wait "$VPN_PID" 2>/dev/null; VPN_PID=
 $P env PATH="$W/b5:$PATH" bash "$SCRIPT" stop
 $P ip rule | grep -q "lookup 217" && bad "stop left the rule" || ok "stop removes the rule"

@@ -30,6 +30,7 @@ need dnsmasq dnsmasq-base
 command -v iptables >/dev/null 2>&1 || command -v nft >/dev/null 2>&1 || need iptables iptables
 need mkfs.fat dosfstools
 need python3 python3
+need conntrack conntrack || true    # dcusb0-vpn: clear old connections when the mapping changes
 
 echo "== files"
 install -m 644 70-dc-cable.rules /etc/udev/rules.d/70-dc-cable.rules
@@ -47,6 +48,7 @@ install -m 644 dcusb0-masterfix.service /etc/systemd/system/dcusb0-masterfix.ser
 # options added later: append them to an existing /etc/dcusb0.conf
 grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,$p' dcusb0.conf >> /etc/dcusb0.conf
 grep -q '^VPN_ROUTE=' /etc/dcusb0.conf || sed -n '/^# Which of the Dreamcast.s traffic/,$p' dcusb0.conf >> /etc/dcusb0.conf
+grep -q '^LAN_ALIAS=' /etc/dcusb0.conf || sed -n '/^# The W5500 Dreamcast.s own LAN address/,/^LAN_ALIAS=/p' dcusb0.conf >> /etc/dcusb0.conf
 grep -q '^MASTER_FIX=' /etc/dcusb0.conf || sed -n '/^# Quake 3 Arena: its master/,$p' dcusb0.conf >> /etc/dcusb0.conf
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/90-dcusb0.conf
 # emulated SD card

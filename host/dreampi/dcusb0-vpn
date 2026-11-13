@@ -22,12 +22,21 @@
 # It is policy routing for the Dreamcast's address only: the Pi itself and DreamPi
 # are not touched, and when the VPN is down the Dreamcast falls back to the LAN.
 #
+# LAN_ALIAS (default auto): like DreamPi does for a modem Dreamcast, the W5500 Dreamcast
+# also gets its own address on the Pi's LAN (DreamPi's choice, read from the "ms-dns" line
+# DreamPi writes to /etc/ppp/options, e.g. 192.168.1.98): an alias on the Pi's network card,
+# Internet traffic leaves with it (SNAT), and anything sent to it is passed to the Dreamcast
+# (DNAT), so the router's UPnP forwards DreamPi made for that address work too. TTL is set to
+# 64 on the Dreamcast's packets (DreamPi does the same for ppp0). "none" = old behaviour.
+# While a modem/serial Dreamcast is online the alias is DreamPi's; it is left alone.
+#
 # Run by dcusb0-vpn.service. "dcusb0-vpn stop" removes everything.
 set -u
 [ -f /etc/dcusb0.conf ] && . /etc/dcusb0.conf
 VPN_IF=${VPN_IF:-tun0}
 VPN_MAP=${VPN_MAP:-yes}
 VPN_ROUTE=${VPN_ROUTE:-all}
+LAN_ALIAS=${LAN_ALIAS:-auto}
 VPN_PROBE=${VPN_PROBE:-1.1.1.1}         # "all" is used only if this answers a ping through the VPN
 RT_TABLE=217
 RT_PRIO=1000
@@ -82,7 +91,32 @@ route_on() {    # $1 = the Dreamcast's address; returns 1 if nothing is routed t
     return 0
 }
 
+ALIAS_MINE=/run/dcusb0-vpn.alias       # the alias address we added (not DreamPi)
+
+lan_alias() {   # the address DreamPi gives the Dreamcast on the LAN
+    case "$LAN_ALIAS" in
+    none|"") return ;;
+    auto) awk '$1 == "ms-dns" {print $2; exit}' /etc/ppp/options 2>/dev/null ;;
+    *) echo "$LAN_ALIAS" ;;
+    esac
+}
+lan_if() { ip route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i+1); exit}}'; }
+
+alias_off() {   # remove our alias, never DreamPi's (a modem/serial Dreamcast may be online)
+    [ -f "$ALIAS_MINE" ] || return 0
+    set -- $(cat "$ALIAS_MINE"); rm -f "$ALIAS_MINE"
+    ip link show ppp0 >/dev/null 2>&1 && return 0
+    ip addr del "$1/32" dev "$2" 2>/dev/null && log "LAN address $1 removed"
+}
+
+alias_on() {    # $1 = alias address, $2 = interface
+    ip -4 -o addr show dev "$2" | grep -q " $1/" && return 0
+    ip addr add "$1/32" dev "$2" label "$2:1" || return 1
+    echo "$1 $2" > "$ALIAS_MINE"
+}
+
 remove() {
+    alias_off
     route_off
     flush
     iptables -t nat -D PREROUTING -j DCUSB0_PRE 2>/dev/null
@@ -136,11 +170,28 @@ while :; do
             iptables -t mangle -A DCUSB0_MSS -o "$VPN_IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
             iptables -t mangle -A DCUSB0_MSS -o "$IF" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
             log "Dreamcast $d on $IF = VPN address $v (all ports, both ways; $VPN_IF is $t)"
+            # its own LAN address, as DreamPi gives a modem Dreamcast
+            la=$(lan_alias); li=$(lan_if)
+            if [ -n "$la" ] && [ -n "$li" ] && alias_on "$la" "$li"; then
+                iptables -t nat -A DCUSB0_POST ! -o "$VPN_IF" -s "$d" -j SNAT --to-source "$la"
+                iptables -t nat -A DCUSB0_PRE -i "$li" -d "$la" -j DNAT --to-destination "$d"
+                iptables -A DCUSB0_FWD -i "$li" -o "$IF" -d "$d" -j ACCEPT
+                log "Dreamcast $d on $IF = LAN address $la on $li (Internet traffic and the router's forwards to it)"
+            elif [ -n "$la" ]; then
+                log "could not add LAN address $la on ${li:-?}: Internet traffic uses the Pi's address"
+            fi
+            iptables -t mangle -A DCUSB0_MSS -s "$d" -j TTL --ttl-set 64 2>/dev/null
             route_on "$d" && rt_failed=0 || rt_failed=1
             # flows started before the mapping/route keep their old path and NAT until they time out
-            command -v conntrack >/dev/null 2>&1 && conntrack -D -s "$d" >/dev/null 2>&1 ;;
+            if command -v conntrack >/dev/null 2>&1; then
+                conntrack -D -s "$d" >/dev/null 2>&1
+                [ -n "$la" ] && conntrack -D -d "$la" >/dev/null 2>&1
+                conntrack -D -d "$v" >/dev/null 2>&1
+            else
+                log "conntrack is not installed: connections made before this change keep their old path until they time out (sudo apt-get install conntrack)"
+            fi ;;
         esac
-        if [ -z "$want" ] || [ "$want" = ppp0 ]; then route_off; rt_failed=0; fi
+        if [ -z "$want" ] || [ "$want" = ppp0 ]; then route_off; alias_off; rt_failed=0; fi
         state=$want
     elif [ "$rt_failed" = 1 ] && [ $((loops % 12)) = 0 ]; then
         set -- $want; route_on "$2" && rt_failed=0 || rt_failed=1
