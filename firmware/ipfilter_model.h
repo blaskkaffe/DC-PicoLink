@@ -14,6 +14,7 @@
  *     to the DC, the packet's source address.
  *   - dc2k2 (TCP to the DC, destination port 5011, PSH+ACK): a message starting with byte 1 gets
  *     the packet's source address in its bytes 1-4.
+ *   - dcdaytona (UDP 12079 -> 12079, Daytona USA; to the DC only): see ipf__daytona().
  * ipf_packet() handles packets from the Dreamcast, ipf_to_dc() packets going to it.
  */
 #pragma once
@@ -29,7 +30,7 @@ typedef struct {
     struct { uint32_t dst; uint32_t ms; bool used; } syn[IPF_SYN_SLOTS];
     uint32_t ip_packets, ttl_fixed, syn_dropped;
     uint32_t public_ip;                       /* our address on the Internet (dcvoip -p); 0 = unknown */
-    uint32_t gamespy_fixed, voip_fixed, k2_fixed;
+    uint32_t gamespy_fixed, voip_fixed, k2_fixed, daytona_fixed;
 } ipf_t;
 
 static inline uint16_t ipf__sum(const uint8_t *p, size_t n) {
@@ -134,6 +135,45 @@ static inline bool ipf_ether(ipf_t *h, uint8_t *f, size_t n, uint32_t now_ms) {
     return ipf_packet(h, f + o + 2, n - (o + 2), now_ms);
 }
 
+/* dcdaytona, packets to the Dreamcast (after NAT: destination = the Dreamcast's own address).
+   Offsets from the start of a 20-byte IP header, L = UDP length - 4, as the helper does:
+   A) L in {27,29,36,38,45,47}, byte 28 = 0x20, byte 31 = 0x25, n = byte 32 in 2..4:
+      bytes 33-36 = the sender's address; then the first of these that holds our public address
+      gets the Dreamcast's address: offset 42 (n == 2: L > 26; n > 2: L > 35), else 51 (n > 2),
+      else 60 (n == 4, L > 44).
+   B) 48 < L <= 53, bytes 28-31 = 20 2B 42 21: bytes 65-68 = the sender's address. */
+static inline bool ipf__daytona(ipf_t *h, uint8_t *ip, size_t ihl, size_t n) {
+    if (ip[9] != 17 || ihl != 20 || n < 28) return false;
+    uint8_t *u = ip + 20;
+    if ((u[0] << 8 | u[1]) != 12079 || (u[2] << 8 | u[3]) != 12079) return false;
+    size_t ulen = (size_t)(u[4] << 8 | u[5]);
+    if (ulen < 8 || 20 + ulen > n) return false;
+    int L = (int)ulen - 4;
+    uint32_t src = ipf__get32(ip + 12), dst = ipf__get32(ip + 16), pub = h->public_ip;
+    bool changed = false;
+#define IPF_FITS(off) ((size_t)(off) + 4 <= 20 + ulen)
+    if ((L == 27 || L == 29 || L == 36 || L == 38 || L == 45 || L == 47) && IPF_FITS(33)
+        && ip[28] == 0x20 && ip[31] == 0x25 && ip[32] >= 2 && ip[32] <= 4) {
+        uint8_t k = ip[32];
+        ipf__put32(ip + 33, src); changed = true;
+        if (k == 2) {
+            if (L > 26 && IPF_FITS(42) && ipf__get32(ip + 42) == pub) ipf__put32(ip + 42, dst);
+        } else if (L > 35) {
+            if (IPF_FITS(42) && ipf__get32(ip + 42) == pub) ipf__put32(ip + 42, dst);
+            else if (IPF_FITS(51) && ipf__get32(ip + 51) == pub) ipf__put32(ip + 51, dst);
+            else if (k == 4 && L > 44 && IPF_FITS(60) && ipf__get32(ip + 60) == pub) ipf__put32(ip + 60, dst);
+        }
+    }
+    if (L > 48 && L <= 53 && IPF_FITS(65) && ip[28] == 0x20 && ip[29] == 0x2B && ip[30] == 0x42 && ip[31] == 0x21) {
+        ipf__put32(ip + 65, src); changed = true;
+    }
+#undef IPF_FITS
+    if (!changed) return false;
+    ipf__fix_sums(ip, 20, u, ulen, 6);
+    h->daytona_fixed++;
+    return true;
+}
+
 /* A packet going to the Dreamcast (after NAT: the source is still the remote's address). */
 static inline void ipf_to_dc(ipf_t *h, uint8_t *ip, size_t n) {
     if (n < 20 || (ip[0] >> 4) != 4) return;
@@ -142,6 +182,7 @@ static inline void ipf_to_dc(ipf_t *h, uint8_t *ip, size_t n) {
     size_t tot = (size_t)(ip[2] << 8 | ip[3]);
     if (tot > n || tot < ihl) return;
     if (ipf__voip(h, ip, ihl, tot, false)) return;
+    if (ipf__daytona(h, ip, ihl, tot)) return;
     if (ip[9] != 6 || tot < ihl + 20) return;
     uint8_t *t = ip + ihl;
     if ((t[2] << 8 | t[3]) != 5011) return;                                 /* dc2k2: dport 5011 */

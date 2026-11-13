@@ -128,6 +128,30 @@ int main(void) {
         m = pkt(ip, 0xC0A80164, 0x0A400002, 6, t2, 20 + 26);               /* 26: long enough */
         ipf_to_dc(&h, ip, m); CHECK(h.k2_fixed == 2);
     }
+
+    /* dcdaytona (to the DC only) */
+    {
+        uint8_t ip[200], u[60]; memset(u, 0, sizeof u);
+        u[0] = 0x2F; u[1] = 0x2F; u[2] = 0x2F; u[3] = 0x2F;               /* 12079 */
+        /* A, n = 3, L = 36 (UDP length 40): sender at 33, our public address at 51 -> DC's address */
+        u[4] = 0; u[5] = 40; u[8] = 0x20; u[11] = 0x25; u[12] = 3;
+        h.public_ip = 0x51525354;
+        ipf__put32(u + 22, 0x01020304); ipf__put32(u + 31, 0x51525354);    /* ip+42, ip+51 */
+        size_t m = pkt(ip, 0x05060708, 0x0A400002, 17, u, 40);
+        ipf_to_dc(&h, ip, m);
+        CHECK(ipf__get32(ip + 33) == 0x05060708 && ipf__get32(ip + 42) == 0x01020304);
+        CHECK(ipf__get32(ip + 51) == 0x0A400002 && sums_ok(ip) && h.daytona_fixed == 1);
+        u[12] = 5; m = pkt(ip, 0x05060708, 0x0A400002, 17, u, 40);            /* n out of range: untouched */
+        ipf_to_dc(&h, ip, m); CHECK(h.daytona_fixed == 1);
+        /* B: L = 50 (UDP length 54), 20 2B 42 21: sender at 65 */
+        memset(u + 8, 0, 52); u[5] = 54; u[8] = 0x20; u[9] = 0x2B; u[10] = 0x42; u[11] = 0x21;
+        m = pkt(ip, 0x05060708, 0x0A400002, 17, u, 54);
+        ipf_to_dc(&h, ip, m);
+        CHECK(ipf__get32(ip + 65) == 0x05060708 && sums_ok(ip) && h.daytona_fixed == 2);
+        m = pkt(ip, 0x0A400002, 0x05060708, 17, u, 54);                       /* from the DC: never changed */
+        uint8_t g3[200]; memcpy(g3, ip, m);
+        CHECK(ipf_packet(&h, ip, m, 7000) && !memcmp(g3 + 20, ip + 20, m - 20));
+    }
     printf("ipfilter: ok (ip %u, ttl fixed %u, syn dropped %u)\n", h.ip_packets, h.ttl_fixed, h.syn_dropped);
     return 0;
 }
