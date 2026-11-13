@@ -1,30 +1,16 @@
 ; 8N1 UART for PIO, 8 PIO clocks per bit.
 
-; TX with CTS: waits for CTS (in pin 0) to be low before each start bit. The CPU swaps the
-; wait for a nop while the Dreamcast does not drive its RTS (main.c uart_tx_obey_rts, rts_model.h).
+; TX. No flow control from the Dreamcast: DreamPi 2.1 opens the serial cable with rtscts=False,
+; games and current KallistiOS leave the DC's RTS undriven (it reads high), and waiting for it
+; blocked the cable (DEVLOG, Nov 2026). The nop keeps the old 9/8-bit stop bit.
 .program uart_tx
 .side_set 1 opt
-    pull       side 1 [7]   ; stop bit / idle high: 8 clocks here + 1 for the wait = 9/8 bit
-    wait 0 pin 0            ; (as before net7; net7r A/B build); flow control: wait for CTS low
+    pull       side 1 [7]   ; stop bit / idle high: 8 clocks here + 1 for the nop = 9/8 bit
+    nop
     set x, 7   side 0 [7]   ; start bit
 bitloop:
     out pins, 1
     jmp x-- bitloop   [6]
-
-; Test variant (build with -DDC_TX_PACE_BITS=n): the same, plus n idle bit times after
-; every byte, so the Dreamcast gets bytes at a modem-like rate on the same baud rate.
-; The wait stays instruction 1 (main.c swaps it). y = n-1 is loaded by the CPU into ISR.
-.program uart_tx_paced
-.side_set 1 opt
-    pull       side 1 [7]
-    wait 0 pin 0
-    set x, 7   side 0 [7]
-bitloop:
-    out pins, 1
-    jmp x-- bitloop   [6]
-    mov y, isr side 1         ; line idle (stop level) during the pause
-pace:
-    jmp y-- pace      [7]     ; 8 clocks = one bit time per round
 
 ; RX, 16 PIO clocks per bit, FTDI-style robustness:
 ;  - a start bit must still be low at its middle (glitches don't start a byte)

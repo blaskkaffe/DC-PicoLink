@@ -106,12 +106,11 @@ programs do all of this. The current pin order also helps them: CLK directly bel
 MOSI lets the W5500 program read the clock and the first data bit in one snapshot,
 and four pins in a row make the logic capture a single instruction.
 
-**The Dreamcast's RTS (GPIO5) is obeyed only while it toggles.** With the Dreamcast on,
-the pad reads high whenever the running program does not drive RTS (SCIF MCE off: games,
-current KallistiOS, dctest), so waiting for it would block every byte to the Dreamcast.
-dcload-serial drives it and toggles it during transfers. The cable ignores RTS by default
-and obeys it after 4 edges within 1 s, until it has been still for 2 s (`rts_model.h`,
-log lines `flow control on` / `flow control off`).
+**The Dreamcast's RTS (GPIO5) is not used for flow control.** DreamPi 2.1 opens the serial
+cable without flow control (`rtscts=False`), and with the Dreamcast on the pad reads high whenever
+the running program does not drive RTS (games, current KallistiOS, dctest), so waiting for it
+blocked every byte to the Dreamcast. The cable sends whenever it has data, like a plain FTDI
+coder's cable; dcload-serial uploads clean at 1.5 Mbaud this way too.
 
 ## What works with W5500 mode
 
@@ -241,15 +240,10 @@ while a modem Dreamcast is online through DreamPi (`ppp0`), whose address it is 
 Log: `journalctl -u dcusb0-vpn`. Off: `VPN_MAP=no` in `/etc/dcusb0.conf`, then
 `sudo systemctl restart dcusb0-vpn`. Without the VPN nothing is mapped (outbound NAT only).
 
-**Which traffic uses the VPN (`VPN_ROUTE`, default `all`).** The mapping above only
-covers addresses inside the VPN. With `VPN_ROUTE=all` the Dreamcast's Internet traffic
-goes through `tun0` too (policy routing for the Dreamcast's address only, table 217,
-source = its VPN address), as long as the VPN server forwards to the Internet: that is
-checked with a ping through `tun0` (`VPN_PROBE`, default 1.1.1.1) and repeated every
-minute; if it fails, only VPN addresses use the VPN and the log says why. A list
-(`VPN_ROUTE="20.102.63.253 192.246.40.56/32"`) routes only those destinations; `none`
-restores the old behaviour. Without the VPN the Dreamcast uses the LAN as before.
-Test (root, network namespaces): `tools/test-dcusb0-vpn.sh`.
+**Which traffic uses the VPN.** As in DreamPi 2.1, only VPN addresses go through `tun0`;
+Internet traffic leaves on the LAN with the Dreamcast's own LAN address (`LAN_ALIAS`). (An
+earlier `VPN_ROUTE` option that sent everything through the VPN was removed: DreamPi does not,
+and the Dreamcast Live VPN does not forward to the Internet.)
 
 **Same addresses as a modem Dreamcast (`LAN_ALIAS`, default `auto`).** DreamPi gives a modem
 Dreamcast the VPN address T+1, its own LAN address (an alias on the Pi's network card, written as

@@ -262,5 +262,7 @@ the MD8 mode pin; current KallistiOS turns MCE off). Nothing was damaged and the
 uart.pio was there from the first import: what changed was the Dreamcast program.
 dcload-serial 1.0.6 + dc-tool-ser 1.0.7 uploads clean at 1.5 Mbaud with the wait and
 without it; 1.6 Mbaud stops after the first block on both (the SCIF divider wraps).
-Fix: the wait instruction is swapped for a nop unless RTS is seen toggling (rts_model.h).
+Fix: the wait is gone (a nop, same timing): the cable never waits for RTS, as DreamPi 2.1 does
+(rtscts=False). A version that obeyed RTS only while it toggled was tried and removed: Quake 3
+drives RTS but pauses it, which flipped flow control on and off, and DreamPi does not use it.
 

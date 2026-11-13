@@ -15,12 +15,8 @@
 # game may use its own MAC). While DreamPi has a modem Dreamcast online (ppp0),
 # T+1 is that one's, and the mapping is taken down.
 #
-# VPN_ROUTE (in /etc/dcusb0.conf) says which of the Dreamcast's traffic goes
-# through the VPN: "all" (default: everything, if the VPN server forwards to the
-# Internet; checked with a ping through tun0, else only VPN addresses), a list of
-# addresses/networks ("20.102.63.253 192.246.40.56/32"), or "none" (only 10.200.x.x).
-# It is policy routing for the Dreamcast's address only: the Pi itself and DreamPi
-# are not touched, and when the VPN is down the Dreamcast falls back to the LAN.
+# Like DreamPi 2.1, only VPN addresses (10.200.x.x and the networks behind it) go through
+# the VPN; Internet traffic leaves on the LAN with the Dreamcast's own LAN address (below).
 #
 # LAN_ALIAS (default auto): like DreamPi does for a modem Dreamcast, the W5500 Dreamcast
 # also gets its own address on the Pi's LAN (DreamPi's choice, read from the "ms-dns" line
@@ -35,10 +31,8 @@ set -u
 [ -f /etc/dcusb0.conf ] && . /etc/dcusb0.conf
 VPN_IF=${VPN_IF:-tun0}
 VPN_MAP=${VPN_MAP:-yes}
-VPN_ROUTE=${VPN_ROUTE:-all}
 LAN_ALIAS=${LAN_ALIAS:-auto}
-VPN_PROBE=${VPN_PROBE:-1.1.1.1}         # "all" is used only if this answers a ping through the VPN
-RT_TABLE=217
+RT_TABLE=217                            # used by older versions (VPN_ROUTE): removed at start
 RT_PRIO=1000
 IF=dcusb0
 LEASES=/run/dcusb0.leases
@@ -84,27 +78,6 @@ route_off() {
     ip route flush table $RT_TABLE 2>/dev/null
 }
 
-route_on() {    # $1 = the Dreamcast's address; returns 1 if nothing is routed through the VPN
-    route_off
-    case "$VPN_ROUTE" in
-    none) return 0 ;;
-    all)
-        if ! ping -c 2 -W 2 -I "$VPN_IF" "$VPN_PROBE" >/dev/null 2>&1; then
-            log "VPN_ROUTE=all: $VPN_PROBE does not answer through $VPN_IF (the VPN server may not forward to the Internet): only VPN addresses go through it; trying again every minute"
-            return 1
-        fi
-        ip route replace default dev "$VPN_IF" table $RT_TABLE || return 1
-        ip rule add from "$1" lookup $RT_TABLE priority $RT_PRIO || return 1
-        log "all Internet traffic from the Dreamcast now goes through $VPN_IF" ;;
-    *)
-        ip route replace default dev "$VPN_IF" table $RT_TABLE || return 1
-        for n in $VPN_ROUTE; do ip rule add from "$1" to "$n" lookup $RT_TABLE priority $RT_PRIO; done
-        log "traffic from the Dreamcast to $VPN_ROUTE goes through $VPN_IF" ;;
-    esac
-    # replies come in on tun0 from addresses the main table reaches through the LAN
-    sysctl -qw "net.ipv4.conf.$VPN_IF.rp_filter=2" 2>/dev/null
-    return 0
-}
 
 ALIAS_MINE=/run/dcusb0-vpn.alias       # the alias address we added (not DreamPi)
 
@@ -169,10 +142,10 @@ dc_addr() {     # the Dreamcast on dcusb0: newest DHCP lease, else a neighbour (
     echo "$ip"
 }
 
-state=""; rt_failed=0; loops=0
+state=""
+route_off
 chains
 while :; do
-    loops=$((loops + 1))
     t=$(addr_of "$VPN_IF"); dc=$(dc_addr); want=""
     if [ -n "$t" ] && [ -n "$dc" ]; then
         if ip link show ppp0 >/dev/null 2>&1; then want="ppp0"; else want="$(plus1 "$t") $dc"; fi
@@ -202,8 +175,7 @@ while :; do
                 log "could not add LAN address $la on ${li:-?}: Internet traffic uses the Pi's address"
             fi
             iptables -t mangle -A DCUSB0_MSS -s "$d" -j TTL --ttl-set 64 2>/dev/null
-            route_on "$d" && rt_failed=0 || rt_failed=1
-            # flows started before the mapping/route keep their old path and NAT until they time out
+            # flows started before the mapping keep their old path and NAT until they time out
             if command -v conntrack >/dev/null 2>&1; then
                 conntrack -D -s "$d" >/dev/null 2>&1
                 [ -n "$la" ] && conntrack -D -d "$la" >/dev/null 2>&1
@@ -212,10 +184,8 @@ while :; do
                 log "conntrack is not installed: connections made before this change keep their old path until they time out (sudo apt-get install conntrack)"
             fi ;;
         esac
-        if [ -z "$want" ] || [ "$want" = ppp0 ]; then route_off; alias_off; rt_failed=0; fi
+        if [ -z "$want" ] || [ "$want" = ppp0 ]; then alias_off; fi
         state=$want
-    elif [ "$rt_failed" = 1 ] && [ $((loops % 12)) = 0 ]; then
-        set -- $want; route_on "$2" && rt_failed=0 || rt_failed=1
     fi
     sleep 5
 done

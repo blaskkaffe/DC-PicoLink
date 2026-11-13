@@ -49,10 +49,10 @@ install -m 755 dcusb0-dcnow /usr/local/sbin/dcusb0-dcnow
 install -m 644 dcusb0-dcnow.service /etc/systemd/system/dcusb0-dcnow.service
 install -m 644 dcusb0-masterfix.service /etc/systemd/system/dcusb0-masterfix.service
 # options added later: append them to an existing /etc/dcusb0.conf
-grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,$p' dcusb0.conf >> /etc/dcusb0.conf
-grep -q '^VPN_ROUTE=' /etc/dcusb0.conf || sed -n '/^# Which of the Dreamcast.s traffic/,$p' dcusb0.conf >> /etc/dcusb0.conf
+grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,/^VPN_IF=/p' dcusb0.conf >> /etc/dcusb0.conf
+sed -i '/^# Which of the Dreamcast.s traffic goes through the VPN/,/^VPN_ROUTE=/d' /etc/dcusb0.conf   # removed option
 grep -q '^LAN_ALIAS=' /etc/dcusb0.conf || sed -n '/^# The W5500 Dreamcast.s own LAN address/,/^LAN_ALIAS=/p' dcusb0.conf >> /etc/dcusb0.conf
-grep -q '^MASTER_FIX=' /etc/dcusb0.conf || sed -n '/^# Quake 3 Arena: its master/,$p' dcusb0.conf >> /etc/dcusb0.conf
+grep -q '^MASTER_FIX=' /etc/dcusb0.conf || sed -n '/^# Quake 3 Arena: its master/,/^MASTER_IFACES=/p' dcusb0.conf >> /etc/dcusb0.conf
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/90-dcusb0.conf
 # emulated SD card
 [ -f /etc/dcsd.conf ] || install -m 644 dcsd.conf /etc/dcsd.conf

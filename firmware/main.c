@@ -172,28 +172,6 @@ static void set_rts(bool assert) {
     gpio_put(PIN_RTS, assert ? 0 : 1);   /* active low */
 }
 
-/* The TX program's second instruction is "wait 0 pin 0" (CTS = the DC's RTS). It is swapped
-   for a nop (same 1 clock, so the stop bit timing is unchanged) while the cable ignores RTS.
-   One instruction-memory word write: safe while the state machine runs. */
-#define UART_TX_WAIT_IDX 1
-#define DC_STR2(x) #x
-#define DC_STR(x) DC_STR2(x)
-#ifndef DC_TX_PACE_BITS
-#define DC_TX_PACE_BITS 0               /* test builds: idle bit times after each byte to the DC */
-#endif
-#if DC_TX_PACE_BITS > 0
-#define UART_TX_PROG uart_tx_paced_program
-#define UART_TX_CFG  uart_tx_paced_program_get_default_config
-#else
-#define UART_TX_PROG uart_tx_program
-#define UART_TX_CFG  uart_tx_program_get_default_config
-#endif
-static void uart_tx_obey_rts(bool obey) {
-    uint16_t w = UART_TX_PROG.instructions[UART_TX_WAIT_IDX];
-    hard_assert((w & 0xE000u) == 0x2000u);   /* a WAIT: uart.pio changed? */
-    uart_pio->instr_mem[uart_off_tx + UART_TX_WAIT_IDX] = obey ? w : pio_encode_nop();
-}
-
 /* ---- setup ------------------------------------------------------------ */
 static void serial_init(void) {
     /* RTS out (through 1k into DC CTS); GPIO2 stays a plain input */
@@ -205,31 +183,23 @@ static void serial_init(void) {
     gpio_put(PIN_RTS, 0);
     rts_asserted = true;
 
-    /* CTS in (DC RTS): pull-down so an undriven line means "clear to send" */
+    /* DC RTS (SD CS pad): read only (status lines, SPI CS); never waited for */
     gpio_init(PIN_CTS);
     gpio_set_dir(PIN_CTS, GPIO_IN);
     gpio_pull_down(PIN_CTS);
 
     /* TX state machine */
     uart_sm_tx = pio_claim_unused_sm(uart_pio, true);
-    uart_off_tx = pio_add_program(uart_pio, &UART_TX_PROG);
-    uart_tx_obey_rts(false);            /* ignore the DC's RTS until it is seen driven (rts_model.h) */
+    uart_off_tx = pio_add_program(uart_pio, &uart_tx_program);
     pio_sm_set_pins_with_mask(uart_pio, uart_sm_tx, 1u << PIN_TX, 1u << PIN_TX);
     pio_sm_set_pindirs_with_mask(uart_pio, uart_sm_tx, 1u << PIN_TX, 1u << PIN_TX);
     pio_gpio_init(uart_pio, PIN_TX);
-    pio_sm_config c = UART_TX_CFG(uart_off_tx);
+    pio_sm_config c = uart_tx_program_get_default_config(uart_off_tx);
     sm_config_set_out_shift(&c, true, false, 32);
     sm_config_set_out_pins(&c, PIN_TX, 1);
     sm_config_set_sideset_pins(&c, PIN_TX);
-    sm_config_set_in_pins(&c, PIN_CTS);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     pio_sm_init(uart_pio, uart_sm_tx, uart_off_tx, &c);
-#if DC_TX_PACE_BITS > 0
-    _Static_assert(DC_TX_PACE_BITS <= 64, "pace in bit times");
-    pio_sm_put(uart_pio, uart_sm_tx, DC_TX_PACE_BITS - 1);   /* ISR = y reload for the pause */
-    pio_sm_exec(uart_pio, uart_sm_tx, pio_encode_pull(false, true));
-    pio_sm_exec(uart_pio, uart_sm_tx, pio_encode_mov(pio_isr, pio_osr));
-#endif
 
     /* RX state machine. Pull-DOWN: never put voltage on a DC pin ourselves, and
        lets core1 see whether the DC is driving its TXD (idle high) */
@@ -782,12 +752,6 @@ static void hello_task(void) {
         /* the first line a new reader gets: only to that reader */
         status_to(new_usb, new_link,
                   "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s"
-#if DC_SERIAL_PLAIN
-                  "; TEST BUILD: plain serial (host rate, RTS ignored)"
-#endif
-#if DC_TX_PACE_BITS > 0
-                  "; TEST BUILD: bytes to the DC paced (+" DC_STR(DC_TX_PACE_BITS) " bit times each)"
-#endif
                   ,
                   names[dc_mode], w5.common[W5C_VERSIONR],
                   DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
@@ -875,15 +839,6 @@ static void spi_report(void) {
 }
 
 /* ---- follow the Dreamcast's real TX rate (auto-baud) --------------------- */
-/* DC_SERIAL_PLAIN=1 (test build): serial like a plain FTDI coder's cable: the wire runs at the
-   host's rate (no following the DC), and the DC's RTS is never obeyed (3-wire cable). */
-#ifndef DC_SERIAL_PLAIN
-#define DC_SERIAL_PLAIN 0
-#endif
-#if DC_SERIAL_PLAIN
-#undef DC_AUTOBAUD
-#define DC_AUTOBAUD 0
-#endif
 #ifndef DC_AUTOBAUD
 #define DC_AUTOBAUD 1
 #endif
@@ -944,25 +899,6 @@ static void pins_offline_task(void) {
     if (sig == last_sig && now - last_rep < 10000000u) return;
     last_sig = sig; last_rep = now;
     if (sd_link_up) status("pads with the DC off or not started: %s", pins_text());
-}
-
-/* Obey the DC's RTS only while it is seen toggling (dcload); see rts_model.h. */
-#include "rts_model.h"
-static void rts_watch_task(void) {
-    static rts_state_t rs;
-    if (seen_mode != MODE_SERIAL) {
-        if (rs.obey) uart_tx_obey_rts(false);
-        rts_reset(&rs);
-        return;
-    }
-#if DC_SERIAL_PLAIN
-    return;
-#endif
-    if (!rts_step(&rs, time_us_32(), gpio_get(PIN_CTS))) return;
-    uart_tx_obey_rts(rs.obey);
-    if (sd_link_up)
-        status(rs.obey ? "serial: the DC drives its RTS line: flow control on"
-                       : "serial: the DC's RTS line is still: flow control off");
 }
 
 static void autobaud_task(void) {
@@ -1249,7 +1185,6 @@ int main(void) {
         capture_task();
         sd_task();
         autobaud_task();
-        rts_watch_task();
         pins_offline_task();
         power_sense_task();
         sense_report_task();

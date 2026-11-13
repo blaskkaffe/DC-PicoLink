@@ -21,9 +21,9 @@ Working on hardware with DreamPi (Raspberry Pi, Linux):
 
 * Serial: dc-tool-ser / dcload-serial 1.0.6 uploads clean at 115200 and 1.5 Mbaud
   (1.6 Mbaud is above what the Dreamcast's SCIF can do), the KOS console, Netlink serial
-  PPP. Exact Dreamcast baud rates and auto-baud. The Dreamcast's RTS is obeyed only while a
-  program drives it (dcload, Quake 3); games and current KallistiOS leave it floating, and
-  waiting for it blocked the cable (DEVLOG, Nov 2026).
+  PPP. Exact Dreamcast baud rates and auto-baud. No flow control from the Dreamcast, as
+  DreamPi 2.1 (games and current KallistiOS leave its RTS floating, and waiting for it
+  blocked the cable: DEVLOG, Nov 2026).
 * W5500: KOS networking, DreamKarts and RuneScape online, JaderFox tester, ping, Quake 3
   server list and play (with `dcusb0-masterfix`).
 * Being tested: AFO over serial (drops while fetching game info), Quake 3 map images over

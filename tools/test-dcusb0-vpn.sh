@@ -4,9 +4,8 @@
 #   dc  = the Dreamcast, 192.168.99.9 (DHCP lease faked in /run/dcusb0.leases)
 #   net = the Internet behind the LAN, vpn = the VPN server; both own 20.102.63.253 and answer
 #         UDP 27950 with their own name, so the reply shows which way the query went.
-# Checks: VPN_ROUTE=none -> LAN; a list -> only those addresses through tun0 (source 10.200.2.213);
-# all -> everything through tun0 (ping stubbed); all with a VPN that does not forward -> LAN;
-# stop -> everything removed again.
+# Checks: Internet traffic goes over the LAN (as DreamPi 2.1; rules left by the removed VPN_ROUTE
+# option are cleaned up); LAN_ALIAS (address, SNAT, inbound DNAT, TTL); stop -> everything removed.
 set -u
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 2; }
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -80,7 +79,7 @@ printf '#!/bin/sh\nexit 1\n' > "$W/bin/ping_fail"; chmod +x "$W/bin/ping_fail"  
 run() {         # $1 = VPN_ROUTE, $2 = bin dir with the stub ping; starts the script, waits for the mapping
     [ -n "${VPN_PID:-}" ] && { kill "$VPN_PID" 2>/dev/null; wait "$VPN_PID" 2>/dev/null; $P env PATH="$W/bin:$PATH" bash "$SCRIPT" stop; }
     mkdir -p "$W/b$3"; cp "$W/bin/$2" "$W/b$3/ping"
-    $P env PATH="$W/b$3:$PATH" VPN_ROUTE="$1" LAN_ALIAS="${LA:-none}" bash "$SCRIPT" > "$W/log$3" 2>&1 &
+    $P env PATH="$W/b$3:$PATH" LAN_ALIAS="${LA:-none}" bash "$SCRIPT" > "$W/log$3" 2>&1 &
     VPN_PID=$!
     sleep 3
 }
@@ -93,14 +92,9 @@ expect() {      # $1 = what, $2 = expected answer (prefix); "VPN" accepts the so
     esac
 }
 
-run none ping 1;  expect "VPN_ROUTE=none: master reached over the LAN" "LAN"
-run "20.102.63.253" ping 2
-expect "VPN_ROUTE=list: master through tun0" "VPN"
-$P ip rule | grep -q "to 20.102.63.253" && ok "rule is only for the listed address" || bad "no rule for the listed address"
-run all ping 3;   expect "VPN_ROUTE=all, VPN forwards: through tun0" "VPN"
-run all ping_fail 4; expect "VPN_ROUTE=all, VPN does not forward: back on the LAN" "LAN"
-grep -q "does not answer through tun0" "$W/log4" && ok "the log says why" || bad "no explanation in the log"
-$P ip rule | grep -q "lookup 217" && bad "rule left although the VPN does not forward" || ok "no rule left"
+$P ip rule add from 192.168.99.9 lookup 217 priority 1000      # left by an older version
+run none ping 1;  expect "Internet traffic over the LAN" "LAN"
+$P ip rule | grep -q "lookup 217" && bad "old VPN_ROUTE rule left" || ok "old VPN_ROUTE rule removed"
 # LAN_ALIAS: the Dreamcast gets DreamPi's LAN address (192.168.1.98): Internet traffic leaves with it,
 # and the LAN can reach the Dreamcast at it (UPnP forwards from the router)
 ip netns exec dc python3 -I -c "
@@ -128,7 +122,7 @@ DC*) ok "LAN_ALIAS: the LAN reaches the Dreamcast at 192.168.1.98 ($got)" ;;
 *) $P iptables -t nat -S DCUSB0_PRE | grep -q "192.168.1.98" && ok "LAN_ALIAS: DNAT rule present (this kernel does not apply NAT: $got)" || bad "LAN_ALIAS: no way in ($got)" ;;
 esac
 $P iptables -t mangle -S DCUSB0_MSS | grep -q "TTL" && ok "TTL 64 rule present" || ok "TTL target not in this kernel (skipped)"
-LA= run all ping 5
+LA= run none ping 5
 $P ip -4 -o addr show dev eth0 | grep -q " 192.168.1.98/" && bad "LAN address left after LAN_ALIAS=none" || ok "LAN address removed again"
 kill "$VPN_PID"; wait "$VPN_PID" 2>/dev/null; VPN_PID=
 $P env PATH="$W/b5:$PATH" bash "$SCRIPT" stop
