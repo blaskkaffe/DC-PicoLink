@@ -44,6 +44,7 @@ install -m 644 dcusb0.service /etc/systemd/system/dcusb0.service
 install -m 755 dcusb0-vpn /usr/local/sbin/dcusb0-vpn
 install -m 644 dcusb0-vpn.service /etc/systemd/system/dcusb0-vpn.service
 install -m 755 dcusb0-masterfix /usr/local/sbin/dcusb0-masterfix
+install -m 755 dreampi-snapshot /usr/local/bin/dreampi-snapshot
 install -m 644 dcusb0-masterfix.service /etc/systemd/system/dcusb0-masterfix.service
 # options added later: append them to an existing /etc/dcusb0.conf
 grep -q '^VPN_MAP=' /etc/dcusb0.conf || sed -n '/^# Dreamcast Live VPN/,$p' dcusb0.conf >> /etc/dcusb0.conf

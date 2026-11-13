@@ -1,0 +1,36 @@
+#!/bin/bash
+# dreampi-snapshot - what this DreamPi is doing right now, for comparing with the DreamPi spec
+# (project doc 12-dreampi-spec.md) and with the ESP32. Read-only: changes nothing.
+#   sudo dreampi-snapshot > dreampi-snapshot.txt
+D=${DREAMPI_DIR:-/home/pi/dreampi}
+sec() { printf '\n== %s\n' "$*"; }
+sec "versions"
+date -u; uname -r
+for f in "$D"/dreampi.py "$D"/netlink.py "$D"/dcnow.py "$D"/port_forwarding.py "$D"/bba_bin.py "$D"/config_server.py; do
+    [ -f "$f" ] || continue
+    v=$(grep -oE '\bv?20[0-9]{10}\b' "$f" | head -1)
+    printf '%-22s %s %s\n' "$(basename "$f")" "${v:--}" "$(sha256sum "$f" | cut -c1-16)"
+done
+ls -l /lib/modules/$(uname -r)/kernel/drivers/net/ppp/ppp_async.ko 2>/dev/null | awk '{print "ppp_async.ko", $5, "bytes"}'
+for f in /boot/netlink_config.ini "$D"/netlink_config.ini; do [ -f "$f" ] && { echo "$f:"; grep -m1 -i version "$f"; }; done
+sec "DreamPi service command line"
+systemctl cat dreampi 2>/dev/null | grep -E '^ExecStart'; cat /etc/init.d/dreampi 2>/dev/null | grep -E 'DAEMON_ARGS|enable-port|dreampi.py' | head -5
+pgrep -af 'dreampi|netlink' | head -5
+sec "PPP files"
+for f in /etc/ppp/options /etc/ppp/peers/dreamcast /etc/ppp/pap-secrets; do echo "-- $f"; sed 's/^\(.*secret.*\)$/[secret line hidden]/' "$f" 2>/dev/null; done
+sec "pppd command lines in the scripts"
+grep -nE '"(local|auth|noauth|novj|ktune|noccp|proxyarp|crtscts|lcp-[a-z-]+|plugin|debug|asyncmap|mtu|mru)"' "$D"/netlink.py "$D"/dreampi.py 2>/dev/null | head -60
+grep -nE 'rtscts|baudrate=' "$D"/netlink.py 2>/dev/null | head -10
+sec "DNS (dnsmasq)"
+grep -vhE '^\s*(#|$)' /etc/dnsmasq.conf /etc/dnsmasq.d/*.conf 2>/dev/null | sort | uniq -c | sort -rn | head -60
+sec "helper services"
+for s in dreampi openvpn-client dcvoip dcgamespy dc2k2 dcdaytona dcnatrules dnsmasq; do printf '%-16s %s\n' "$s" "$(systemctl is-active $s 2>/dev/null)"; done
+for s in dcvoip dcgamespy dc2k2 dcdaytona; do systemctl cat "$s" 2>/dev/null | grep -E '^ExecStart' | sed "s/^/$s: /"; done
+sec "iptables nat"
+iptables -t nat -S 2>/dev/null
+sec "iptables filter + mangle (DreamPi's)"
+iptables -S 2>/dev/null | grep -vE '^-P|DCUSB0'; iptables -t mangle -S 2>/dev/null | grep -vE '^-P|DCUSB0'
+sec "addresses and routes"
+ip -4 -o addr show | awk '{print $2, $4}'; ip route; ip rule
+sec "UPnP forwards on the router (if upnpc is installed)"
+command -v upnpc >/dev/null && upnpc -l 2>/dev/null | grep -E '^ *[0-9]+ (TCP|UDP)' | head -40 || echo "upnpc not installed"
