@@ -65,6 +65,11 @@ chains() {      # create our chains and hook them in once
     iptables -t mangle -A DCUSB0_HELP -i "$IF" -p tcp --dport 5011 -j ACCEPT
     iptables -t mangle -A DCUSB0_HELP -i "$IF" -p udp --sport 1285 --dport 1285 -j ACCEPT
     iptables -t mangle -C PREROUTING -j DCUSB0_HELP 2>/dev/null || iptables -t mangle -I PREROUTING 1 -j DCUSB0_HELP
+    # dcdaytona (UDP 12079 <-> 12079, mangle FORWARD): the same direction test, so skip it too
+    iptables -t mangle -N DCUSB0_HELPF 2>/dev/null
+    iptables -t mangle -F DCUSB0_HELPF
+    iptables -t mangle -A DCUSB0_HELPF -i "$IF" -p udp --sport 12079 --dport 12079 -j ACCEPT
+    iptables -t mangle -C FORWARD -j DCUSB0_HELPF 2>/dev/null || iptables -t mangle -I FORWARD 1 -j DCUSB0_HELPF
 }
 
 flush() {
@@ -140,6 +145,9 @@ remove() {
     iptables -t mangle -D PREROUTING -j DCUSB0_HELP 2>/dev/null
     iptables -t mangle -F DCUSB0_HELP 2>/dev/null
     iptables -t mangle -X DCUSB0_HELP 2>/dev/null
+    iptables -t mangle -D FORWARD -j DCUSB0_HELPF 2>/dev/null
+    iptables -t mangle -F DCUSB0_HELPF 2>/dev/null
+    iptables -t mangle -X DCUSB0_HELPF 2>/dev/null
 }
 
 if [ "${1:-run}" = stop ]; then remove; exit 0; fi
