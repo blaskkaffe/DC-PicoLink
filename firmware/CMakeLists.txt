@@ -37,6 +37,9 @@ endif()
 if(DEFINED DC_POWER_PIN)   # sense wire GPIO (default 7, found by itself); -1 = off
     target_compile_definitions(dc_usb_serial PRIVATE DC_POWER_PIN=${DC_POWER_PIN})
 endif()
+if(DC_USB_BRIDGE)   # test build: computer's USB network <-> ESP32 link (no W5500 emulation)
+    target_compile_definitions(dc_usb_serial PRIVATE DC_USB_BRIDGE=1)
+endif()
 pico_set_binary_type(dc_usb_serial copy_to_ram)   # no flash-cache stalls on core1
 pico_enable_stdio_uart(dc_usb_serial 0)   # UART0 is the ESP32 link (GPIO12-15)
 pico_enable_stdio_usb(dc_usb_serial 0)

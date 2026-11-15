@@ -117,6 +117,13 @@ static bool link_send(uint8_t ch, const void *p, size_t n);
 static void request_baud(uint32_t b, uint32_t queued_bytes);
 static inline bool ser_to_link(void) { return link_up && !tud_cdc_connected(); }
 static inline bool eth_to_link(void) { return link_up && !tud_mounted(); }
+/* Test build (cmake -DDC_USB_BRIDGE=1): the computer's USB network interface is wired straight
+   to the ESP32 (channel ETH, both ways) instead of to the W5500 emulation, so the link and the
+   ESP32's Dreamcast network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi) can be tested with
+   a computer and no Dreamcast. The W5500 emulation's own frames are dropped in this build. */
+#ifndef DC_USB_BRIDGE
+#define DC_USB_BRIDGE 0
+#endif
 /* someone reads the status lines: dcsd on the Pi, or the ESP32 */
 static inline bool log_up(void) { return sd_link_up || link_up; }
 
@@ -536,6 +543,14 @@ static bool net_rx_retry;
 static uint32_t net_in, net_in_drop, net_out, net_in_full;
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
+#if DC_USB_BRIDGE
+    net_rx_retry = true;
+    if (!link_up || size > 1514) { net_in_drop++; return true; }
+    if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) { net_in_full++; return false; }
+    link_send(LINK_CH_ETH, src, size);
+    net_in++;
+    return true;
+#endif
     if (dc_mode != MODE_W5500 || !w5.sock_open) {
         net_in_drop++;
         net_rx_retry = true;
@@ -552,6 +567,11 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
 }
 
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
+#if DC_USB_BRIDGE
+    memcpy(dst, ref, arg);          /* ref = frame from the ESP32, arg = its length */
+    net_out++;
+    return arg;
+#endif
     (void)arg;
     w5_txd_t *d = (w5_txd_t *)ref;
     uint16_t n = d->len;
@@ -566,6 +586,10 @@ void tud_network_init_cb(void) { }
 static void net_task(void) {
     w5.link_up = tud_mounted() || link_up;
     w5_txd_t *d = w5_net_tx_peek();
+#if DC_USB_BRIDGE
+    if (d) w5_net_tx_pop();                           /* the W5500 emulation isn't wired to anything */
+    d = NULL;
+#endif
     if (d) {
         if (eth_to_link()) {                          /* to the ESP32 */
             static uint8_t f[1514];
@@ -751,8 +775,9 @@ static void hello_task(void) {
 #endif
         /* the first line a new reader gets: only to that reader */
         status_to(new_usb, new_link,
-                  "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s"
+                  "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ")%s ready; mode %s; VERSIONR on the wire %02x; power sense %s"
                   ,
+                  DC_USB_BRIDGE ? " [TEST BUILD: USB network bridged to the ESP32]" : "",
                   names[dc_mode], w5.common[W5C_VERSIONR],
                   DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
         return;
@@ -1080,7 +1105,7 @@ static bool link_deliver(void) {
         if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) return false;
         cable_api_t s = { .version = DC_VERSION, .mode = dc_mode, .baud = cur_baud, .wire = (uint32_t)(wire_baud + 0.5f),
                           .force = dc_force, .route_ser = ser_to_link() ? "esp32" : "usb",
-                          .route_eth = eth_to_link() ? "esp32" : "usb" };
+                          .route_eth = DC_USB_BRIDGE ? "usb<->esp32 bridge (test build)" : eth_to_link() ? "esp32" : "usb" };
         size_t k = cable_api_handle(&s, (const char *)p, n, out, sizeof out);
         if (s.set_baud) request_baud(s.set_baud, ser_in_wr - ser_in_rd);
         if (s.set_force != 0xFF) force_req = s.set_force;
@@ -1093,6 +1118,12 @@ static bool link_deliver(void) {
         for (size_t i = 0; i < n; i++) ser_in[ser_in_wr++ % SER_IN_SIZE] = p[i];
         return true;
     case LINK_CH_ETH:
+#if DC_USB_BRIDGE
+        if (!tud_mounted() || n > 1514) { link_eth_drop++; return true; }
+        if (!tud_network_can_xmit((uint16_t)n)) return false;
+        tud_network_xmit((void *)p, (uint16_t)n);
+        return true;
+#endif
         if (!eth_to_link() || dc_mode != MODE_W5500 || !w5.sock_open || n > 1514) { link_eth_drop++; return true; }
         if (!w5_net_rx(p, (uint16_t)n)) { net_in_full++; return false; }
         net_in++;
@@ -1138,7 +1169,7 @@ done:
     if (link_up && !said_up) {
         status("esp32 link: up at %lu baud; serial goes to %s, network to %s",
                (unsigned long)LINK_BAUD, ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
-               eth_to_link() ? "the ESP32" : "USB (mounted)");
+               DC_USB_BRIDGE ? "nowhere (test build: USB network <-> ESP32)" : eth_to_link() ? "the ESP32" : "USB (mounted)");
     }
     said_up = link_up;
     static uint32_t rep_t, rep_sig;
