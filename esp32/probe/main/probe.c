@@ -167,7 +167,7 @@ static void run(int frames, result_t *r)
 
 static void sweep(const char *title)
 {
-    static const int hz[] = { 1000000, 4000000, 8000000, 10000000, 13333333, 16000000, 20000000 };
+    static const int hz[] = { 1000000, 4000000, 8000000, 10000000, 11428571, 13333333, 16000000, 20000000 };
     printf("\nprobe: %s\n", title);
     printf("probe:   clock   frames  bad writes  reads ok  reads ok, 1 bit early  first bit late  bad reads  lost frames\n");
     for (unsigned i = 0; i < sizeof hz / sizeof hz[0]; i++) {
@@ -199,6 +199,16 @@ void app_main(void)
     wifi_init_config_t wc = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&wc);
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    wifi_config_t ap = { .ap = { .ssid = "dc-picolink-probe", .ssid_len = 17, .channel = 6,
+                                 .max_connection = 2, .authmode = WIFI_AUTH_OPEN } };
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
+    esp_wifi_set_config(WIFI_IF_AP, &ap);
+    // First start: the radio calibrates and saves the result to flash. That write would hang
+    // later (seen on the first board: "saving new calibration data", then the watchdog).
+    esp_wifi_start();
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     spi_bus_config_t bc = {
         .mosi_io_num = P_MOSI, .miso_io_num = P_MISO, .sclk_io_num = P_CLK,
@@ -219,10 +229,6 @@ void app_main(void)
 
     sweep("Wi-Fi off");
 
-    wifi_config_t ap = { .ap = { .ssid = "dc-picolink-probe", .ssid_len = 17, .channel = 6,
-                                 .max_connection = 2, .authmode = WIFI_AUTH_OPEN } };
-    esp_wifi_set_mode(WIFI_MODE_APSTA);
-    esp_wifi_set_config(WIFI_IF_AP, &ap);
     esp_wifi_start();
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_wifi_scan_start(NULL, false);
