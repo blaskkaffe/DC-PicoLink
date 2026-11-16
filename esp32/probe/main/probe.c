@@ -254,10 +254,12 @@ static void wifi_load(void *arg)
     int tick = 0;
     for (;;) {
         int l = g_load;
-        if (l & 1) { if (esp_wifi_80211_tx(WIFI_IF_AP, frame, 43, false) == ESP_OK) g_tx_ok++; }
-        if ((l & 2) && tick % 2000 == 0) esp_wifi_scan_start(NULL, false);
+        if (l & 1)
+            for (int k = 0; k < 5; k++)
+                if (esp_wifi_80211_tx(WIFI_IF_AP, frame, 43, false) == ESP_OK) g_tx_ok++;
+        if ((l & 2) && tick % 400 == 0) esp_wifi_scan_start(NULL, false);
         tick++;
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(1);                       // one tick is 10 ms: 5 frames a tick = 500 a second
     }
 }
 
@@ -276,7 +278,7 @@ static void pauses(int step, int load, const char *what)
 void app_main(void)
 {
     vTaskDelay(pdMS_TO_TICKS(3000));       // time to open the serial port
-    printf("\nprobe: DC-PicoLink ESP32-only probe 6 (" __DATE__ " " __TIME__ ")\n");
+    printf("\nprobe: DC-PicoLink ESP32-only probe 6b (" __DATE__ " " __TIME__ ")\n");
 
     // Wi-Fi is prepared first: its start-up writes to flash, and a flash write waits for
     // the other core, which will never answer once the slave runs.
