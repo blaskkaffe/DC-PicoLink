@@ -296,3 +296,17 @@ like "ready" while the ESP32 boots. GP0/1 ↔ 43/44 stay soldered as corner pins
 Open on hardware: the ESP32-S3's slave output through the GPIO matrix at 15.6 MHz (half a clock
 is 32 ns for MISO). Bit errors would show as bad checksums in the cable's link report; the
 fallback is `-DLINK_SPI_HZ=10000000`.
+
+## ESP32 only? A probe instead of a guess (16 Nov 2026, not on hardware yet)
+
+Question: can an ESP32-S3 answer the Dreamcast's W5500 SPI itself, so the RP2040 can go?
+The SPI slave peripheral can't (reply data must be loaded before the transfer). A bit-banged
+slave on one core with the dedicated-GPIO instructions can on paper: 4 cycles per poll,
+8 per bit, 8 for the answer lookup, against 40 ns clock phases (~10 cycles).
+`esp32/probe` measures it on a bare board (master peripheral and slave on the same pads);
+`hardware/ESP32-ONLY.md` says how to read the result. Found while writing it:
+* GCC kept all 21 header snapshots in registers and combined them after bit 21 (~30
+  instructions with no look at the clock: a missed edge at speed). Fixed with a barrier per
+  bit; check the disassembly after every change to dcspi_bb.h, like w5_header.
+* The host test caught a slave that polled chip select once more after a frame end and lost
+  the next frame when the gap was short.

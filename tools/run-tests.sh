@@ -33,4 +33,7 @@ if [ -n "${1:-}" ]; then
     if gcc -O1 -Wall -DPICO_NO_HARDWARE=1 -I. -I"$1" tests/test_pio_reloc.c -o "$out/test_pio_reloc" && "$out/test_pio_reloc" > "$out/reloc.log"; then
         echo "PASS test_pio_reloc: $(tail -1 "$out/reloc.log")"; else echo "FAIL test_pio_reloc"; cat "$out/reloc.log"; fail=1; fi
 fi
+# the ESP32-only probe's bit-banged SPI slave (logic only; the probe firmware measures the timing)
+if gcc -O2 -Wall -o "$out/test_dcspi_bb" ../esp32/tests/dcspi_bb/test_dcspi_bb.c && "$out/test_dcspi_bb" > "$out/dcspi_bb.log"; then
+    echo "PASS test_dcspi_bb: $(tail -1 "$out/dcspi_bb.log")"; else echo "FAIL test_dcspi_bb"; tail "$out/dcspi_bb.log"; fail=1; fi
 exit $fail
