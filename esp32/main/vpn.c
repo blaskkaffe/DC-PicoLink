@@ -298,7 +298,7 @@ static void vpn_task(void *arg) {
     (void)arg;
     int fail_round = 0;
     for (;;) {
-        if (!enabled || !nprof || !wifi_sta_up()) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
+        if (!enabled || !nprof || !inet_up()) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
         int start = load_last();
         if (start >= nprof) start = 0;
         for (int k = 0; k < nprof && enabled; k++) {

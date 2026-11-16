@@ -122,3 +122,11 @@ Dreamcast Live's servers or on the ESP32**.
 | `main/main.c` | status-line ring, serial monitor ring, start-up |
 | `../firmware/link_model.h` | framing, shared with the cable (tested in `firmware/tests/test_link.c`) |
 | `../firmware/hayes_model.h`, `hdlc_model.h`, `ipfilter_model.h`, `dns_model.h`, `dcnow_model.h` | the E-3/E-4 rules, host-compilable (tests `test_hayes.c`, `test_hdlc.c`, `test_ipfilter.c`, `test_dns.c`) |
+
+## Wired Ethernet port (wired.c)
+
+A W5500 module on GPIO9-13 (INT 9, CS 10, MOSI 11, SCLK 12, MISO 13) is found at start; without
+one the port stays off. Role by itself when a cable goes in: uplink (a router answers DHCP) or
+the socket for the Dreamcast's broadband adapter (192.168.98.1, DHCP, DNS, NAT). In the BBA role
+any frame from another DHCP server sends the port back to uplink for a minute. Pins and clock:
+`idf.py menuconfig`, DC-PicoLink. Wiring: ../hardware/ESP32.md.

@@ -50,4 +50,35 @@ menu "DC-PicoLink ESP32"
     config DCL_AP_PASSWORD
         string "Password of the setup Wi-Fi (8+ characters, empty = open)"
         default "dreamcast"
+    config DCL_W5500
+        bool "Wired Ethernet port: a W5500 module on the ESP32's own SPI pins"
+        default y
+        help
+            Found by itself at start; without a module the port stays off. With a cable plugged
+            in, the port is the uplink (a router answers DHCP) or the socket for the Dreamcast's
+            broadband adapter (nobody answers).
+    config DCL_W5500_SCLK
+        int "W5500 clock pin"
+        depends on DCL_W5500
+        default 12
+    config DCL_W5500_MOSI
+        int "W5500 MOSI pin"
+        depends on DCL_W5500
+        default 11
+    config DCL_W5500_MISO
+        int "W5500 MISO pin"
+        depends on DCL_W5500
+        default 13
+    config DCL_W5500_CS
+        int "W5500 chip-select pin"
+        depends on DCL_W5500
+        default 10
+    config DCL_W5500_INT
+        int "W5500 interrupt pin (-1: none, poll every 5 ms)"
+        depends on DCL_W5500
+        default 9
+    config DCL_W5500_MHZ
+        int "W5500 SPI clock in MHz"
+        depends on DCL_W5500
+        default 20
 endmenu

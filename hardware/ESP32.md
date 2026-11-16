@@ -67,9 +67,27 @@ there, moved to GPIO9-14):
 | GP13 | ---[1k]--- GP9 (the cable's RTS out) |
 | GP14 | optional: 10k to the Dreamcast's 3.3 V (sense wire) |
 
+**Wired Ethernet (optional, in the firmware, not yet tried on hardware):** a W5500 module on
+the ESP32's own pins, all on the row next to 3V3 and GND:
+
+| ESP32-S3 | W5500 module |
+|---|---|
+| 3V3, GND | 3.3V, GND |
+| GPIO12 | SCLK |
+| GPIO11 | MOSI |
+| GPIO13 | MISO |
+| GPIO10 | CS (SCS) |
+| GPIO9 | INT |
+
+The firmware finds the module by itself ("wired port: W5500 module found", or "no W5500 module
+found ... off"). With a cable plugged in, the port is the **uplink** when a router answers DHCP
+(the wired network then is the way out, ahead of Wi-Fi), or the socket for the **Dreamcast's
+broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.98.x, DNS and
+NAT like on the cable's own network). In the stack GPIO9-13 sit over the Zero's GP15 and
+GP26-29: GP15 is an unused input, GP26-29 are not joined.
+
 Planned, not in the firmware yet: an SD slot on the Zero's SPI1 (SCK GP26, MOSI GP27,
-MISO GP28, CS GP29; on this layout GP9 belongs to the Dreamcast) and a W5500 on the ESP32's
-fast SPI pins (CS 10, MOSI 11, SCK 12, MISO 13, INT 7).
+MISO GP28, CS GP29; on this layout GP9 belongs to the Dreamcast).
 
 **The link:** the cable is the SPI master (SPI0, ~15.6 MHz at 250 MHz, mode 1), the ESP32 the
 slave (SPI3). Every transaction is 1024 bytes both ways; the packets inside are the same as on
@@ -84,6 +102,21 @@ to GND; the current budget is not measured yet (see Power below).
 
 **Firmware:** cable `-DDC_BOARD=zero-stack`; ESP32 with `sdkconfig.zero-stack` (link: SPI; pins
 MOSI 6, MISO 3, SCLK 5, CS 4, HS 2, DR 1). Build commands: [../README.md#building](../README.md#building).
+
+### Self-test: the first thing to look at
+
+Every time the link comes up, the cable sends 2000 numbered test packets (8 to 1508 bytes)
+to the ESP32, which sends each one straight back, and the cable checks every byte. It takes
+a second or two and ends in one status line, on the cable's USB serial port and on the
+ESP32's web page:
+
+    esp32 link self-test: PASS, 2000 packets of 8-1508 bytes went there and back, ... KB/s each way
+
+`FAIL` comes with the count of damaged and lost packets. Damaged packets are bit errors on
+the six link wires (try `-DLINK_SPI_HZ=10000000`); nothing coming back at all means a wire is
+missing or the ESP32 has an older firmware. No Dreamcast and no computer network is needed:
+power the stack from either USB port and read the line. Expect roughly 1000 KB/s or more on
+the SPI link (about 300 on the UART link).
 
 ### Testing the stack without a Dreamcast
 

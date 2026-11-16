@@ -423,3 +423,9 @@ All work with or without the sense wire. The first log line after connecting
 shows which build is running and whether the wire is in use.
 There is no 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate and never reboots the board. To
 reflash, hold the BOOTSEL button while plugging in.
+
+## Link self-test
+
+Channel 5 (`LINK_CH_TEST`): the ESP32 sends every packet straight back. The cable runs 2000
+packets at every link-up and reports `esp32 link self-test: PASS ...` or `FAIL ...`
+(firmware/link_test_model.h).

@@ -16,6 +16,7 @@
  *   LINK_CH_SER   coder's-cable bytes, both directions
  *   LINK_CH_ETH   one Ethernet frame (W5500 MACRAW), both directions
  *   LINK_CH_SD    reserved for SD blocks (until the board's own SD slot)
+ *   LINK_CH_TEST  self-test packets: the ESP32 sends each one straight back (link_test_model.h)
  *
  * Neither side needs DMA to be lossless: a receiver that can't take a packet yet
  * stops reading the UART, its RX FIFO fills, RTS drops and the sender's UART waits.
@@ -36,7 +37,7 @@
 #define LINK_MAX_WIRE     (LINK_MAX_PACKET + LINK_MAX_PACKET / 254u + 2u)
 #define LINK_BAUD         3000000u
 
-enum { LINK_CH_API = 0, LINK_CH_STAT = 1, LINK_CH_SER = 2, LINK_CH_ETH = 3, LINK_CH_SD = 4, LINK_CH_COUNT };
+enum { LINK_CH_API = 0, LINK_CH_STAT = 1, LINK_CH_SER = 2, LINK_CH_ETH = 3, LINK_CH_SD = 4, LINK_CH_TEST = 5, LINK_CH_COUNT };
 
 static inline uint32_t link_crc32(uint32_t crc, const uint8_t *p, size_t n) {
     crc = ~crc;

@@ -22,7 +22,8 @@
   over the link; the ESP32's USB presents the cable's serial port, network and status
   interfaces to DreamPi, plus a log port that is there in every mode); the RP2040 falls back
   to its own USB only when the ESP32 is gone.
-* Then: the physical W5500 on the ESP32 (fast SPI pins 10-13) as uplink or BBA port, the SD
+* Done in the firmware, not on hardware yet: the physical W5500 on the ESP32 (pins 9-13) as uplink or
+  BBA port (esp32/main/wired.c), and the link self-test (link_test_model.h). Then: the SD
   slot on the Zero's SPI1 (GP26-29), the USB modem on the Zero's USB-C (RP2040 as USB host)
   with a line-voltage board, per-game connection choice from the game information openMenu
   sends over serial.

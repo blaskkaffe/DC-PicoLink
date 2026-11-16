@@ -97,6 +97,8 @@ static esp_err_t status(httpd_req_t *r) {
     n += net_info_json(o + n, cap - n);
     n += (size_t)snprintf(o + n, cap - n, ",\"eth\":");
     n += eth_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"wired\":");
+    n += wired_info_json(o + n, cap - n);
     n += (size_t)snprintf(o + n, cap - n, ",\"vpn\":");
     n += vpn_info_json(o + n, cap - n);
     uint32_t aseq;

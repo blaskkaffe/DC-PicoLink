@@ -28,7 +28,7 @@ static const char *TAG = "dnsd";
 
 static dns_conf_t conf;
 static SemaphoreHandle_t conf_lk;
-#define LISTEN_N 2                              /* 0: the PPP call, 1: the Ethernet side (E-4) */
+#define LISTEN_N 3                              /* 0: the PPP call, 1: the Ethernet side (E-4), 2: the wired port (BBA) */
 static volatile bool online[LISTEN_N];
 static volatile uint32_t bind_ip[LISTEN_N];
 static struct { uint32_t q, fwd, ovr, nx; } cnt;
@@ -125,7 +125,7 @@ static void on_upstream(const int *ls, int us) {
 
 static void dns_task(void *arg) {
     (void)arg;
-    int ls[LISTEN_N] = { -1, -1 }, us = -1;
+    int ls[LISTEN_N] = { -1, -1, -1 }, us = -1;
     for (;;) {
         bool any = false;
         for (int i = 0; i < LISTEN_N; i++) {

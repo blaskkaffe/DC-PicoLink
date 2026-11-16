@@ -13,6 +13,7 @@ typedef struct {
     uint32_t good, crc_bad, broken, lost;     /* from the cable */
     uint32_t sent, send_full;                 /* to the cable */
     uint32_t ser_in, ser_out, eth_in;         /* bytes / frames */
+    uint32_t test_echo;                       /* self-test packets sent back to the cable */
 } link_stats_t;
 void link_get_stats(link_stats_t *s);
 
@@ -44,12 +45,12 @@ void eth_from_dc(const uint8_t *p, size_t n);          /* one Ethernet frame fro
 size_t eth_info_json(char *out, size_t cap);
 /* dnsd.c: the small DNS server for the Dreamcast */
 void dnsd_start(void);
-void dnsd_set_listen(int which, bool on, uint32_t ip_host_order);   /* 0 = PPP call, 1 = Ethernet side */
+void dnsd_set_listen(int which, bool on, uint32_t ip_host_order);   /* 0 = PPP call, 1 = Ethernet side, 2 = wired port (BBA) */
 void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap);
 /* dcnow.c: DCNow! reports */
 void dcnow_start(void);
 void dcnow_note_domain(const char *domain);
-void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = Ethernet side; reports while any is on */
+void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = Ethernet side, 2 = wired port (BBA); reports while any is on */
 void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
@@ -69,6 +70,13 @@ void pubip_start(void);
 void wifi_start(void);
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);
+
+/* ---- the wired Ethernet port: a real W5500 module on the ESP32's SPI pins (wired.c) ---- */
+void wired_start(void);
+bool wired_uplink_up(void);                             /* a router answered: the wired network is the way out */
+size_t wired_info_json(char *out, size_t cap);
+/* is there a way to the Internet (Wi-Fi joined, or the wired uplink) */
+static inline bool inet_up(void) { return wifi_sta_up() || wired_uplink_up(); }
 
 /* ---- web page (web.c) ---- */
 void web_start(void);

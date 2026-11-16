@@ -193,6 +193,10 @@ static void deliver(void) {
         st.eth_in++;
         eth_from_dc(rx.payload, rx.n);        /* E-4: second network interface */
         break;
+    case LINK_CH_TEST:                        /* the cable's self-test: straight back */
+        for (int i = 0; i < 100 && !link_send(LINK_CH_TEST, rx.payload, rx.n); i++) vTaskDelay(1);
+        st.test_echo++;
+        break;
     default:
         break;
     }

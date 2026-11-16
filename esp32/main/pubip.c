@@ -39,7 +39,7 @@ static uint32_t ask(void) {
 static void task(void *arg) {
     (void)arg;
     for (;;) {
-        while (!wifi_sta_up()) vTaskDelay(pdMS_TO_TICKS(2000));
+        while (!inet_up()) vTaskDelay(pdMS_TO_TICKS(2000));
         uint32_t a = ask();
         if (a && a != pub) {
             char m[64];

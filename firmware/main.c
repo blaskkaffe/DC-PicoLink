@@ -42,6 +42,7 @@
 #include "hardware/uart.h"
 #include "dcmode.h"
 #include "link_model.h"
+#include "link_test_model.h"
 #include "cable_api.h"
 #define W5_PUSH(b) ((void)(b))
 #include "w5500_model.h"
@@ -1164,6 +1165,8 @@ static void request_baud(uint32_t b, uint32_t queued_bytes) {
     pending_baud = b;
 }
 
+static link_test_t link_test;        /* runs by itself whenever the link comes up */
+
 /* Deliver the packet in link_rx. false = not now (no room): keep it, stop reading. */
 static bool link_deliver(void) {
     const uint8_t *p = link_rx.payload;
@@ -1197,6 +1200,9 @@ static bool link_deliver(void) {
         if (!w5_net_rx(p, (uint16_t)n)) { net_in_full++; return false; }
         net_in++;
         return true;
+    case LINK_CH_TEST:
+        link_test_rx(&link_test, p, n, time_us_32());
+        return true;
     default:                         /* STAT, SD (reserved): nothing for the cable */
         return true;
     }
@@ -1208,6 +1214,7 @@ static bool link_on_packet(uint32_t now) {
     if (!link_up) {
         link_up = true;
         link_tx_rd = link_tx_wr;      /* drop anything queued before (nothing should be) */
+        link_test_start(&link_test, now);
     }
     return link_deliver();
 }
@@ -1281,8 +1288,27 @@ static void link_task(void) {
     }
 done:
 #endif
+    /* the self-test: a few packets per pass, never more than its window on their way */
+    if (link_up && link_test.state == LINK_TEST_RUN) {
+        static uint8_t tb[LINK_MAX_PAYLOAD];
+        for (int k = 0; k < 2; k++) {
+            size_t n = link_test_next(&link_test, tb);
+            if (!n || !link_send(LINK_CH_TEST, tb, n)) break;
+            link_test_queued(&link_test);
+        }
+        if (link_test_poll(&link_test, now)) {
+            if (link_test_passed(&link_test))
+                status("esp32 link self-test: PASS, %lu packets of 8-1508 bytes went there and back, %lu KB/s each way",
+                       (unsigned long)link_test.good, (unsigned long)link_test_kb_per_s(&link_test));
+            else
+                status("esp32 link self-test: FAIL, %lu of %lu packets came back right, %lu damaged, %lu lost%s",
+                       (unsigned long)link_test.good, (unsigned long)LINK_TEST_N, (unsigned long)link_test.bad,
+                       (unsigned long)link_test.lost, link_test.good ? "" : " (is the ESP32's firmware as new as the cable's?)");
+        }
+    }
     if (link_up && now - link_last_rx > 3000000u) {
         link_up = false;
+        link_test.state = LINK_TEST_IDLE;
         link_tx_rd = link_tx_wr;
         ser_in_rd = ser_in_wr;                /* serial goes back to USB */
         status("esp32 link: down (nothing heard for 3 s); %lu good packets, %lu bad checksums, %lu lost",

@@ -24,7 +24,7 @@ static const char *TAG = "dcnow";
 static dcnow_t dn;
 static SemaphoreHandle_t lk;
 static volatile bool online, enabled = true;
-static bool src_on[2];
+static bool src_on[3];
 static volatile uint32_t ok_n, fail_n;
 static volatile bool last_failed;
 
@@ -41,11 +41,11 @@ void dcnow_note_domain(const char *d) {
 }
 
 void dcnow_set_online(int source, bool on) {
-    if (source < 0 || source > 1) return;
+    if (source < 0 || source > 2) return;
     xSemaphoreTake(lk, portMAX_DELAY);
-    bool was = src_on[0] || src_on[1];
+    bool was = src_on[0] || src_on[1] || src_on[2];
     src_on[source] = on;
-    bool now = src_on[0] || src_on[1];
+    bool now = src_on[0] || src_on[1] || src_on[2];
     if (now && !was) dcnow_reset(&dn);                       /* a new session */
     xSemaphoreGive(lk);
     online = now;
