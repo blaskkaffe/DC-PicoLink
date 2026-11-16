@@ -1,8 +1,10 @@
 // Bit-banged W5500-style SPI slave for the ESP32-S3 probe (and its host test).
 //
 // The includer provides:
-//   DC_RISE(v)        wait for clock high; v = the pin snapshot that saw it
-//   DC_RISE_CS(v, l)  the same, but goto l when chip select goes high first
+//   DC_RISE_CS(v, l)  wait for clock high (v = the pin snapshot that saw it); goto l when
+//                     chip select goes high first. Every wait checks chip select: frames are
+//                     whole bytes, so a slave that missed one edge and only looked at byte
+//                     boundaries stayed one bit off for ever (seen on hardware at 16 MHz).
 //   DC_FALL()         wait for clock low
 //   DC_OUT(bit31)     put out MISO = bit 31 of the argument
 //   DC_IDLE()         MISO high; DC_WAIT_CS_HIGH(), DC_WAIT_CS_LOW()
@@ -19,7 +21,7 @@
 
 #define DCSPI_CAP 256
 
-#define DCSPI_BIT(b)   do { DC_RISE(v); b = (b << 1) | DC_MOSI(v); DC_KEEP(b); DC_FALL(); } while (0)
+#define DCSPI_BIT(b)   do { DC_RISE_CS(v, end); b = (b << 1) | DC_MOSI(v); DC_KEEP(b); DC_FALL(); } while (0)
 #define DCSPI_BIT1(b)  do { DC_RISE_CS(v, end); b = DC_MOSI(v); DC_FALL(); } while (0)
 #define DCSPI_BYTE(b)  do { DCSPI_BIT1(b); DCSPI_BIT(b); DCSPI_BIT(b); DCSPI_BIT(b); \
                             DCSPI_BIT(b); DCSPI_BIT(b); DCSPI_BIT(b); DCSPI_BIT(b); } while (0)
@@ -41,25 +43,25 @@ static DCSPI_ATTR void dcspi_bb_responder(uint8_t *mem, uint8_t *cap, volatile u
         p = mem + ((b & 3) << 8) + (a & 0xFF);
         w = (uint32_t)*p++ << 24;                        // the answer, ready 3 bits early
         DC_KEEP(w);
-        DC_RISE(v); c = DC_MOSI(v); DC_FALL();           // read/write
-        DC_RISE(v); DC_FALL();                           // mode bits (variable length only)
+        DC_RISE_CS(v, end); c = DC_MOSI(v); DC_FALL();           // read/write
+        DC_RISE_CS(v, end); DC_FALL();                           // mode bits (variable length only)
         if (!c) {
-            DC_RISE(v);                                  // 24th edge
+            DC_RISE_CS(v, end);                                  // 24th edge
             for (;;) {
                 DCSPI_OUT(w);                            // bit 7, taken on the next edge
                 DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);
-                DC_FALL(); DC_RISE(v); DCSPI_OUT(w);     // bit 0
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);
+                DC_FALL(); DC_RISE_CS(v, end); DCSPI_OUT(w);     // bit 0
                 w = (uint32_t)*p++ << 24;
-                DC_FALL(); DC_RISE(v);
+                DC_FALL(); DC_RISE_CS(v, end);
             }
         } else {
             dst = p - 1;
-            DC_RISE(v); DC_FALL();                       // 24th edge
+            DC_RISE_CS(v, end); DC_FALL();                       // 24th edge
             for (;;) {
                 DCSPI_BYTE(b);
                 *q = (uint8_t)b;
