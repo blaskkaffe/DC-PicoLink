@@ -11,10 +11,27 @@
 * Validate the release build (diagnostics off) on hardware: all testing so far used
   diagnostics on.
 
+## 1b. RP2040-Zero + ESP32-S3 SuperMini stack (hardware/ESP32.md)
+
+* Done in firmware, not on hardware yet: `-DDC_BOARD=zero-stack` (Dreamcast on GPIO9-14, the
+  W5500/SD PIO programs loaded moved there), the ESP32 link over SPI (cable master, ESP32
+  slave, HS/DR handshake, ~1.4 MB/s each way in the timing simulation), the USB bridge test
+  build. First hardware test: the bridge build (no Dreamcast needed), watch the link's
+  checksum counters at 15.6 MHz.
+* Next: the ESP32 takes over the computer side when it is present (all Dreamcast traffic
+  over the link; the ESP32's USB presents the cable's serial port, network and status
+  interfaces to DreamPi, plus a log port that is there in every mode); the RP2040 falls back
+  to its own USB only when the ESP32 is gone.
+* Then: the physical W5500 on the ESP32 (fast SPI pins 10-13) as uplink or BBA port, the SD
+  slot on the Zero's SPI1 (GP26-29), the USB modem on the Zero's USB-C (RP2040 as USB host)
+  with a line-voltage board, per-game connection choice from the game information openMenu
+  sends over serial.
+
 ## 2. SD card on a physical slot
 
 * Wire an SD/microSD slot to the RP2040's own SPI (SPI1): GPIO26/27/28 + CS GPIO9,
-  the same pins on Pro Micro RP2040, RP2040-Zero and Pico (hardware/SD-SLOT.md).
+  the same pins on Pro Micro RP2040, RP2040-Zero and Pico (hardware/SD-SLOT.md). On the
+  zero-stack layout GPIO9 is the Dreamcast's: CS on GPIO29 there.
 * Firmware: the SD emulation's block source becomes the card (it already handles a slow
   source); remove the host image link (`dcsd`, USB vendor interface) and move the status
   lines to a small second USB serial port.
@@ -55,7 +72,8 @@
   too). The RP2040 stays: the Pi can't answer the Dreamcast's SPI within ~250 ns.
 * A GPIO-switched line switch to turn the modem "off" (no dial tone) so games that try
   the modem first (AFO) fall back to serial; priority W5500 → serial → modem.
-* Per-game choice from openMenu's "last played game" file on the SD card.
+* Per-game choice from the game information openMenu sends over serial before a game starts
+  (not every build has an SD card); everything stays on when nothing arrives.
 * Experimental, later: an I2S audio codec + software modem on the Pi Zero instead of a
   USB modem (realistically V.32bis-class speeds).
 

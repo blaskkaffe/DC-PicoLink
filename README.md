@@ -1,5 +1,11 @@
 # DC-PicoLink
 
+> **Work in progress.** The RP2040 cable with DreamPi works on hardware (see *Status*). The
+> ESP32-S3 side (Wi-Fi instead of a computer) and the small **RP2040-Zero + ESP32-S3 SuperMini
+> stack** (`-DDC_BOARD=zero-stack`, link over SPI) are written, host-tested and build, but
+> **have not been tried on hardware yet**. Expect bugs; check the first status line
+> (firmware version) in any log you report.
+
 An RP2040-based Dreamcast serial-port adapter: a full coder's cable (serial and serial
 PPP), W5500 Ethernet emulation over USB networking, and SD card emulation (used by
 openMenu for its settings and VMU backups). Works with DreamPi or a regular computer,
@@ -79,8 +85,36 @@ boot a dcload-serial CDI, then `dc-tool-ser -t /dev/dccable -b 1500000 -x progra
 | [`docs/`](docs) | [architecture](docs/ARCHITECTURE.md), [technical reference](docs/REFERENCE.md), [roadmap](docs/ROADMAP.md), [testing](docs/TESTING.md), [development log](docs/DEVLOG.md) |
 | [`tools/`](tools) | test runner, DreamPi installer builder |
 
-Build: see [docs/REFERENCE.md#build](docs/REFERENCE.md#build). CI builds every push;
-tagged versions (`v*`) become releases with the UF2 files and the DreamPi installer.
+## Building
+
+Cable (RP2040), Pico SDK 2.1.1 and `gcc-arm-none-eabi`:
+
+```sh
+# Pico / Pro Micro wiring (Dreamcast on GPIO2-7, ESP32 link on UART GPIO12-15)
+cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 && make -C build
+# RP2040-Zero + ESP32-S3 SuperMini stack (Dreamcast on GPIO9-14, ESP32 link over SPI)
+cmake -S firmware -B build-zero -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 -DDC_BOARD=zero-stack && make -C build-zero
+# the same with the computer's USB network wired to the ESP32 (tests the stack without a Dreamcast)
+cmake -S firmware -B build-zero-bridge -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 -DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1 && make -C build-zero-bridge
+```
+
+The UF2 is `build*/dc_usb_serial.uf2`: hold BOOT (BOOTSEL), plug in, copy it to the drive.
+`-DPICO_BOARD=pico` is right for the RP2040-Zero and Pro Micro too (generic 2 MB flash).
+
+ESP32-S3, ESP-IDF 5.4 (details in [esp32/README.md](esp32/README.md)):
+
+```sh
+cd esp32
+idf.py set-target esp32s3 && idf.py build                                             # UART link (Pico wiring)
+idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build          # SPI link (stack)
+```
+
+Tests (host, no hardware): `tools/run-tests.sh` runs the C model tests, including the SPI
+link's timing simulation; `tools/run-tests.sh build` adds the PIO simulations for both
+Dreamcast pin layouts. More options: [docs/REFERENCE.md#build](docs/REFERENCE.md#build).
+CI builds every push; tagged versions (`v*`) become releases with the UF2 files and the
+DreamPi installer.
 
 Part of a family of `DC-` Dreamcast projects.
 

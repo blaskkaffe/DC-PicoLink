@@ -34,13 +34,29 @@ endif()
 if(DEFINED W5_VERSIONR_VALUE)   # diagnostics: cmake -DW5_VERSIONR_VALUE=0x08 ..
     target_compile_definitions(dc_usb_serial PRIVATE W5_VERSIONR_VALUE=${W5_VERSIONR_VALUE})
 endif()
-if(DEFINED DC_POWER_PIN)   # sense wire GPIO (default 7, found by itself); -1 = off
+# Board layout: pico (default: Pico / Pro Micro, Dreamcast on GPIO2-7, ESP32 link on UART0
+# GPIO12-15) or zero-stack (RP2040-Zero back to back with an ESP32-S3 SuperMini: Dreamcast
+# on GPIO9-14, ESP32 link over SPI0 on GPIO4-7 + GPIO2/3; see hardware/ESP32.md)
+if(NOT DC_BOARD)
+    set(DC_BOARD pico)
+endif()
+if(DC_BOARD STREQUAL "zero-stack")
+    target_compile_definitions(dc_usb_serial PRIVATE DC_PIN_BASE=9 DC_LINK_SPI=1)
+    target_link_libraries(dc_usb_serial PRIVATE hardware_spi)
+    if(DEFINED LINK_SPI_HZ)   # SPI link clock request (default 16 MHz -> 15.6 MHz at 250 MHz)
+        target_compile_definitions(dc_usb_serial PRIVATE LINK_SPI_HZ=${LINK_SPI_HZ}u)
+    endif()
+elseif(NOT DC_BOARD STREQUAL "pico")
+    message(FATAL_ERROR "DC_BOARD must be pico or zero-stack")
+endif()
+message(STATUS "DC-PicoLink board layout: ${DC_BOARD}")
+if(DEFINED DC_POWER_PIN)   # sense wire GPIO (default: the 6th Dreamcast pin, 7 or 14; found by itself); -1 = off
     target_compile_definitions(dc_usb_serial PRIVATE DC_POWER_PIN=${DC_POWER_PIN})
 endif()
 if(DC_USB_BRIDGE)   # test build: computer's USB network <-> ESP32 link (no W5500 emulation)
     target_compile_definitions(dc_usb_serial PRIVATE DC_USB_BRIDGE=1)
 endif()
 pico_set_binary_type(dc_usb_serial copy_to_ram)   # no flash-cache stalls on core1
-pico_enable_stdio_uart(dc_usb_serial 0)   # UART0 is the ESP32 link (GPIO12-15)
+pico_enable_stdio_uart(dc_usb_serial 0)   # UART0 is the ESP32 link on the pico layout
 pico_enable_stdio_usb(dc_usb_serial 0)
 pico_add_extra_outputs(dc_usb_serial)

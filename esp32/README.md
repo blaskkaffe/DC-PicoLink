@@ -1,7 +1,9 @@
 # DC-PicoLink ESP32 side
 
-Firmware for an **ESP32-S3** (ESP32-S3-Zero) connected to the cable over UART, so a
-Dreamcast can go online without a Raspberry Pi. Design and plan: the project's
+Firmware for an **ESP32-S3** connected to the cable, so a Dreamcast can go online without a
+Raspberry Pi. Two links to the cable (menuconfig → *DC-PicoLink ESP32* → *Link to the cable*):
+UART (Pico wiring, the default) or SPI (the RP2040-Zero + ESP32-S3 SuperMini stack,
+`sdkconfig.zero-stack`; this board is the SPI slave). Design and plan: the project's
 `07-esp32-link.md` (steps E-1 to E-11). Wiring: [../hardware/ESP32.md](../hardware/ESP32.md).
 
 **Status: step E-4 (written, builds, rules host-tested; not yet tried on hardware).**
@@ -24,6 +26,15 @@ cd esp32
 idf.py set-target esp32s3
 idf.py build
 idf.py -p /dev/ttyACM0 flash monitor      # the board's own USB port
+```
+
+For the RP2040-Zero + SuperMini stack (SPI link), use a separate build directory with the
+stack's defaults:
+
+```
+idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build
+idf.py -B build-zero -p /dev/ttyACM0 flash monitor
 ```
 
 CI builds it too (Actions → build → artifact `dc-picolink-esp32`): one merged image, flashed with

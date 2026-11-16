@@ -32,6 +32,7 @@
 #include "hardware/structs/iobank0.h"
 #include "hardware/structs/sio.h"
 #include "hardware/structs/timer.h"
+#include "dc_pio_reloc.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/systick.h"
 #include "dcmode.h"
@@ -170,7 +171,15 @@ void w5500_spi_init(void) {
 
     /* W5500 shifter on pio1 */
     pio_sm_claim(SPI_PIO, SPI_SM);
-    spi_off = pio_add_program(SPI_PIO, &w5500_spi_program);
+    /* both programs use absolute 'wait gpio': load copies moved to DC_PIN_BASE */
+    static uint16_t w5_ins[sizeof w5500_spi_program_instructions / sizeof w5500_spi_program_instructions[0]];
+    static uint16_t sd_ins[sizeof sd_spi_program_instructions / sizeof sd_spi_program_instructions[0]];
+    dc_pio_relocate(w5500_spi_program_instructions, w5_ins, w5500_spi_program.length, DC_PIN_BASE - 2);
+    dc_pio_relocate(sd_spi_program_instructions, sd_ins, sd_spi_program.length, DC_PIN_BASE - 2);
+    pio_program_t w5_prog = w5500_spi_program, sd_prog = sd_spi_program;
+    w5_prog.instructions = w5_ins;
+    sd_prog.instructions = sd_ins;
+    spi_off = pio_add_program(SPI_PIO, &w5_prog);
     pio_sm_config c = w5500_spi_program_get_default_config(spi_off);
     sm_config_set_in_pins(&c, PIN_RX);
     sm_config_set_out_pins(&c, PIN_TX, 1);
@@ -184,7 +193,7 @@ void w5500_spi_init(void) {
 
     /* SD shifter on pio0 (next to the UART programs) + its MISO DMA */
     sd_sm = pio_claim_unused_sm(SD_PIO, true);
-    sd_off = pio_add_program(SD_PIO, &sd_spi_program);
+    sd_off = pio_add_program(SD_PIO, &sd_prog);
     c = sd_spi_program_get_default_config(sd_off);
     sm_config_set_in_pins(&c, PIN_RX);
     sm_config_set_out_pins(&c, PIN_TX, 1);
@@ -703,16 +712,16 @@ static bool __attribute__((noinline)) w5_header(void) {
        reaching the FIFO to the MISO byte in the TX FIFO. Gives up when CS goes
        high (a spike or a short frame: the watchdog's job) or after ~200 us. */
     uint32_t f, v;
-    /* fstat bit 8 = RXEMPTY(SM0), gpio_in bit 5 = CS; both tested by shifting
+    /* fstat bit 8 = RXEMPTY(SM0), gpio_in bit PIN_CTS = CS; both tested by shifting
        them into the sign bit. Offsets: FSTAT 0x04, TXF0 0x10, RXF0 0x20. */
-    _Static_assert(SPI_SM == 0 && PIN_CTS == 5 && PIO_FSTAT_RXEMPTY_LSB == 8, "asm below assumes these");
+    _Static_assert(SPI_SM == 0 && PIO_FSTAT_RXEMPTY_LSB == 8 && PIN_CTS >= 1 && PIN_CTS <= 30, "asm below assumes these");
     __asm volatile(
         ".syntax unified             \n"
         "1: ldr  %[f], [%[pio], #4]  \n"
         "   lsls %[f], %[f], #23     \n"
         "   bpl  2f                  \n"     /* RX not empty */
         "   ldr  %[f], [%[gin]]      \n"
-        "   lsls %[f], %[f], #26     \n"
+        "   lsls %[f], %[f], %[csh]  \n"     /* CS into the sign bit */
         "   bmi  3f                  \n"     /* CS high */
         "   subs %[n], #1            \n"
         "   bne  1b                  \n"
@@ -737,7 +746,7 @@ static bool __attribute__((noinline)) w5_header(void) {
         "3:                          \n"
         ".syntax divided             \n"
         : [f] "=&l" (f), [v] "=&l" (v), [n] "+l" (n)
-        : [pio] "l" (SPI_PIO), [gin] "l" (gin), [cand] "l" (w5_cand)
+        : [pio] "l" (SPI_PIO), [gin] "l" (gin), [cand] "l" (w5_cand), [csh] "i" (31 - PIN_CTS)
         : "cc", "memory");
     if (fresh) {                                      /* frame state, after the answer */
 #if DC_DIAG

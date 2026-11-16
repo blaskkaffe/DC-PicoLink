@@ -92,14 +92,39 @@ static bool rts_asserted;
 static uint8_t tx_buf[2][TX_CHUNK];
 static int tx_cur = 0;
 
-/* ---- ESP32 link (link_model.h): UART0 on GPIO12-15 beside USB ---------------
-   A computer on USB wins: serial goes to the ESP32 only while no program has the
-   USB serial port open, network frames only while USB is not mounted. */
+/* ---- ESP32 link (link_model.h) -------------------------------------------------
+   Pico / Pro Micro wiring: UART0 on GPIO12-15 beside USB, 3 Mbaud, RTS/CTS.
+   RP2040-Zero stack (DC_LINK_SPI): SPI0 on GPIO4-7 plus HS/DR on GPIO3/2, see
+   link_spi_model.h. A computer on USB wins: serial goes to the ESP32 only while no
+   program has the USB serial port open, network frames only while USB is not mounted. */
+#ifndef DC_LINK_SPI
+#define DC_LINK_SPI   0
+#endif
+#if DC_LINK_SPI
+#include "hardware/spi.h"
+#include "link_spi_model.h"
+_Static_assert(DC_PIN_BASE >= 8, "the SPI link uses GPIO0-7: move the Dreamcast pins (DC_PIN_BASE 9)");
+#define LINK_SPI       spi0
+#define PIN_LSPI_DR    2                         /* <- ESP32 GPIO1: it has data for us */
+#define PIN_LSPI_HS    3                         /* <- ESP32 GPIO2: a transaction is loaded */
+/* GPIO0/1 sit over the ESP32's GPIO43/44 (corner pins for strength): left as plain inputs */
+#define PIN_LSPI_MISO  4                         /* SPI0 RX  <- ESP32 GPIO3 */
+#define PIN_LSPI_CS    5                         /* plain GPIO -> ESP32 GPIO4 */
+#define PIN_LSPI_SCK   6                         /* SPI0 SCK -> ESP32 GPIO5 */
+#define PIN_LSPI_MOSI  7                         /* SPI0 TX  -> ESP32 GPIO6 */
+static uint8_t lspi_tx[LINK_SPI_CHUNK] __attribute__((aligned(4)));
+static uint8_t lspi_rx[LINK_SPI_CHUNK] __attribute__((aligned(4)));
+static int lspi_dma_tx = -1, lspi_dma_rx = -1;
+static link_spi_master_t lspi;
+static uint32_t lspi_hz, lspi_t0, lspi_rx_pos = LINK_SPI_CHUNK, lspi_timeout_us;
+static uint32_t lspi_xfers, lspi_timeouts, lspi_bytes_out;
+#else
 #define PIN_LINK_TX   12
 #define PIN_LINK_RX   13
 #define PIN_LINK_CTS  14
 #define PIN_LINK_RTS  15
 #define LINK_UART     uart0
+#endif
 #define LINK_TX_BITS  13                         /* 8 KiB ring to the ESP32 */
 #define LINK_TX_SIZE  (1u << LINK_TX_BITS)
 #define SER_IN_SIZE   4096u                      /* ESP32 -> DC serial bytes */
@@ -786,8 +811,8 @@ static void hello_task(void) {
     uint32_t in = gpio_get_all();
     status("offline: waiting for the DC (needs %s). pins CLK=%lu TXD=%lu RXD=%lu RTS=%lu CTSout=%lu; core1 %s",
            dc_sense ? "3.3 V on the sense wire" : "TXD or RTS high",
-           (unsigned long)(in >> 2 & 1), (unsigned long)(in >> 3 & 1), (unsigned long)(in >> 4 & 1),
-           (unsigned long)(in >> 5 & 1), (unsigned long)(in >> 6 & 1),
+           (unsigned long)(in >> PIN_DC_CTS_SENSE & 1), (unsigned long)(in >> PIN_RX & 1), (unsigned long)(in >> PIN_TX & 1),
+           (unsigned long)(in >> PIN_CTS & 1), (unsigned long)(in >> PIN_RTS & 1),
            core1_beat != beat0 ? "running" : "STUCK");
     beat0 = core1_beat; last = now;
 }
@@ -909,7 +934,8 @@ static const char *pins_text(void) {
     static char t[96];
     uint32_t g = sio_hw->gpio_in;
     snprintf(t, sizeof t, "CLK/CTS=%d CMD/TXD=%d DAT0/RXD=%d CS/RTS=%d RTS-out=%d 3V3-sense=%d",
-             (int)((g >> 2) & 1), (int)((g >> 3) & 1), (int)((g >> 4) & 1), (int)((g >> 5) & 1), (int)((g >> 6) & 1), (int)((g >> 7) & 1));
+             (int)((g >> PIN_DC_CTS_SENSE) & 1), (int)((g >> PIN_RX) & 1), (int)((g >> PIN_TX) & 1), (int)((g >> PIN_CTS) & 1),
+             (int)((g >> PIN_RTS) & 1), (int)((g >> (DC_PIN_BASE + 5)) & 1));
     return t;
 }
 
@@ -920,7 +946,7 @@ static void pins_offline_task(void) {
     uint32_t now = time_us_32();
     if (now - last_t < 500000u) return;
     last_t = now;
-    uint32_t sig = (sio_hw->gpio_in >> 2) & 0x3F;
+    uint32_t sig = (sio_hw->gpio_in >> DC_PIN_BASE) & 0x3F;
     if (sig == last_sig && now - last_rep < 10000000u) return;
     last_sig = sig; last_rep = now;
     if (sd_link_up) status("pads with the DC off or not started: %s", pins_text());
@@ -1062,6 +1088,48 @@ static void sd_task(void) {
 }
 
 /* ---- ESP32 link ------------------------------------------------------------ */
+#if DC_LINK_SPI
+static void link_init(void) {
+    lspi_hz = spi_init(LINK_SPI, LINK_SPI_HZ);
+    spi_set_format(LINK_SPI, 8, SPI_CPOL_0, LINK_SPI_MODE == 1 ? SPI_CPHA_1 : SPI_CPHA_0, SPI_MSB_FIRST);
+    gpio_set_function(PIN_LSPI_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_LSPI_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_LSPI_MOSI, GPIO_FUNC_SPI);
+    gpio_pull_up(PIN_LSPI_MISO);                    /* no ESP32: a defined level */
+    gpio_init(PIN_LSPI_CS);
+    gpio_put(PIN_LSPI_CS, 1);
+    gpio_set_dir(PIN_LSPI_CS, GPIO_OUT);
+    gpio_init(PIN_LSPI_HS);
+    gpio_set_dir(PIN_LSPI_HS, GPIO_IN);
+    gpio_pull_down(PIN_LSPI_HS);                    /* no ESP32: never "ready", nothing is clocked */
+    gpio_init(PIN_LSPI_DR);
+    gpio_set_dir(PIN_LSPI_DR, GPIO_IN);
+    gpio_pull_down(PIN_LSPI_DR);
+    for (uint p = 0; p <= 1; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
+    lspi_dma_tx = (int)dma_claim_unused_channel(true);
+    lspi_dma_rx = (int)dma_claim_unused_channel(true);
+    dma_channel_config c = dma_channel_get_default_config((uint)lspi_dma_tx);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, spi_get_dreq(LINK_SPI, true));
+    dma_channel_configure((uint)lspi_dma_tx, &c, &spi_get_hw(LINK_SPI)->dr, lspi_tx, LINK_SPI_CHUNK, false);
+    c = dma_channel_get_default_config((uint)lspi_dma_rx);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, false);
+    channel_config_set_write_increment(&c, true);
+    channel_config_set_dreq(&c, spi_get_dreq(LINK_SPI, false));
+    dma_channel_configure((uint)lspi_dma_rx, &c, lspi_rx, &spi_get_hw(LINK_SPI)->dr, LINK_SPI_CHUNK, false);
+    /* a chunk takes LINK_SPI_CHUNK * 8 / lspi_hz; give up after 4x that plus 1 ms */
+    lspi_timeout_us = (uint32_t)((uint64_t)LINK_SPI_CHUNK * 8u * 4u * 1000000u / lspi_hz) + 1000u;
+    link_spi_master_init(&lspi);
+    link_rx_init(&link_rx);
+}
+
+static inline bool lspi_hs_fell(void) {
+    return io_bank0_hw->intr[PIN_LSPI_HS / 8] & (GPIO_IRQ_EDGE_FALL << (4 * (PIN_LSPI_HS % 8)));
+}
+#else
 static void link_init(void) {
     uart_init(LINK_UART, LINK_BAUD);
     uart_set_format(LINK_UART, 8, 1, UART_PARITY_NONE);
@@ -1075,6 +1143,7 @@ static void link_init(void) {
     gpio_pull_up(PIN_LINK_CTS);     /* no ESP32: "not clear", nothing is sent */
     link_rx_init(&link_rx);
 }
+#endif
 
 /* Queue one packet for the ESP32. false (and nothing queued) if there is no room. */
 static bool link_send(uint8_t ch, const void *p, size_t n) {
@@ -1133,8 +1202,68 @@ static bool link_deliver(void) {
     }
 }
 
+/* A good packet from the ESP32 is in link_rx. false = it couldn't be delivered yet. */
+static bool link_on_packet(uint32_t now) {
+    link_last_rx = now;
+    if (!link_up) {
+        link_up = true;
+        link_tx_rd = link_tx_wr;      /* drop anything queued before (nothing should be) */
+    }
+    return link_deliver();
+}
+
+#if DC_LINK_SPI
+/* Finish a running transaction, feed the received chunk to link_rx, start the next one. */
+static void lspi_task(uint32_t now) {
+    if (lspi.busy) {
+        if (dma_channel_is_busy((uint)lspi_dma_rx)) {
+            if (now - lspi_t0 < lspi_timeout_us) return;
+            /* the clock is ours, so this shouldn't happen: count it, drop the chunk */
+            dma_channel_abort((uint)lspi_dma_tx);
+            dma_channel_abort((uint)lspi_dma_rx);
+            while (spi_is_busy(LINK_SPI)) tight_loop_contents();
+            while (spi_is_readable(LINK_SPI)) (void)spi_get_hw(LINK_SPI)->dr;
+            gpio_put(PIN_LSPI_CS, 1);
+            link_spi_master_done(&lspi, now);
+            lspi_timeouts++;
+            lspi_rx_pos = LINK_SPI_CHUNK;
+            return;
+        }
+        while (spi_is_busy(LINK_SPI)) tight_loop_contents();
+        busy_wait_us_32(LINK_SPI_CS_US);
+        gpio_put(PIN_LSPI_CS, 1);
+        link_spi_master_done(&lspi, now);
+        lspi_xfers++;
+        lspi_rx_pos = 0;
+    }
+    /* feed what came in (a budget per pass keeps the main loop moving) */
+    for (int budget = 512; budget-- && !link_pending && lspi_rx_pos < LINK_SPI_CHUNK;)
+        if (link_rx_byte(&link_rx, lspi_rx[lspi_rx_pos++]) && !link_on_packet(now)) link_pending = true;
+    bool want = lspi_rx_pos >= LINK_SPI_CHUNK && !link_pending &&
+                (link_tx_rd != link_tx_wr || gpio_get(PIN_LSPI_DR));
+    if (!link_spi_master_start(&lspi, now, gpio_get(PIN_LSPI_HS), lspi_hs_fell(), want, link_up)) return;
+    lspi_bytes_out += (uint32_t)link_chunk_fill(link_txr, LINK_TX_SIZE - 1, &link_tx_rd, link_tx_wr,
+                                                 lspi_tx, LINK_SPI_CHUNK);
+    gpio_acknowledge_irq(PIN_LSPI_HS, GPIO_IRQ_EDGE_FALL);   /* from now on: did the ESP32 finish? */
+    gpio_put(PIN_LSPI_CS, 0);
+    busy_wait_us_32(LINK_SPI_CS_US);
+    dma_channel_set_read_addr((uint)lspi_dma_tx, lspi_tx, false);
+    dma_channel_set_trans_count((uint)lspi_dma_tx, LINK_SPI_CHUNK, false);
+    dma_channel_set_write_addr((uint)lspi_dma_rx, lspi_rx, false);
+    dma_channel_set_trans_count((uint)lspi_dma_rx, LINK_SPI_CHUNK, false);
+    dma_start_channel_mask((1u << lspi_dma_rx) | (1u << lspi_dma_tx));
+    lspi_t0 = time_us_32();
+}
+#endif
+
 static void link_task(void) {
     uint32_t now = time_us_32();
+#if DC_LINK_SPI
+    if (link_pending) {
+        if (link_deliver()) link_pending = false;
+    }
+    lspi_task(now);
+#else
     /* to the ESP32: as much as the FIFO takes (CTS holds it when the ESP32 is busy) */
     while (link_tx_rd != link_tx_wr && uart_is_writable(LINK_UART))
         uart_get_hw(LINK_UART)->dr = link_txr[link_tx_rd++ & (LINK_TX_SIZE - 1)];
@@ -1148,16 +1277,10 @@ static void link_task(void) {
         if (dr & 0xF00) {            /* framing/parity/break/overrun: let the CRC catch it */
             uart_get_hw(LINK_UART)->rsr = 0;
         }
-        if (link_rx_byte(&link_rx, (uint8_t)dr)) {
-            link_last_rx = now;
-            if (!link_up) {
-                link_up = true;
-                link_tx_rd = link_tx_wr;  /* drop anything queued before (nothing should be) */
-            }
-            if (!link_deliver()) { link_pending = true; break; }
-        }
+        if (link_rx_byte(&link_rx, (uint8_t)dr) && !link_on_packet(now)) { link_pending = true; break; }
     }
 done:
+#endif
     if (link_up && now - link_last_rx > 3000000u) {
         link_up = false;
         link_tx_rd = link_tx_wr;
@@ -1167,8 +1290,14 @@ done:
     }
     static bool said_up;
     if (link_up && !said_up) {
-        status("esp32 link: up at %lu baud; serial goes to %s, network to %s",
-               (unsigned long)LINK_BAUD, ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
+        status("esp32 link: up (%s %lu); serial goes to %s, network to %s",
+               DC_LINK_SPI ? "SPI, Hz" : "UART, baud",
+#if DC_LINK_SPI
+               (unsigned long)lspi_hz,
+#else
+               (unsigned long)LINK_BAUD,
+#endif
+               ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
                DC_USB_BRIDGE ? "nowhere (test build: USB network <-> ESP32)" : eth_to_link() ? "the ESP32" : "USB (mounted)");
     }
     said_up = link_up;
@@ -1180,6 +1309,11 @@ done:
                (unsigned long)link_rx.good, (unsigned long)link_rx.crc_bad,
                (unsigned long)(link_rx.cobs_bad + link_rx.too_long + link_rx.bad_hdr), (unsigned long)link_rx.lost,
                (unsigned long)link_stat_drop);
+#if DC_LINK_SPI
+        status("esp32 link (SPI): %lu transactions, %lu probes, %lu timeouts, %lu bytes sent",
+               (unsigned long)lspi_xfers, (unsigned long)lspi.probes, (unsigned long)lspi_timeouts,
+               (unsigned long)lspi_bytes_out);
+#endif
     }
 }
 

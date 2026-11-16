@@ -7,15 +7,26 @@ simple model of the CPU answering RX words after a fixed latency.
 
 usage: pio_sim.py build/w5500_spi.pio.h [sys_mhz]
 """
-import re, sys
+import os, re, sys
 
-SCLK, MOSI, MISO, CS = 2, 3, 4, 5
-IN_BASE, OUT_BASE, JMP_PIN = 3, 4, 5
+# DC_PIN_BASE=9 runs everything with the Dreamcast pins at GPIO9-12 and the program
+# moved there exactly as the firmware does it (dc_pio_reloc.h: every 'wait gpio' + 7).
+PIN_BASE = int(os.environ.get("DC_PIN_BASE", "2"))
+SCLK, MOSI, MISO, CS = PIN_BASE, PIN_BASE + 1, PIN_BASE + 2, PIN_BASE + 3
+IN_BASE, OUT_BASE, JMP_PIN = MOSI, MISO, CS
+
+def relocate(prog, shift):
+    out = []
+    for w in prog:
+        if (w & 0xE000) == 0x2000 and (w & 0x0060) == 0 and shift:
+            w = (w & ~0x1F) | (((w & 0x1F) + shift) & 31)
+        out.append(w)
+    return out
 
 def load(path):
     txt = open(path).read()
     body = txt.split("w5500_spi_program_instructions[] = {")[1].split("};")[0]
-    prog = [int(m, 16) for m in re.findall(r"0x([0-9a-f]{4}),", body)]
+    prog = relocate([int(m, 16) for m in re.findall(r"0x([0-9a-f]{4}),", body)], PIN_BASE - 2)
     d = {k: int(v) for k, v in re.findall(r"#define w5500_spi_(\w+) (\d+)", txt)}
     return prog, d
 

@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/../firmware"
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 fail=0
-for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns; do
+for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_link_spi; do
     if gcc -O1 -Wall -Wno-unused-variable -Wno-unused-function -I. "tests/$t.c" -lm -o "$out/$t" && "$out/$t" > "$out/$t.log"; then
         echo "PASS $t: $(tail -1 "$out/$t.log")"
     else
@@ -22,9 +22,15 @@ fi
 if [ -n "${1:-}" ]; then
     hdr="$1/w5500_spi.pio.h"
     [ -f "$hdr" ] || { echo "no $hdr: build the firmware first"; exit 1; }
-    sim=$(python3 -I tests/pio_sim.py "$hdr")
-    pass=$(grep -c '^PASS' <<<"$sim" || true); bad=$(grep -ci '^FAIL\|Traceback' <<<"$sim" || true)
-    if [ "$bad" = 0 ] && [ "$pass" -gt 0 ]; then echo "PASS pio_sim: $pass checks"; else echo "FAIL pio_sim"; echo "$sim" | tail -20; fail=1; fi
-    if python3 -I tests/kos_replay.py "$hdr" > "$out/kos.log" 2>&1; then echo "PASS kos_replay"; else echo "FAIL kos_replay"; tail "$out/kos.log"; fail=1; fi
+    # the PIO programs at both Dreamcast pin layouts: GPIO2-5 (pico) and moved to GPIO9-12
+    # exactly as the zero-stack firmware loads them (dc_pio_reloc.h)
+    for base in 2 9; do
+        sim=$(DC_PIN_BASE=$base python3 -I tests/pio_sim.py "$hdr")
+        pass=$(grep -c '^PASS' <<<"$sim" || true); bad=$(grep -ci '^FAIL\|Traceback' <<<"$sim" || true)
+        if [ "$bad" = 0 ] && [ "$pass" -gt 0 ]; then echo "PASS pio_sim (pins from GPIO$base): $pass checks"; else echo "FAIL pio_sim (GPIO$base)"; echo "$sim" | tail -20; fail=1; fi
+        if DC_PIN_BASE=$base python3 -I tests/kos_replay.py "$hdr" > "$out/kos.log" 2>&1; then echo "PASS kos_replay (pins from GPIO$base)"; else echo "FAIL kos_replay (GPIO$base)"; tail "$out/kos.log"; fail=1; fi
+    done
+    if gcc -O1 -Wall -DPICO_NO_HARDWARE=1 -I. -I"$1" tests/test_pio_reloc.c -o "$out/test_pio_reloc" && "$out/test_pio_reloc" > "$out/reloc.log"; then
+        echo "PASS test_pio_reloc: $(tail -1 "$out/reloc.log")"; else echo "FAIL test_pio_reloc"; cat "$out/reloc.log"; fail=1; fi
 fi
 exit $fail

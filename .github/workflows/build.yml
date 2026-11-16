@@ -52,6 +52,9 @@ jobs:
           build 250mhz       -DDC_SYS_KHZ=250000 -DDC_DIAG=0
           build 250mhz-debug -DDC_SYS_KHZ=250000 -DDC_DIAG=1
           build 200mhz-debug -DDC_DIAG=1
+          # RP2040-Zero + ESP32-S3 SuperMini stack (not tried on hardware yet)
+          build zero-stack-250mhz-debug        -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack
+          build zero-stack-250mhz-usbbridge-test -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1
           tools/run-tests.sh "$PWD/build-250mhz"
           tools/run-tests.sh "$PWD/build-250mhz-debug"
           tools/make-dreampi-setup.sh dist/dc-picolink-dreampi-setup.sh
@@ -143,6 +146,9 @@ jobs:
           ver=$(git describe --tags --always --dirty)
           mkdir -p ../dist-esp32
           (cd build && esptool.py --chip esp32s3 merge_bin -o ../../dist-esp32/dc-picolink-esp32-$ver-merged.bin @flash_args)
+          # the RP2040-Zero + SuperMini stack: SPI link
+          idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build
+          (cd build-zero && esptool.py --chip esp32s3 merge_bin -o ../../dist-esp32/dc-picolink-esp32-zero-stack-$ver-merged.bin @flash_args)
           ls -l ../dist-esp32
       - uses: actions/upload-artifact@v4
         with:

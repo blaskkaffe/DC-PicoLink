@@ -1,15 +1,51 @@
 menu "DC-PicoLink ESP32"
+    choice DCL_LINK_WIRE
+        prompt "Link to the cable"
+        default DCL_LINK_UART
+        config DCL_LINK_UART
+            bool "UART (Pico / Pro Micro cable: cable GPIO12-15)"
+        config DCL_LINK_SPI
+            bool "SPI (RP2040-Zero stack: cable GPIO2-7; this board is the slave)"
+    endchoice
+    config DCL_LSPI_MOSI
+        int "SPI link MOSI pin (from the cable's GPIO7)"
+        depends on DCL_LINK_SPI
+        default 6
+    config DCL_LSPI_MISO
+        int "SPI link MISO pin (to the cable's GPIO4)"
+        depends on DCL_LINK_SPI
+        default 3
+    config DCL_LSPI_SCLK
+        int "SPI link clock pin (from the cable's GPIO6)"
+        depends on DCL_LINK_SPI
+        default 5
+    config DCL_LSPI_CS
+        int "SPI link chip-select pin (from the cable's GPIO5)"
+        depends on DCL_LINK_SPI
+        default 4
+    config DCL_LSPI_HS
+        int "SPI link ready pin, HS (to the cable's GPIO3)"
+        depends on DCL_LINK_SPI
+        default 2
+    config DCL_LSPI_DR
+        int "SPI link data-ready pin, DR (to the cable's GPIO2)"
+        depends on DCL_LINK_SPI
+        default 1
     config DCL_LINK_TX
         int "Link TX pin (to the cable's GPIO13)"
+        depends on DCL_LINK_UART
         default 5
     config DCL_LINK_RX
         int "Link RX pin (from the cable's GPIO12)"
+        depends on DCL_LINK_UART
         default 6
     config DCL_LINK_RTS
         int "Link RTS pin (to the cable's GPIO14, CTS)"
+        depends on DCL_LINK_UART
         default 7
     config DCL_LINK_CTS
         int "Link CTS pin (from the cable's GPIO15, RTS)"
+        depends on DCL_LINK_UART
         default 8
     config DCL_AP_PASSWORD
         string "Password of the setup Wi-Fi (8+ characters, empty = open)"

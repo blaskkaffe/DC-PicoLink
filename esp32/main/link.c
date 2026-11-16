@@ -1,7 +1,12 @@
 /*
- * UART link to DC-PicoLink (framing in ../../firmware/link_model.h, shared with the cable).
- * UART1, 3 Mbaud, RTS/CTS. One task reads and dispatches; senders queue whole wire
- * packets into the driver's TX ring (guarded by a mutex so packets never interleave).
+ * Link to DC-PicoLink (framing in ../../firmware/link_model.h, shared with the cable).
+ * Two wires to choose from in menuconfig:
+ *  - UART (Pico / Pro Micro cable): UART1, 3 Mbaud, RTS/CTS. One task reads and
+ *    dispatches; senders queue whole wire packets into the driver's TX ring.
+ *  - SPI (RP2040-Zero stack): this board is the SPI slave of the cable, fixed-size
+ *    chunks, HS/DR lines (../../firmware/link_spi_model.h). Senders queue whole wire
+ *    packets into our own ring; one task keeps transactions loaded and dispatches.
+ * Either way a mutex keeps packets from interleaving.
  */
 #include <string.h>
 #include <stdio.h>
@@ -10,6 +15,13 @@
 #include "freertos/semphr.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#if CONFIG_DCL_LINK_SPI
+#include "driver/spi_slave.h"
+#include "esp_heap_caps.h"
+#include "hal/gpio_ll.h"
+#include "soc/gpio_struct.h"
+#include "link_spi_model.h"
+#endif
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
@@ -33,6 +45,68 @@ static uint16_t next_id = 1;
 
 bool link_is_up(void) { return esp_timer_get_time() - last_rx_us < 3000000; }
 
+#if CONFIG_DCL_LINK_SPI
+#define LSPI_HOST   SPI3_HOST          /* SPI2 (FSPI, IO-MUX pins 10-13) stays free for a W5500 */
+#define LSPI_NBUF   3                  /* transactions kept loaded/queued */
+#define RING_BITS   15                 /* 32 KiB of wire bytes for the cable */
+#define RING_SIZE   (1u << RING_BITS)
+static uint8_t ring[RING_SIZE];
+static uint32_t ring_wr, ring_rd;      /* free-running; guarded by tx_lock */
+static uint8_t *lspi_txb[LSPI_NBUF], *lspi_rxb[LSPI_NBUF];
+static spi_slave_transaction_t lspi_tr[LSPI_NBUF];
+static uint16_t lspi_txn[LSPI_NBUF];   /* queued bytes in each loaded chunk */
+static uint32_t lspi_loaded_bytes;     /* sum of lspi_txn: bytes handed to the hardware, not yet clocked */
+static uint32_t lspi_xfers, lspi_short;
+
+static void IRAM_ATTR lspi_post_setup(spi_slave_transaction_t *t) {
+    (void)t;
+    gpio_ll_set_level(&GPIO, CONFIG_DCL_LSPI_HS, 1);   /* loaded: the cable may clock */
+}
+static void IRAM_ATTR lspi_post_trans(spi_slave_transaction_t *t) {
+    (void)t;
+    gpio_ll_set_level(&GPIO, CONFIG_DCL_LSPI_HS, 0);   /* done: wait for the next one */
+}
+
+/* DR: we have bytes for the cable (queued, or in a loaded chunk). Call with tx_lock held. */
+static void lspi_update_dr(void) {
+    gpio_set_level(CONFIG_DCL_LSPI_DR, (ring_wr != ring_rd || lspi_loaded_bytes) ? 1 : 0);
+}
+
+bool link_send(uint8_t ch, const void *p, size_t n) {
+    static uint8_t w[LINK_MAX_WIRE];
+    bool ok = false;
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
+    if (RING_SIZE - (ring_wr - ring_rd) >= LINK_MAX_WIRE) {
+        size_t k = link_build(ch, tx_seq, p, n, w);
+        if (k) {
+            tx_seq++;
+            for (size_t i = 0; i < k; i++) ring[(ring_wr + (uint32_t)i) & (RING_SIZE - 1)] = w[i];
+            ring_wr += (uint32_t)k;
+            st.sent++;
+            ok = true;
+            lspi_update_dr();
+        }
+    }
+    if (!ok) st.send_full++;
+    xSemaphoreGive(tx_lock);
+    return ok;
+}
+
+/* refill chunk i from the ring and hand it to the driver */
+static void lspi_load(int i) {
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
+    lspi_loaded_bytes -= lspi_txn[i];
+    lspi_txn[i] = (uint16_t)link_chunk_fill(ring, RING_SIZE - 1, &ring_rd, ring_wr, lspi_txb[i], LINK_SPI_CHUNK);
+    lspi_loaded_bytes += lspi_txn[i];
+    lspi_update_dr();
+    xSemaphoreGive(tx_lock);
+    lspi_tr[i].length = LINK_SPI_CHUNK * 8;
+    lspi_tr[i].tx_buffer = lspi_txb[i];
+    lspi_tr[i].rx_buffer = lspi_rxb[i];
+    lspi_tr[i].user = (void *)(intptr_t)i;
+    ESP_ERROR_CHECK(spi_slave_queue_trans(LSPI_HOST, &lspi_tr[i], portMAX_DELAY));
+}
+#else
 bool link_send(uint8_t ch, const void *p, size_t n) {
     static uint8_t w[LINK_MAX_WIRE];
     bool ok = false;
@@ -52,6 +126,7 @@ bool link_send(uint8_t ch, const void *p, size_t n) {
     xSemaphoreGive(tx_lock);
     return ok;
 }
+#endif
 
 bool link_dc1(const char *msg, size_t n) { return link_send(LINK_CH_API, msg, n); }
 
@@ -123,6 +198,36 @@ static void deliver(void) {
     }
 }
 
+static void note_up_down(bool *was_up) {
+    bool up = link_is_up();
+    if (up != *was_up) {
+        char t[96];
+        int k = snprintf(t, sizeof t, up ? "link to the cable: up" : "link to the cable: down (nothing heard for 3 s)");
+        log_add("esp32", t, (size_t)k);
+        *was_up = up;
+    }
+}
+
+#if CONFIG_DCL_LINK_SPI
+static void rx_task(void *arg) {
+    (void)arg;
+    bool was_up = false;
+    for (int i = 0; i < LSPI_NBUF; i++) lspi_load(i);
+    for (;;) {
+        spi_slave_transaction_t *t;
+        if (spi_slave_get_trans_result(LSPI_HOST, &t, pdMS_TO_TICKS(20)) == ESP_OK) {
+            int i = (int)(intptr_t)t->user;
+            size_t n = t->trans_len / 8;
+            lspi_xfers++;
+            if (n != LINK_SPI_CHUNK) lspi_short++;
+            for (size_t k = 0; k < n; k++)
+                if (link_rx_byte(&rx, lspi_rxb[i][k])) { last_rx_us = esp_timer_get_time(); deliver(); }
+            lspi_load(i);
+        }
+        note_up_down(&was_up);
+    }
+}
+#else
 static void rx_task(void *arg) {
     (void)arg;
     static uint8_t buf[512];
@@ -131,16 +236,10 @@ static void rx_task(void *arg) {
         int n = uart_read_bytes(LINK_PORT, buf, sizeof buf, pdMS_TO_TICKS(20));
         for (int i = 0; i < n; i++)
             if (link_rx_byte(&rx, buf[i])) { last_rx_us = esp_timer_get_time(); deliver(); }
-        bool up = link_is_up();
-        if (up != was_up) {
-            char t[96];
-            int k = snprintf(t, sizeof t, up ? "link to the cable: up" : "link to the cable: down (nothing heard for 3 s)");
-            log_add("esp32", t, (size_t)k);
-            was_up = up;
-        }
+        note_up_down(&was_up);
     }
 }
-
+#endif
 /* ask the cable who it is, every second (also keeps the link up on its side) */
 static void hello_task(void *arg) {
     (void)arg;
@@ -152,6 +251,42 @@ static void hello_task(void *arg) {
     }
 }
 
+#if CONFIG_DCL_LINK_SPI
+void link_start(void) {
+    tx_lock = xSemaphoreCreateMutex();
+    info_lock = xSemaphoreCreateMutex();
+    link_rx_init(&rx);
+    gpio_config_t o = { .pin_bit_mask = (1ULL << CONFIG_DCL_LSPI_HS) | (1ULL << CONFIG_DCL_LSPI_DR),
+                        .mode = GPIO_MODE_OUTPUT };
+    ESP_ERROR_CHECK(gpio_config(&o));
+    gpio_set_level(CONFIG_DCL_LSPI_HS, 0);
+    gpio_set_level(CONFIG_DCL_LSPI_DR, 0);
+    spi_bus_config_t bus = {
+        .mosi_io_num = CONFIG_DCL_LSPI_MOSI, .miso_io_num = CONFIG_DCL_LSPI_MISO,
+        .sclk_io_num = CONFIG_DCL_LSPI_SCLK, .quadwp_io_num = -1, .quadhd_io_num = -1,
+        .max_transfer_sz = LINK_SPI_CHUNK,
+    };
+    spi_slave_interface_config_t slv = {
+        .spics_io_num = CONFIG_DCL_LSPI_CS, .mode = LINK_SPI_MODE, .queue_size = LSPI_NBUF,
+        .post_setup_cb = lspi_post_setup, .post_trans_cb = lspi_post_trans,
+    };
+    ESP_ERROR_CHECK(spi_slave_initialize(LSPI_HOST, &bus, &slv, SPI_DMA_CH_AUTO));
+    /* a cable that is off or resetting leaves the lines floating: CS idles high, SCLK low */
+    gpio_set_pull_mode(CONFIG_DCL_LSPI_CS, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(CONFIG_DCL_LSPI_SCLK, GPIO_PULLDOWN_ONLY);
+    gpio_set_pull_mode(CONFIG_DCL_LSPI_MOSI, GPIO_PULLUP_ONLY);
+    for (int i = 0; i < LSPI_NBUF; i++) {
+        lspi_txb[i] = heap_caps_malloc(LINK_SPI_CHUNK, MALLOC_CAP_DMA);
+        lspi_rxb[i] = heap_caps_malloc(LINK_SPI_CHUNK, MALLOC_CAP_DMA);
+        assert(lspi_txb[i] && lspi_rxb[i]);
+    }
+    ESP_LOGI(TAG, "SPI slave (cable is master), %u-byte chunks: MOSI %d MISO %d SCLK %d CS %d HS %d DR %d",
+             (unsigned)LINK_SPI_CHUNK, CONFIG_DCL_LSPI_MOSI, CONFIG_DCL_LSPI_MISO, CONFIG_DCL_LSPI_SCLK,
+             CONFIG_DCL_LSPI_CS, CONFIG_DCL_LSPI_HS, CONFIG_DCL_LSPI_DR);
+    xTaskCreate(rx_task, "link_rx", 4096, NULL, 10, NULL);
+    xTaskCreate(hello_task, "link_hello", 3072, NULL, 5, NULL);
+}
+#else
 void link_start(void) {
     tx_lock = xSemaphoreCreateMutex();
     info_lock = xSemaphoreCreateMutex();
@@ -176,5 +311,6 @@ void link_start(void) {
     xTaskCreate(rx_task, "link_rx", 4096, NULL, 10, NULL);
     xTaskCreate(hello_task, "link_hello", 3072, NULL, 5, NULL);
 }
+#endif
 
 void link_note_ser_out(size_t n) { st.ser_out += (uint32_t)n; }

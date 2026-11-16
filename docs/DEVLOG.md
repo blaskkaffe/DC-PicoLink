@@ -266,3 +266,33 @@ Fix: the wait is gone (a nop, same timing): the cable never waits for RTS, as Dr
 (rtscts=False). A version that obeyed RTS only while it toggled was tried and removed: Quake 3
 drives RTS but pauses it, which flipped flow control on and off, and DreamPi does not use it.
 
+
+## Zero stack: Dreamcast pins moved, ESP32 link over SPI (16 Nov 2026, not on hardware yet)
+
+`-DDC_BOARD=zero-stack`: the Dreamcast on GPIO9-14 and the ESP32 link on SPI0 (GPIO2-7). The
+W5500/SD PIO programs keep their absolute `wait gpio` (the tightest loops can't afford
+anything else) and are loaded with those indexes moved (dc_pio_reloc.h). pio_sim and
+kos_replay run the moved program with the pins at GPIO9: same 56 checks, same output. The
+hand-written CS test in `w5_header` takes its shift from PIN_CTS (#26 on the pico layout as
+before, #19 on the stack); the pico build's `w5_header` disassembly is identical to before.
+
+Why SPI: the UART link carries ~300 KB/s each way; the Dreamcast's W5500 path needs ~1000 KB/s
+out and ~550 KB/s in. The SPI link keeps the packets and chops the byte stream into 1024-byte
+full-duplex chunks padded with 0x00 (an empty packet to the receiver). The ESP32 can only take
+part in a transaction it has loaded, so it signals HS (post_setup high, post_trans low) and DR.
+
+The timing simulation (tests/test_link_spi.c: both sides' real code, ESP-IDF's slave queue
+modelled, random latencies, stalls, resets) found one real bug before any hardware: the
+"probe" for an ESP32 stuck with HS high fired whenever the link was down, including right after
+a reboot before the first packet, and then clocked into the chunk the ESP32 had just finished
+(its post_trans hadn't run yet). Fix: probe only after a full second without a falling edge
+since our last transaction ended. Throughput in the simulation at 15.6 MHz: ~1.4-1.6 MB/s each
+way with both directions saturated; at 20.8 MHz ~1.7-2.0 MB/s.
+
+HS/DR first sat on ESP32 GPIO43/44 (over the Zero's GP0/1). Moved to GPIO1/2 (over GP2/3):
+GPIO43 prints the ROM boot messages and GPIO44 has a pull-up during boot, so either could look
+like "ready" while the ESP32 boots. GP0/1 ↔ 43/44 stay soldered as corner pins, both inputs.
+
+Open on hardware: the ESP32-S3's slave output through the GPIO matrix at 15.6 MHz (half a clock
+is 32 ns for MISO). Bit errors would show as bad checksums in the cable's link report; the
+fallback is `-DLINK_SPI_HZ=10000000`.

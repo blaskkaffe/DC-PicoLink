@@ -5,7 +5,8 @@ docs/DEVLOG.md (how the hard bugs were found; read before touching timing code).
 
 ## Build and test
 - Pico SDK 2.1.1 + Ubuntu `gcc-arm-none-eabi`. `cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 [-DDC_DIAG=0|1] && make -C build`
-- `tools/run-tests.sh [build-dir]`: C model tests; with a build dir also the PIO simulations.
+- `tools/run-tests.sh [build-dir]`: C model tests; with a build dir also the PIO simulations (both pin layouts).
+- Board layouts: `-DDC_BOARD=pico` (default) or `zero-stack` (DC on GPIO9-14, ESP32 link over SPI). ESP32: `sdkconfig.zero-stack` for the SPI link.
 - `tools/make-dreampi-setup.sh`: the one-file DreamPi installer (never commit the generated file).
 - CI (.github/workflows/build.yml) builds release (250 MHz, diag off) and debug UF2s; tags `v*` make a GitHub release.
 - The firmware's first status line carries `git describe`; always check it in a user's log before analysing.
@@ -16,6 +17,8 @@ docs/DEVLOG.md (how the hard bugs were found; read before touching timing code).
 - SD detection: only until a program opens the W5500 socket (`sd_locked`); ≥ 2 leading 0xFF; armed only after the SD shifter realign.
 - W5500 RECV with a bad RX_RD resyncs to rx_wr (drop buffered frames); never put back a position that may be inside a frame.
 - Baud above 115200 = dcload's divider exactly (baud_model.h), including the 8-bit wrap above 1562500.
+- Dreamcast pins: always via PIN_* / DC_PIN_BASE, never literal GPIO numbers; the PIO programs keep absolute `wait gpio` and are moved at load (dc_pio_reloc.h).
+- SPI link: the cable never clocks unless HS is high AND HS has fallen since its last transaction (edge latch); any change to that rule must pass tests/test_link_spi.c (it caught a probe that beat the ESP32's post_trans).
 - Host side for DreamPi stays an add-on: own files, services, iptables chains; never edit DreamPi's scripts.
 
 ## Conventions

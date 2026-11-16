@@ -1,0 +1,9 @@
+# RP2040-Zero + ESP32-S3 SuperMini stack (hardware/ESP32.md): the cable talks SPI.
+# idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build
+CONFIG_DCL_LINK_SPI=y
+CONFIG_DCL_LSPI_MOSI=6
+CONFIG_DCL_LSPI_MISO=3
+CONFIG_DCL_LSPI_SCLK=5
+CONFIG_DCL_LSPI_CS=4
+CONFIG_DCL_LSPI_HS=2
+CONFIG_DCL_LSPI_DR=1

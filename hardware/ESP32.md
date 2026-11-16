@@ -1,14 +1,20 @@
 # Wiring the ESP32-S3 (no DreamPi needed)
 
-The cable (RP2040) talks to an **ESP32-S3** over one UART with hardware flow control. The
-ESP32 gives the Dreamcast its internet connection over Wi-Fi (later also a W5500 on the
-ESP32). The same cable firmware still works with a Raspberry Pi or a PC over USB; see
-"Who gets the traffic" below.
+The cable (RP2040) talks to an **ESP32-S3**, which gives the Dreamcast its internet
+connection over Wi-Fi (later also a W5500 on the ESP32). The same cable firmware still works
+with a Raspberry Pi or a PC over USB; see "Who gets the traffic" below. Two ways to connect
+the boards:
 
-Tested boards: RP2040-Zero + ESP32-S3-Zero (Waveshare); any RP2040 and ESP32-S3 board works
-with the same GPIO numbers. **Status: written, not yet tried on hardware.**
+* **UART link** (any RP2040 board with the Pico wiring, e.g. Pro Micro or Pico + any
+  ESP32-S3): four wires, 3 Mbaud. Enough for serial; the W5500 path tops out around 300 KB/s.
+* **SPI link, the RP2040-Zero + ESP32-S3 SuperMini stack** (`-DDC_BOARD=zero-stack`): the two
+  boards soldered back to back, ~1.4 MB/s each way at once, enough for the Dreamcast's full
+  W5500 speed (~1000 KB/s out, ~550 KB/s in). See [the stack](#the-rp2040-zero--esp32-s3-supermini-stack-spi-link).
 
-## Connections
+**Status: written and host-tested (timing simulation of the SPI link, PIO simulations at
+both pin layouts), not yet tried on hardware.**
+
+## UART link (Pico wiring)
 
 | RP2040 (cable) | | ESP32-S3 | Signal |
 |---|---|---|---|
@@ -23,6 +29,80 @@ All four are edge pins on the RP2040-Zero. The ESP32 pins can be changed in
 (0, 3, 45, 46). The Dreamcast side of the cable is wired as in [WIRING.md](WIRING.md).
 
 Link: 3 Mbaud, 8N1, RTS/CTS. Keep the wires short (under ~15 cm) with a solid ground.
+
+## The RP2040-Zero + ESP32-S3 SuperMini stack (SPI link)
+
+The RP2040-Zero on top, face up; the ESP32-S3 SuperMini underneath, face down; both USB
+ports at the same end. The Dreamcast ribbon leaves at the far end, between the boards.
+Positions count from the USB end. Only pins that sit directly over each other are joined;
+a pin marked "solder" goes through both boards. **Check the alignment with calipers before
+soldering** (both boards are 18 mm wide on a 2.54 mm pitch, but the first pin's distance from
+the USB end may differ slightly).
+
+| Pos | Zero left ↔ SuperMini | Use | Zero right ↔ SuperMini | Use |
+|---|---|---|---|---|
+| 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | **solder**, strength only (both inputs) |
+| 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | **solder**, strength only (both inputs) |
+| 3 | 3V3 ↔ 3V3 | **not connected** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR, ESP32 has data |
+| 4 | GP29 ↔ GPIO13 | not joined: SD CS / W5500 MISO | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
+| 5 | GP28 ↔ GPIO12 | not joined: SD MISO / W5500 SCK | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
+| 6 | GP27 ↔ GPIO11 | not joined: SD MOSI / W5500 MOSI | GP5 ↔ GPIO4 | **solder**: SPI CS |
+| 7 | GP26 ↔ GPIO10 | not joined: SD SCK / W5500 CS | GP6 ↔ GPIO5 | **solder**: SPI clock |
+| 8 | GP15 ↔ GPIO9 | **solder**, strength only (spare) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+
+Corners: 5V/GND top left, GP0/GP1 top right, GP15 bottom left, the SPI pins bottom right.
+GP0/GP1 sit over GPIO43/44 but aren't used as signals: GPIO43 prints the ESP32's ROM boot
+messages and GPIO44 has a pull-up during its boot. Not joined pins are wired from the outside:
+the Zero's castellated edge pads, the SuperMini's holes from its outer face.
+
+The Zero's bottom edge, the Dreamcast ([WIRING.md](WIRING.md), the same signals as GPIO2-7
+there, moved to GPIO9-14):
+
+| Zero | Dreamcast (via the SD adapter) |
+|---|---|
+| GP9 | DC CTS (sense / SPI clock) |
+| GP10 | DC TXD → cable RX |
+| GP11 | DC RXD ← cable TX |
+| GP12 | DC RTS (SPI CS) |
+| GP13 | ---[1k]--- GP9 (the cable's RTS out) |
+| GP14 | optional: 10k to the Dreamcast's 3.3 V (sense wire) |
+
+Planned, not in the firmware yet: an SD slot on the Zero's SPI1 (SCK GP26, MOSI GP27,
+MISO GP28, CS GP29; on this layout GP9 belongs to the Dreamcast) and a W5500 on the ESP32's
+fast SPI pins (CS 10, MOSI 11, SCK 12, MISO 13, INT 7).
+
+**The link:** the cable is the SPI master (SPI0, ~15.6 MHz at 250 MHz, mode 1), the ESP32 the
+slave (SPI3). Every transaction is 1024 bytes both ways; the packets inside are the same as on
+the UART link. HS tells the cable that the ESP32 has a transaction loaded (the cable never
+clocks one into an ESP32 that isn't ready), DR that the ESP32 has data. Details and the
+reasoning: `firmware/link_spi_model.h`; the timing simulation in `firmware/tests/test_link_spi.c`.
+
+**Power:** 5V and GND are shared, so either board's USB powers both. **Plug in only one USB
+port at a time** (the RP2040-Zero has no diode on its USB 5 V). Power from the Dreamcast
+(serial pin 1, +5 V) goes through a Schottky diode (e.g. SS14) into the 5V rail, pins 3 and 8
+to GND; the current budget is not measured yet (see Power below).
+
+**Firmware:** cable `-DDC_BOARD=zero-stack`; ESP32 with `sdkconfig.zero-stack` (link: SPI; pins
+MOSI 6, MISO 3, SCLK 5, CS 4, HS 2, DR 1). Build commands: [../README.md#building](../README.md#building).
+
+### Testing the stack without a Dreamcast
+
+1. Flash the cable with the **USB bridge test build** (`-DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1`)
+   and the ESP32 with the zero-stack configuration.
+2. Plug only the Zero into a computer (it powers the ESP32 through the stack).
+3. Join **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.4.1: expect "link: up"
+   and the cable's first line with `[TEST BUILD: USB network bridged to the ESP32]` and
+   `esp32 link: up (SPI, Hz 15625000)`.
+4. Save your home Wi-Fi on the page and turn **DCNow! off** (or the computer shows up as a
+   Dreamcast online).
+5. The computer gets a USB network adapter with an address 192.168.99.x from the ESP32.
+   `ping 192.168.99.1`, then e.g. `curl --interface <adapter> http://example.com` (give the
+   adapter a low priority so the computer doesn't send everything through it). A large
+   download through it is a good soak test.
+6. Every 10 s the cable reports `esp32 link (SPI): ... transactions, ... probes, ... timeouts`
+   and, when anything goes wrong, bad checksums. **Bad checksums mean bit errors on the wires**:
+   rebuild the cable with a lower clock (`-DLINK_SPI_HZ=10000000`) and
+   report it. Probes or timeouts should stay at 0.
 
 ## Power
 

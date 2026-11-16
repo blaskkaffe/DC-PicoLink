@@ -2,11 +2,18 @@
 #include <stdint.h>
 #include "hardware/pio.h"
 
-#define PIN_DC_CTS_SENSE  2   /* SD CLK  (DC CTS)  SPI SCLK / sense      */
-#define PIN_RX            3   /* SD CMD  (DC TXD)  UART RX / SPI MOSI    */
-#define PIN_TX            4   /* SD DAT0 (DC RXD)  UART TX / SPI MISO    */
-#define PIN_CTS           5   /* SD CS   (DC RTS)  UART CTS / SPI CS     */
-#define PIN_RTS           6   /* -> 1k -> GPIO2 -> DC CTS                */
+/* The Dreamcast pins are six consecutive GPIOs from DC_PIN_BASE, always in this order.
+   DC_PIN_BASE 2 (default): GPIO2-7, the Pico / Pro Micro wiring in hardware/WIRING.md.
+   DC_PIN_BASE 9 (cmake -DDC_BOARD=zero-stack): GPIO9-14 on the RP2040-Zero's bottom edge.
+   The W5500/SD PIO programs are loaded moved to these pins (dc_pio_reloc.h). */
+#ifndef DC_PIN_BASE
+#define DC_PIN_BASE       2
+#endif
+#define PIN_DC_CTS_SENSE  (DC_PIN_BASE + 0)   /* SD CLK  (DC CTS)  SPI SCLK / sense      */
+#define PIN_RX            (DC_PIN_BASE + 1)   /* SD CMD  (DC TXD)  UART RX / SPI MOSI    */
+#define PIN_TX            (DC_PIN_BASE + 2)   /* SD DAT0 (DC RXD)  UART TX / SPI MISO    */
+#define PIN_CTS           (DC_PIN_BASE + 3)   /* SD CS   (DC RTS)  UART CTS / SPI CS     */
+#define PIN_RTS           (DC_PIN_BASE + 4)   /* -> 1k -> PIN_DC_CTS_SENSE -> DC CTS     */
 
 enum { MODE_SERIAL = 0, MODE_W5500 = 1, MODE_OFFLINE = 2 };
 
@@ -18,13 +25,13 @@ enum { MODE_SERIAL = 0, MODE_W5500 = 1, MODE_OFFLINE = 2 };
    DC_POWER_PIN = GPIO for the optional sense wire (~10k to the SD adapter's VDD
    pin = DC 3.3V). The firmware finds the wire by itself: once GPIO7 has been high
    for 100 ms, the wire is used until the RP2040 loses power (it runs from the Pi's
-   USB). Without the wire GPIO7's pull-down keeps it low and nothing changes. If the
-   DC drives TXD/RTS high for 2 s while GPIO7 stays low, the wire is gone: back to
+   USB). Without the wire its pull-down keeps it low and nothing changes. If the
+   DC drives TXD/RTS high for 2 s while the sense pin stays low, the wire is gone: back to
    TXD/RTS.
-   -DDC_POWER_PIN=-1 turns the sense wire off completely (if GPIO7 is used for
+   -DDC_POWER_PIN=-1 turns the sense wire off completely (if that GPIO is used for
    something else on your board). */
 #ifndef DC_POWER_PIN
-#define DC_POWER_PIN      7
+#define DC_POWER_PIN      (DC_PIN_BASE + 5)   /* GPIO7, or GPIO14 on the zero-stack */
 #endif
 extern volatile uint8_t dc_sense;           /* 1: the sense wire is in use (set by core0) */
 #define DC_ONLINE_DELAY_SENSE_US  700000u   /* 3.3V -> GRESN release is >= 400 ms */
