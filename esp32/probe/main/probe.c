@@ -65,7 +65,8 @@ static DRAM_ATTR uint8_t s_cap[DCSPI_CAP];
 
 // Pauses of this core: a loop of a few cycles that reads the cycle counter.
 typedef struct { uint32_t max, n16, n64, n256, n1k; } jit_t;
-static jit_t g_jit[3];
+static jit_t g_jit[5];
+#define JIT_CYCLES 1200000000u               // 5 s at 240 MHz
 
 static void IRAM_ATTR __attribute__((noinline)) jitter(uint32_t total, jit_t *out)
 {
@@ -106,20 +107,21 @@ static void core1_task(void *arg)
         vTaskDelete(NULL);
     }
     uint32_t old;
-    // 1: pauses, Wi-Fi off, interrupts masked the usual way (levels 1-3)
-    portDISABLE_INTERRUPTS(); jitter(480000000u, &g_jit[0]); portENABLE_INTERRUPTS();
+    // step 1: pauses with Wi-Fi off
+    old = XTOS_SET_INTLEVEL(5); jitter(JIT_CYCLES, &g_jit[0]); XTOS_RESTORE_INTLEVEL(old);
     g_done = 1;
-    // 2: the slave, until main stops it (levels 1-5 masked)
+    // step 2: the slave, until main stops it
     wait_phase(2);
     old = XTOS_SET_INTLEVEL(5); dcspi_bb_responder(g_mem, s_cap, &g_frames, &g_run); XTOS_RESTORE_INTLEVEL(old);
     g_done = 2;
-    // 3: pauses with Wi-Fi on: levels 1-3 masked, then 1-5
-    wait_phase(3);
-    portDISABLE_INTERRUPTS(); jitter(480000000u, &g_jit[1]); portENABLE_INTERRUPTS();
-    old = XTOS_SET_INTLEVEL(5); jitter(480000000u, &g_jit[2]); XTOS_RESTORE_INTLEVEL(old);
-    g_done = 3;
-    // 4: the slave again, for good
-    wait_phase(4);
+    // steps 3-6: pauses under four kinds of Wi-Fi activity (main sets each up)
+    for (int i = 1; i <= 4; i++) {
+        wait_phase(2 + i);
+        old = XTOS_SET_INTLEVEL(5); jitter(JIT_CYCLES, &g_jit[i]); XTOS_RESTORE_INTLEVEL(old);
+        g_done = 2 + i;
+    }
+    // step 7: the slave again, for good
+    wait_phase(7);
     g_run = 1;
     old = XTOS_SET_INTLEVEL(5); dcspi_bb_responder(g_mem, s_cap, &g_frames, &g_run); XTOS_RESTORE_INTLEVEL(old);
     vTaskDelete(NULL);
@@ -234,15 +236,47 @@ static void show_jit(const char *what, const jit_t *j)
            what, (unsigned)(j->max * 25 / 6), (unsigned)j->n16, (unsigned)j->n64, (unsigned)j->n256, (unsigned)j->n1k);
 }
 
-static void wifi_busy(void *arg)
+// Wi-Fi activity on the other core: bit 0 = send 500 raw frames a second, bit 1 = scan
+// (hops through all channels), bit 2 = listen to everything on the air (promiscuous).
+static volatile int g_load;
+static volatile uint32_t g_tx_ok, g_rx_seen;
+
+static void on_air(void *buf, wifi_promiscuous_pkt_type_t type) { (void)buf; (void)type; g_rx_seen++; }
+
+static void wifi_load(void *arg)
 {
-    for (;;) { esp_wifi_scan_start(NULL, false); vTaskDelay(pdMS_TO_TICKS(4000)); }
+    static uint8_t frame[64] = {
+        0x80, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,      // a beacon to everybody
+        0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x00, 0x00,
+        0, 0, 0, 0, 0, 0, 0, 0, 0x64, 0x00, 0x01, 0x04,
+        0x00, 0x05, 'p', 'r', 'o', 'b', 'e',
+    };
+    int tick = 0;
+    for (;;) {
+        int l = g_load;
+        if (l & 1) { if (esp_wifi_80211_tx(WIFI_IF_AP, frame, 43, false) == ESP_OK) g_tx_ok++; }
+        if ((l & 2) && tick % 2000 == 0) esp_wifi_scan_start(NULL, false);
+        tick++;
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+static void pauses(int step, int load, const char *what)
+{
+    uint32_t t0 = g_tx_ok, r0 = g_rx_seen;
+    esp_wifi_set_promiscuous((load & 4) != 0);
+    g_load = load;
+    vTaskDelay(pdMS_TO_TICKS(300));
+    g_phase = step;
+    while (g_done < step) vTaskDelay(1);
+    show_jit(what, &g_jit[step - 2]);
+    printf("probe:    (during it: %u frames sent, %u heard)\n", (unsigned)(g_tx_ok - t0), (unsigned)(g_rx_seen - r0));
 }
 
 void app_main(void)
 {
     vTaskDelay(pdMS_TO_TICKS(3000));       // time to open the serial port
-    printf("\nprobe: DC-PicoLink ESP32-only probe 5 (" __DATE__ " " __TIME__ ")\n");
+    printf("\nprobe: DC-PicoLink ESP32-only probe 6 (" __DATE__ " " __TIME__ ")\n");
 
     // Wi-Fi is prepared first: its start-up writes to flash, and a flash write waits for
     // the other core, which will never answer once the slave runs.
@@ -281,42 +315,46 @@ void app_main(void)
     xTaskCreatePinnedToCore(core1_task, "responder", 4096, NULL, 5, NULL, 1);
     while (!g_done) vTaskDelay(1);
     if (g_done < 0) return;
-    printf("\nprobe: pauses of the slave's core: a loop that takes about 42 ns per pass, run for 2 s.\n");
+    printf("\nprobe: pauses of the slave's core: a loop that takes about 42 ns per pass, run for 5 s each time.\n");
     printf("probe: Any pass over 67 ns is a pause of 25 ns or more, enough to cost a bit at speed.\n");
     show_jit("Wi-Fi off", &g_jit[0]);
 
     g_phase = 2;
     vTaskDelay(pdMS_TO_TICKS(50));
     head("Wi-Fi off, 20 000 writes + 20 000 reads per line");
-    for (unsigned i = 0; i < NSPEED; i++) row(&speeds[i], 20000);
+    row(&speeds[2], 20000); row(&speeds[3], 20000); row(&speeds[8], 20000);
 
-    // stop the slave (it looks at the flag at a frame end), measure pauses with Wi-Fi on
+    // stop the slave (it looks at the flag at a frame end)
     g_run = 0;
     master_open(1000000, 128);
     { uint8_t z[4] = { 0, 0, 0, 0xFF }; spi_transaction_t t = { .length = 32, .tx_buffer = z }; spi_device_polling_transmit(s_dev, &t); }
     spi_bus_remove_device(s_dev);
     while (g_done < 2) vTaskDelay(1);
     esp_wifi_start();
-    xTaskCreatePinnedToCore(wifi_busy, "wifi_busy", 4096, NULL, 4, NULL, 0);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_promiscuous_rx_cb(on_air);
+    xTaskCreatePinnedToCore(wifi_load, "wifi_load", 4096, NULL, 4, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(500));
-    g_phase = 3;
-    while (g_done < 3) vTaskDelay(1);
-    show_jit("Wi-Fi on, interrupt levels 1-3 off", &g_jit[1]);
-    show_jit("Wi-Fi on, interrupt levels 1-5 off", &g_jit[2]);
+    printf("\nprobe: which Wi-Fi activity pauses the slave's core?\n");
+    pauses(3, 0, "Wi-Fi on, idle (access point beacons only)");
+    pauses(4, 1, "Wi-Fi on, sending 500 frames a second");
+    pauses(5, 5, "Wi-Fi on, sending and listening to everything on the air");
+    pauses(6, 2, "Wi-Fi on, scanning (changes channel all the time)");
 
-    g_phase = 4;
+    g_load = 5;                              // send + listen, no scan: like an adapter in use
+    g_phase = 7;
     vTaskDelay(pdMS_TO_TICKS(50));
-    head("Wi-Fi on (access point up, scanning), 20 000 + 20 000 per line");
-    for (unsigned i = 0; i < NSPEED; i++) row(&speeds[i], 20000);
-
-    head("Wi-Fi on, long run: 200 000 + 200 000 per line (about 2 minutes)");
+    head("Wi-Fi on, sending and listening, NO scan: 200 000 + 200 000 per line");
     row(&speeds[2], 200000);
     row(&speeds[3], 200000);
     row(&speeds[8], 200000);
-    row(&speeds[9], 200000);
+    g_load = 7; esp_wifi_set_promiscuous(true);
+    head("Wi-Fi on, sending, listening AND scanning: 100 000 + 100 000 per line");
+    row(&speeds[2], 100000);
+    row(&speeds[8], 100000);
 
     printf("\nprobe: done. Bad writes and lost frames are what counts; 'reads ok' and 'ok, 1 early' are both\n");
     printf("probe: correct replies, and 'bad reads' with clean writes can be this test's master sampling at the\n");
-    printf("probe: moment the data changes. Send everything from 'probe 5' on.\n");
+    printf("probe: moment the data changes. Send everything from 'probe 6' on.\n");
     for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
 }
