@@ -118,7 +118,7 @@ static bool wait_frame(uint32_t before)
     return true;
 }
 
-typedef struct { uint32_t frames, wr, first, other, lost; } result_t;
+typedef struct { uint32_t frames, wr, rd_sent, rd_early, first, other, lost; } result_t;
 
 static void run(int frames, result_t *r)
 {
@@ -149,8 +149,19 @@ static void run(int frames, result_t *r)
         spi_device_polling_transmit(s_dev, &t);
         r->frames++;
         if (!wait_frame(f)) r->lost++;
-        if (rx[3] != want[0]) r->first++;
-        else if (memcmp(rx + 3, want, len)) r->other++;
+        // The slave puts every bit out right after the rising edge (the Dreamcast's rule).
+        // A master that samples a little after the edge therefore sees every bit one clock
+        // early: both views are a correct reply. "first bit late": only the very first reply
+        // bit missed that early sample (the Dreamcast gives it a whole bit more).
+        bool sent = !memcmp(rx + 3, want, len), early = true, early1 = true;
+        for (unsigned k = 0; k < len; k++) {
+            uint8_t g = (uint8_t)((rx[2 + k] & 1) << 7 | rx[3 + k] >> 1);
+            if (g != want[k]) early = false;
+            if ((g ^ want[k]) & (k ? 0xFF : 0x7F)) early1 = false;
+        }
+        if (sent) r->rd_sent++; else if (early) r->rd_early++; else if (early1) r->first++; else r->other++;
+        if (r->lost > 100) return;                 // out of step at this speed: no point going on
+        if ((i & 63) == 63) vTaskDelay(1);         // let the idle task run (watchdog)
     }
 }
 
@@ -158,15 +169,15 @@ static void sweep(const char *title)
 {
     static const int hz[] = { 1000000, 4000000, 8000000, 10000000, 13333333, 16000000, 20000000 };
     printf("\nprobe: %s\n", title);
-    printf("probe:   clock    frames   bad writes   bad first byte   bad later byte   lost frames\n");
+    printf("probe:   clock   frames  bad writes  reads ok  reads ok, 1 bit early  first bit late  bad reads  lost frames\n");
     for (unsigned i = 0; i < sizeof hz / sizeof hz[0]; i++) {
         int khz = master_open(hz[i]);
         if (khz < 0) { printf("probe: could not set %d Hz\n", hz[i]); continue; }
         result_t r;
         run(20000, &r);
-        printf("probe: %5d kHz %8u %12u %16u %16u %13u  %s\n", khz, (unsigned)r.frames, (unsigned)r.wr,
-               (unsigned)r.first, (unsigned)r.other, (unsigned)r.lost,
-               (r.wr | r.first | r.other | r.lost) ? "FAIL" : "ok");
+        printf("probe: %5d kHz %7u %11u %9u %21u %15u %10u %12u  %s\n", khz, (unsigned)r.frames, (unsigned)r.wr,
+               (unsigned)r.rd_sent, (unsigned)r.rd_early, (unsigned)r.first, (unsigned)r.other, (unsigned)r.lost,
+               r.lost > 100 ? "FAIL (stopped early)" : (r.wr | r.other | r.lost) ? "FAIL" : r.first ? "ok but first bit late" : "ok");
         spi_bus_remove_device(s_dev);
         vTaskDelay(1);
     }
@@ -220,6 +231,7 @@ void app_main(void)
     sweep("Wi-Fi on, second pass");
 
     printf("\nprobe: done. Needed for the Dreamcast: no FAIL up to 13333 kHz; 16000 kHz clean means margin.\n");
+    printf("probe: 'reads ok' and 'reads ok, 1 bit early' are both correct replies (it only shows when this master samples).\n");
     printf("probe: send the whole table back, including the lines that failed.\n");
     for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
 }
