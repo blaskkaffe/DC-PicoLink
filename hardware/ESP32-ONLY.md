@@ -1,6 +1,32 @@
 # ESP32 only: can the RP2040 be left out?
 
-**Status: an open question with a test that answers it. Nothing here has run on hardware.**
+**Status: measured on an ESP32-S3 SuperMini on 16 Nov 2026. Answer: no, not for the W5500
+and SD card over the serial port. The RP2040 stays. An ESP32 alone is still enough for
+serial games, a USB modem and the broadband adapter port, which don't need this timing.**
+
+## Result
+
+| | Wi-Fi off | Wi-Fi on |
+|---|---|---|
+| Pauses of the slave's core (5 s, a pause of 25 ns or more) | 0 | 4 idle, 5 while sending and listening, 39 while scanning; each about 40 ns |
+| 8 MHz clock with a 37 ns high phase, 200 000 writes | 0 bad | 53 bad (no scan) |
+| 13.3 MHz even clock, 200 000 writes | 0 bad | 1085 bad (no scan) |
+| Fastest clean clock | 13.3 MHz (16 MHz fails) | none |
+
+* With Wi-Fi off the bit-banged slave is clean up to 13.3 MHz, just above the Dreamcast's
+  fastest clock (40 ns phases, like 12.5 MHz). There is no margin beyond that.
+* With Wi-Fi on, the core that runs the slave is paused for about 40 ns now and then, also
+  when the radio only sends beacons. Masking interrupt levels 1-5 doesn't change it, so it
+  isn't an interrupt. A 40 ns pause is as long as the Dreamcast's shortest clock phase:
+  when it lands on one, the edge is never seen. No code can fix that.
+* In use that would be a corrupted W5500 register or data byte every few seconds.
+
+Found on the way and worth keeping: a slave must check chip select in every clock wait
+(frames are whole bytes, so one missed edge otherwise leaves it a bit off for ever), and
+nothing may write to flash while one core is held with interrupts off (the first Wi-Fi
+start saves calibration data and hung).
+
+The rest of this page is the question and the method, as written before the measurement.
 
 The RP2040 is in the design for one job: when a Dreamcast program uses the W5500 or SD card
 over the serial port, the Dreamcast is the SPI master and bit-bangs the clock with phases

@@ -310,3 +310,14 @@ slave on one core with the dedicated-GPIO instructions can on paper: 4 cycles pe
   bit; check the disassembly after every change to dcspi_bb.h, like w5_header.
 * The host test caught a slave that polled chip select once more after a frame end and lost
   the next frame when the gap was short.
+
+## ESP32 only: measured, and the answer is no (16 Nov 2026, SuperMini)
+
+Seven probe runs (`esp32/probe`, results in hardware/ESP32-ONLY.md). Wi-Fi off: clean to
+13.3 MHz, 16 MHz fails, so no margin over the Dreamcast's 40 ns phases. Wi-Fi on: the
+slave's core is paused ~40 ns a few times a second even with beacons only (not an
+interrupt: masking levels 1-5 changes nothing), and 53 of 200 000 writes go bad at a
+Dreamcast-like clock without any scanning. The RP2040 stays for W5500 and SD.
+Lessons: check chip select in every clock wait; no flash writes while a core is held;
+`pdMS_TO_TICKS(2)` is 0 at a 10 ms tick.
+

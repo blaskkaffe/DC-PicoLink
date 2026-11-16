@@ -119,7 +119,7 @@ DreamPi installer.
 Part of a family of `DC-` Dreamcast projects.
 
 `esp32/probe` is a test firmware for one question: can the ESP32-S3 do the RP2040's job too?
-See [hardware/ESP32-ONLY.md](hardware/ESP32-ONLY.md).
+Measured: no (Wi-Fi pauses the other core for ~40 ns). See [hardware/ESP32-ONLY.md](hardware/ESP32-ONLY.md).
 
 ## License
 
