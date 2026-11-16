@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define MAXT (1 << 24)
-static uint8_t wave[MAXT];              // per tick: bit0 clock, bit1 MOSI, bit2 chip select
+static uint8_t wave[MAXT];              // per tick: bit0 MOSI, bit1 clock, bit2 chip select
 static uint32_t wlen, now;
 static int miso = 1;
 static volatile int sim_run = 1;
@@ -21,17 +21,15 @@ static uint32_t sim_in(void)
     while (steps--) {
         if (now + 1 >= wlen) { sim_run = 0; return 4; }
         now++;
-        if ((wave[now] & 1) && !(wave[now - 1] & 1)) sampled[nsampled++] = (uint8_t)miso;
+        if ((wave[now] & 2) && !(wave[now - 1] & 2)) sampled[nsampled++] = (uint8_t)miso;
     }
     return wave[now];
 }
 
 #define DCSPI_ATTR
 #define DCSPI_OM
-#define DC_RISE(v)        do { v = sim_in(); } while (!(v & 1) && sim_run)
-#define DC_RISE_CS(v, l)  do { v = sim_in(); if (v & 4) goto l; } while (!(v & 1))
-#define DC_FALL()         do { } while ((sim_in() & 1) && sim_run)
-#define DC_MOSI(v)        (((v) >> 1) & 1)
+#define DC_RISE_CS(v, l)  do { v = sim_in(); if (v & 4) goto l; } while (!(v & 2))
+#define DC_FALL()         do { } while ((sim_in() & 2) && sim_run)
 #define DC_OUT(w)         (miso = (int)((w) >> 31))
 #define DC_IDLE()         (miso = 1)
 #define DC_WAIT_CS_HIGH() do { } while (!(sim_in() & 4))
@@ -45,9 +43,9 @@ static unsigned ph(unsigned lo) { return lo + (unsigned)rand() % 4; }
 static void byte_out(unsigned b, unsigned lo)
 {
     for (int i = 7; i >= 0; i--) {
-        unsigned m = ((b >> i) & 1) << 1;
+        unsigned m = (b >> i) & 1;
         seg(ph(lo), m);            // clock low, data set up
-        seg(ph(lo), m | 1);        // clock high
+        seg(ph(lo), m | 2);        // clock high
     }
 }
 

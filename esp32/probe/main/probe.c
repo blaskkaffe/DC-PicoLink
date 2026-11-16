@@ -1,20 +1,18 @@
 // DC-PicoLink probe: can an ESP32-S3 alone answer the Dreamcast's W5500 SPI?
 //
 // No wiring and no Dreamcast needed. Flash it on a bare ESP32-S3 board and read the USB
-// serial port. One core plays the Dreamcast (the SPI master peripheral, at rising clock
-// speeds); the other core is the candidate W5500 emulation: a bit-banged SPI slave that uses
-// the ESP32-S3's "dedicated GPIO" CPU instructions, with interrupts off, the same way core1
-// of the RP2040 runs. Both use the same four pads (GPIO4-7), so the signals go out through
-// the pad drivers and back in through the input buffers like real ones.
+// serial port. One core plays the Dreamcast (the SPI master peripheral); the other core is
+// the candidate W5500 emulation: a bit-banged SPI slave that uses the ESP32-S3's "dedicated
+// GPIO" CPU instructions, with interrupts off, the way core1 of the RP2040 runs. Both use the
+// same four pads (GPIO4-7), so the signals go out through the pad drivers and back in through
+// the input buffers like real ones.
 //
-// What it answers: at which clock speed does the bit-banged slave start losing bits, with
-// and without Wi-Fi running. KOS on the Dreamcast writes at about 8 Mbit/s with clock
-// phases down to ~40 ns (like a 12.5 MHz clock) and reads at about 4.4 Mbit/s. So the
-// candidate needs to be clean at 13.3 MHz to be worth building on, and 16 MHz for margin.
-//
-// What it does not answer: the Dreamcast's own timing quirks (its late RXD sampling, its
-// uneven clock). The frame format and the "answer right after the rising edge" rule are the
-// same as firmware/w5500_spi.pio.
+// What it measures:
+//  1. Pauses of the slave's core (a loop that reads the cycle counter), Wi-Fi off and on.
+//  2. Frames at rising clock speeds, with even and with lopsided clocks (KOS's clock has
+//     phases down to ~40 ns: like 12.5 MHz), Wi-Fi off and on.
+//  3. A long run at the speeds that matter, Wi-Fi on.
+// What it does not answer: the Dreamcast's own timing quirks. hardware/ESP32-ONLY.md.
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -33,44 +31,63 @@
 #include "nvs_flash.h"
 #include "esp_attr.h"
 #include "esp_timer.h"
+#include "esp_cpu.h"
+#include "xtensa/xtruntime.h"
 
 #define P_CLK  4
 #define P_MOSI 5
 #define P_MISO 6
 #define P_CS   7
 
-// input bundle order: CLK, MOSI, CS
-#define B_CLK  1u
-#define B_MOSI_SHIFT 1
-#define B_CS   4u
-
 static DRAM_ATTR uint8_t g_mem[4 * 256 + 32];   // [block select 0-3][address low byte]
 static DRAM_ATTR volatile uint32_t g_frames;
 static DRAM_ATTR volatile int g_run = 1;
-static volatile int g_ready;
+static volatile int g_phase;                    // main -> core 1: what to do next
+static volatile int g_done;                     // core 1 -> main: finished phase N
 
-// Pin access for dcspi_bb.h: the ESP32-S3's dedicated-GPIO instructions (one CPU cycle,
-// no bus access). Input bits: 0 = clock, 1 = MOSI, 2 = chip select.
-static DRAM_ATTR uint32_t s_om;                      // MISO's dedicated output bit
-#define DCSPI_ATTR IRAM_ATTR __attribute__((noinline))
-#define DC_RISE(v)  asm volatile("1:\n ee.get_gpio_in %0\n bbci %0, 0, 1b\n" : "=r"(v))
-#define DC_RISE_CS(v, l) asm goto("1:\n ee.get_gpio_in %0\n bbsi %0, 0, 2f\n bbci %0, 2, 1b\n j %l[" #l "]\n2:\n" \
-                                  : "=r"(v) : : : l)
-#define DC_FALL()   do { uint32_t t_; asm volatile("1:\n ee.get_gpio_in %0\n bbsi %0, 0, 1b\n" : "=r"(t_)); } while (0)
-#define DC_MOSI(v)  (((v) >> B_MOSI_SHIFT) & 1)
-#define DC_OUT(w)   dedic_gpio_cpu_ll_write_mask(om, (uint32_t)((int32_t)(w) >> 31) & om)
+// Pin access for dcspi_bb.h: the ESP32-S3's dedicated-GPIO instructions (no bus access).
+// Input bits: 0 = MOSI, 1 = clock, 2 = chip select. Output bit 0 = MISO.
+// The waits are zero-overhead loops: 3 cycles per look at the pins (2 for DC_FALL).
+#define DCSPI_ATTR IRAM_ATTR __attribute__((noinline, optimize("no-branch-count-reg")))
+#define DCSPI_OM   const uint32_t om = 1; uint32_t lc = 0; asm volatile("" : "+r"(lc));
+#define DC_RISE_CS(v, l) asm goto(" ee.get_gpio_in %0\n1: loop %1, 9f\n bbsi %0, 1, 2f\n bbsi %0, 2, 8f\n" \
+                                  " ee.get_gpio_in %0\n9: j 1b\n8: j %l[" #l "]\n2:\n" : "=&r"(v) : "r"(lc) : : l)
+#define DC_FALL()   do { uint32_t t_; asm volatile(" ee.get_gpio_in %0\n1: loop %1, 9f\n bbci %0, 1, 2f\n" \
+                                                   " ee.get_gpio_in %0\n9: j 1b\n2:\n" : "=&r"(t_) : "r"(lc)); } while (0)
+#define DC_OUT(w)   dedic_gpio_cpu_ll_write_mask(om, (w) >> 31)
 #define DC_IDLE()   dedic_gpio_cpu_ll_write_mask(om, om)
 #define DC_WAIT_CS_HIGH() do { uint32_t t_; asm volatile("1:\n ee.get_gpio_in %0\n bbci %0, 2, 1b\n" : "=r"(t_)); } while (0)
 #define DC_WAIT_CS_LOW()  do { uint32_t t_; asm volatile("1:\n ee.get_gpio_in %0\n bbsi %0, 2, 1b\n" : "=r"(t_)); } while (0)
 #define DC_KEEP(x)  asm volatile("" : "+r"(x))
-#define DCSPI_OM    const uint32_t om = s_om;
 #include "dcspi_bb.h"
 
 static DRAM_ATTR uint8_t s_cap[DCSPI_CAP];
 
+// Pauses of this core: a loop of a few cycles that reads the cycle counter.
+typedef struct { uint32_t max, n16, n64, n256, n1k; } jit_t;
+static jit_t g_jit[3];
+
+static void IRAM_ATTR __attribute__((noinline)) jitter(uint32_t total, jit_t *out)
+{
+    uint32_t start = esp_cpu_get_cycle_count(), prev = start, max = 0, n16 = 0, n64 = 0, n256 = 0, n1k = 0, c;
+    do {
+        c = esp_cpu_get_cycle_count();
+        uint32_t d = c - prev;
+        prev = c;
+        if (d >= 16) {
+            n16++;
+            if (d > max) max = d;
+            if (d >= 64) { n64++; if (d >= 256) { n256++; if (d >= 1024) n1k++; } }
+        }
+    } while (c - start < total);
+    out->max = max; out->n16 = n16; out->n64 = n64; out->n256 = n256; out->n1k = n1k;
+}
+
+static void wait_phase(int n) { while (g_phase < n) vTaskDelay(1); }
+
 static void core1_task(void *arg)
 {
-    static const int in_pins[] = { P_CLK, P_MOSI, P_CS };
+    static const int in_pins[] = { P_MOSI, P_CLK, P_CS };
     static const int out_pins[] = { P_MISO };
     dedic_gpio_bundle_handle_t bin = NULL, bout = NULL;
     dedic_gpio_bundle_config_t ci = { .gpio_array = in_pins, .array_size = 3, .flags = { .in_en = 1 } };
@@ -83,26 +100,38 @@ static void core1_task(void *arg)
     // the master still reads its MISO from the same pad
     gpio_ll_input_enable(&GPIO, P_MISO);
     esp_rom_gpio_connect_in_signal(P_MISO, spi_periph_signal[SPI2_HOST].spiq_in, false);
-    if (off != 0 || !om) {
+    if (off != 0 || om != 1) {
         printf("probe: unexpected dedicated GPIO layout (in offset %u, out mask %x)\n", (unsigned)off, (unsigned)om);
-        g_ready = -1;
+        g_done = -1;
         vTaskDelete(NULL);
     }
-    g_ready = 1;
-    portDISABLE_INTERRUPTS();
-    s_om = om;
-    dcspi_bb_responder(g_mem, s_cap, &g_frames, &g_run);
-    portENABLE_INTERRUPTS();
-    g_ready = 2;
+    uint32_t old;
+    // 1: pauses, Wi-Fi off, interrupts masked the usual way (levels 1-3)
+    portDISABLE_INTERRUPTS(); jitter(480000000u, &g_jit[0]); portENABLE_INTERRUPTS();
+    g_done = 1;
+    // 2: the slave, until main stops it (levels 1-5 masked)
+    wait_phase(2);
+    old = XTOS_SET_INTLEVEL(5); dcspi_bb_responder(g_mem, s_cap, &g_frames, &g_run); XTOS_RESTORE_INTLEVEL(old);
+    g_done = 2;
+    // 3: pauses with Wi-Fi on: levels 1-3 masked, then 1-5
+    wait_phase(3);
+    portDISABLE_INTERRUPTS(); jitter(480000000u, &g_jit[1]); portENABLE_INTERRUPTS();
+    old = XTOS_SET_INTLEVEL(5); jitter(480000000u, &g_jit[2]); XTOS_RESTORE_INTLEVEL(old);
+    g_done = 3;
+    // 4: the slave again, for good
+    wait_phase(4);
+    g_run = 1;
+    old = XTOS_SET_INTLEVEL(5); dcspi_bb_responder(g_mem, s_cap, &g_frames, &g_run); XTOS_RESTORE_INTLEVEL(old);
     vTaskDelete(NULL);
 }
 
 static spi_device_handle_t s_dev;
 
-static int master_open(int hz)
+// duty: share of the bit that the clock is high, in 1/256 (128 = even)
+static int master_open(int hz, int duty)
 {
     spi_device_interface_config_t dc = {
-        .mode = 0, .clock_speed_hz = hz, .spics_io_num = P_CS, .queue_size = 1,
+        .mode = 0, .clock_speed_hz = hz, .duty_cycle_pos = (uint16_t)duty, .spics_io_num = P_CS, .queue_size = 1,
     };
     if (spi_bus_add_device(SPI2_HOST, &dc, &s_dev) != ESP_OK) return -1;
     int khz = 0;
@@ -165,31 +194,58 @@ static void run(int frames, result_t *r)
     }
 }
 
-static void sweep(const char *title)
+typedef struct { int hz, duty; const char *name; } speed_t;
+static const speed_t speeds[] = {
+    {  4000000, 128, " 4.0 MHz even 125/125 ns" },
+    {  8000000, 128, " 8.0 MHz even   62/62 ns" },
+    {  8000000,  77, " 8.0 MHz high 37, low 87" },
+    {  8000000, 179, " 8.0 MHz high 87, low 37" },
+    { 10000000, 128, "10.0 MHz even   50/50 ns" },
+    { 10000000,  96, "10.0 MHz high 37, low 62" },
+    { 10000000, 160, "10.0 MHz high 62, low 37" },
+    { 11428571, 128, "11.4 MHz even   44/44 ns" },
+    { 13333333, 128, "13.3 MHz even   37/37 ns" },
+    { 16000000, 128, "16.0 MHz even   31/31 ns" },
+    { 20000000, 128, "20.0 MHz even   25/25 ns" },
+};
+#define NSPEED (sizeof speeds / sizeof speeds[0])
+
+static void row(const speed_t *s, int frames)
 {
-    static const int hz[] = { 1000000, 4000000, 8000000, 10000000, 11428571, 13333333, 16000000, 20000000 };
+    if (master_open(s->hz, s->duty) < 0) { printf("probe: could not set %s\n", s->name); return; }
+    result_t r;
+    run(frames, &r);
+    printf("probe: %s %8u %11u %9u %12u %11u %10u %6u  %s\n", s->name, (unsigned)r.frames, (unsigned)r.wr,
+           (unsigned)r.rd_sent, (unsigned)r.rd_early, (unsigned)r.first, (unsigned)r.other, (unsigned)r.lost,
+           r.lost > 100 ? "FAIL (stopped early)" : (r.wr | r.lost) ? "FAIL" : r.other ? "writes ok, reads?" : "ok");
+    spi_bus_remove_device(s_dev);
+    vTaskDelay(1);
+}
+
+static void head(const char *title)
+{
     printf("\nprobe: %s\n", title);
-    printf("probe:   clock   frames  bad writes  reads ok  reads ok, 1 bit early  first bit late  bad reads  lost frames\n");
-    for (unsigned i = 0; i < sizeof hz / sizeof hz[0]; i++) {
-        int khz = master_open(hz[i]);
-        if (khz < 0) { printf("probe: could not set %d Hz\n", hz[i]); continue; }
-        result_t r;
-        run(20000, &r);
-        printf("probe: %5d kHz %7u %11u %9u %21u %15u %10u %12u  %s\n", khz, (unsigned)r.frames, (unsigned)r.wr,
-               (unsigned)r.rd_sent, (unsigned)r.rd_early, (unsigned)r.first, (unsigned)r.other, (unsigned)r.lost,
-               r.lost > 100 ? "FAIL (stopped early)" : (r.wr | r.other | r.lost) ? "FAIL" : r.first ? "ok but first bit late" : "ok");
-        spi_bus_remove_device(s_dev);
-        vTaskDelay(1);
-    }
+    printf("probe: clock                      frames  bad writes  reads ok  ok, 1 early  1st bit late  bad reads   lost\n");
+}
+
+static void show_jit(const char *what, const jit_t *j)
+{
+    printf("probe: %s: longest pass %u ns; passes over 67 ns: %u, over 267 ns: %u, over 1 us: %u, over 4 us: %u\n",
+           what, (unsigned)(j->max * 25 / 6), (unsigned)j->n16, (unsigned)j->n64, (unsigned)j->n256, (unsigned)j->n1k);
+}
+
+static void wifi_busy(void *arg)
+{
+    for (;;) { esp_wifi_scan_start(NULL, false); vTaskDelay(pdMS_TO_TICKS(4000)); }
 }
 
 void app_main(void)
 {
     vTaskDelay(pdMS_TO_TICKS(3000));       // time to open the serial port
-    printf("\nprobe: DC-PicoLink ESP32-only probe (" __DATE__ " " __TIME__ ")\n");
+    printf("\nprobe: DC-PicoLink ESP32-only probe 5 (" __DATE__ " " __TIME__ ")\n");
 
     // Wi-Fi is prepared first: its start-up writes to flash, and a flash write waits for
-    // the other core, which will never answer once the responder runs.
+    // the other core, which will never answer once the slave runs.
     esp_err_t e = nvs_flash_init();
     if (e != ESP_OK) { nvs_flash_erase(); nvs_flash_init(); }
     esp_netif_init();
@@ -215,29 +271,52 @@ void app_main(void)
         .quadwp_io_num = -1, .quadhd_io_num = -1,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bc, SPI_DMA_DISABLED));
-    // a device once, so that the CS pad is driven high before the responder looks at it
-    master_open(1000000);
+    // a device once, so that the CS pad is driven high before the slave looks at it
+    master_open(1000000, 128);
     spi_bus_remove_device(s_dev);
     gpio_set_direction(P_CS, GPIO_MODE_INPUT_OUTPUT);
     gpio_set_level(P_CS, 1);
 
     for (unsigned i = 0; i < sizeof g_mem; i++) g_mem[i] = (uint8_t)(i * 7 + 3);
     xTaskCreatePinnedToCore(core1_task, "responder", 4096, NULL, 5, NULL, 1);
-    while (!g_ready) vTaskDelay(1);
-    if (g_ready < 0) return;
+    while (!g_done) vTaskDelay(1);
+    if (g_done < 0) return;
+    printf("\nprobe: pauses of the slave's core: a loop that takes about 42 ns per pass, run for 2 s.\n");
+    printf("probe: Any pass over 67 ns is a pause of 25 ns or more, enough to cost a bit at speed.\n");
+    show_jit("Wi-Fi off", &g_jit[0]);
+
+    g_phase = 2;
     vTaskDelay(pdMS_TO_TICKS(50));
+    head("Wi-Fi off, 20 000 writes + 20 000 reads per line");
+    for (unsigned i = 0; i < NSPEED; i++) row(&speeds[i], 20000);
 
-    sweep("Wi-Fi off");
-
+    // stop the slave (it looks at the flag at a frame end), measure pauses with Wi-Fi on
+    g_run = 0;
+    master_open(1000000, 128);
+    { uint8_t z[4] = { 0, 0, 0, 0xFF }; spi_transaction_t t = { .length = 32, .tx_buffer = z }; spi_device_polling_transmit(s_dev, &t); }
+    spi_bus_remove_device(s_dev);
+    while (g_done < 2) vTaskDelay(1);
     esp_wifi_start();
+    xTaskCreatePinnedToCore(wifi_busy, "wifi_busy", 4096, NULL, 4, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_wifi_scan_start(NULL, false);
-    sweep("Wi-Fi on (access point up, scanning)");
-    esp_wifi_scan_start(NULL, false);
-    sweep("Wi-Fi on, second pass");
+    g_phase = 3;
+    while (g_done < 3) vTaskDelay(1);
+    show_jit("Wi-Fi on, interrupt levels 1-3 off", &g_jit[1]);
+    show_jit("Wi-Fi on, interrupt levels 1-5 off", &g_jit[2]);
 
-    printf("\nprobe: done. Needed for the Dreamcast: no FAIL up to 13333 kHz; 16000 kHz clean means margin.\n");
-    printf("probe: 'reads ok' and 'reads ok, 1 bit early' are both correct replies (it only shows when this master samples).\n");
-    printf("probe: send the whole table back, including the lines that failed.\n");
+    g_phase = 4;
+    vTaskDelay(pdMS_TO_TICKS(50));
+    head("Wi-Fi on (access point up, scanning), 20 000 + 20 000 per line");
+    for (unsigned i = 0; i < NSPEED; i++) row(&speeds[i], 20000);
+
+    head("Wi-Fi on, long run: 200 000 + 200 000 per line (about 2 minutes)");
+    row(&speeds[2], 200000);
+    row(&speeds[3], 200000);
+    row(&speeds[8], 200000);
+    row(&speeds[9], 200000);
+
+    printf("\nprobe: done. Bad writes and lost frames are what counts; 'reads ok' and 'ok, 1 early' are both\n");
+    printf("probe: correct replies, and 'bad reads' with clean writes can be this test's master sampling at the\n");
+    printf("probe: moment the data changes. Send everything from 'probe 5' on.\n");
     for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
 }
