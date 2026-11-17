@@ -30,6 +30,7 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
+#include "esp_mac.h"
 #include "ovpn.h"
 #include "app.h"
 
@@ -231,6 +232,8 @@ static void parse_profiles(const char *txt) {
         char *copy = strndup(body, l);
         ovpn_conf_t cf;
         if (!copy || ovpn_conf_parse(copy, &cf) != 0) { free(copy); continue; }
+        { uint8_t m[6]; esp_read_mac(m, ESP_MAC_WIFI_STA);      /* IV_HWADDR, as a DreamPi sends its MAC */
+          snprintf(cf.hwaddr, sizeof cf.hwaddr, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]); }
         free(copy);
         bool listed = no == 0;
         for (int k = 0; k < no; k++) if (!strcmp(order[k], cf.host)) listed = true;

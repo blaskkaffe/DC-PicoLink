@@ -106,6 +106,7 @@ int main(int argc, char **argv)
     ovpn_conf_t cf;
     int r = ovpn_conf_parse(text, &cf);
     CHECK(r == 0, "config parses");
+    snprintf(cf.hwaddr, sizeof cf.hwaddr, "02:00:00:dc:00:01");   /* as vpn.c sets the box's MAC */
     printf("config: remote %s:%d key-direction %d cipher %s ping %d restart %d\n", cf.host, cf.port, cf.key_direction, cf.cipher, cf.ping_s, cf.restart_s);
     if (!strcmp(mode, "parse")) {            /* no server: does the profile load? */
         ovpn_ops_t po = {.random = op_rand};

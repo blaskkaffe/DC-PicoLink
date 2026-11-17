@@ -46,6 +46,12 @@ mk client clientAuth
 openvpn --genkey tls-auth ta.key 2>/dev/null || openvpn --genkey --secret ta.key
 port=${OVPN_TEST_PORT:-19091}
 
+cat > need-hwaddr.sh <<'EOS2'
+#!/bin/sh
+echo "client-connect: IV_HWADDR=$IV_HWADDR IV_PLAT=$IV_PLAT IV_PROTO=$IV_PROTO" >&2
+[ -n "$IV_HWADDR" ]
+EOS2
+chmod +x need-hwaddr.sh
 cat > server.conf <<EOS
 port $port
 proto udp
@@ -62,6 +68,9 @@ server 10.88.0.0 255.255.255.0
 topology subnet
 keepalive 5 30
 ${OVPN_SERVER_EXTRA}
+# like a server that only lets known boxes in: refuse a client that sends no MAC in its peer info
+script-security 2
+client-connect $pki/need-hwaddr.sh
 persist-key
 verb 3
 EOS

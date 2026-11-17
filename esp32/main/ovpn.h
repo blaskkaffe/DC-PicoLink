@@ -48,6 +48,7 @@ typedef struct {
     char  cipher[24];           /* "AES-128-GCM" unless the file says otherwise */
     int   udp;                  /* proto udp */
     int   tun;                  /* dev tun* */
+    char  hwaddr[18];           /* push-peer-info IV_HWADDR, "aa:bb:cc:dd:ee:ff" (set by the caller; empty = not sent) */
 } ovpn_conf_t;
 
 int  ovpn_conf_parse(const char *text, ovpn_conf_t *out);   /* 0 = ok, <0 = what is missing */

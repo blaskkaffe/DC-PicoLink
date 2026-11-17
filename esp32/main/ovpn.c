@@ -21,6 +21,7 @@
 #define P_CONTROL_V1                   4
 #define P_ACK_V1                       5
 #define P_DATA_V1                      6
+#define P_DATA_V2                      9     /* with a 3-byte peer-id (the server pushes "peer-id" to IV_PROTO=2 clients) */
 
 #define CTL_MAX      1100      /* control payload per packet (OpenVPN's default is 1250) */
 #define CTL_POOL     12
@@ -114,6 +115,7 @@ struct ovpn {
     uint32_t t_start, t_last_rx, t_last_tx;
     uint32_t now;
     uint32_t nseq;
+    int      peer_id;           /* pushed "peer-id": send P_DATA_V2; -1 = P_DATA_V1 */
 };
 
 static void logf_(ovpn_t *o, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -523,9 +525,11 @@ static void send_keymethod(ks_t *k)
 {
     static const char opts[] = "V4,dev-type tun,link-mtu 1549,tun-mtu 1500,proto UDPv4,cipher AES-128-GCM,"
                                "auth [null-digest],keysize 128,key-method 2,tls-client";
-    char peer[160];
-    int pl = snprintf(peer, sizeof peer, "IV_VER=2.6.0\nIV_PLAT=freertos\nIV_NCP=2\nIV_CIPHERS=%s\n"
-                      "IV_GUI_VER=DC-PicoLink\n", k->o->cf.cipher);
+    /* push-peer-info: what OpenVPN 2.5/2.6 sends, minus the compression flags (none here) */
+    char peer[320];
+    int pl = snprintf(peer, sizeof peer, "IV_VER=2.6.0\nIV_PLAT=linux\nIV_PROTO=2\nIV_NCP=2\nIV_CIPHERS=%s\n"
+                      "IV_TCPNL=1\n%s%s%sIV_SSL=mbed TLS\nIV_GUI_VER=DC-PicoLink\n", k->o->cf.cipher,
+                      k->o->cf.hwaddr[0] ? "IV_HWADDR=" : "", k->o->cf.hwaddr, k->o->cf.hwaddr[0] ? "\n" : "");
     uint8_t z[4] = {0, 0, 0, 0}, m = 2, l[2];
     tls_put(k, z, 4);
     tls_put(k, &m, 1);
@@ -583,6 +587,8 @@ static void handle_push_reply(ks_t *k, char *msg)
             in->restart_s = atoi(b);
         } else if (!strcmp(a, "tun-mtu") && n >= 2) {
             in->mtu = atoi(b);
+        } else if (!strcmp(a, "peer-id") && n >= 2) {
+            o->peer_id = atoi(b) & 0xffffff;
         } else if (!strcmp(a, "cipher") && n >= 2) {
             cpy(in->cipher, sizeof in->cipher, b);
         }
@@ -748,27 +754,36 @@ static void slot_free(ovpn_t *o, int idx)
 
 /* ======================= data channel ======================= */
 
-static int data_crypt(dkey_t *k, int enc, const uint8_t *in, size_t n, const uint8_t pid[4], uint8_t *out, uint8_t *tag)
+/* AEAD as OpenVPN does it: IV = packet id + implicit IV; the additional data is the packet id
+   (P_DATA_V1) or the 4-byte opcode/peer-id header followed by the packet id (P_DATA_V2). */
+static int data_crypt(dkey_t *k, int enc, const uint8_t *in, size_t n, const uint8_t pid[4], const uint8_t *ad, size_t adn,
+                      uint8_t *out, uint8_t *tag)
 {
     uint8_t iv[12];
     memcpy(iv, pid, 4);
     memcpy(iv + 4, k->iv, 8);
-    if (enc) return mbedtls_gcm_crypt_and_tag(&k->gcm, MBEDTLS_GCM_ENCRYPT, n, iv, 12, pid, 4, in, out, 16, tag);
-    return mbedtls_gcm_auth_decrypt(&k->gcm, n, iv, 12, pid, 4, tag, 16, in, out);
+    if (enc) return mbedtls_gcm_crypt_and_tag(&k->gcm, MBEDTLS_GCM_ENCRYPT, n, iv, 12, ad, adn, in, out, 16, tag);
+    return mbedtls_gcm_auth_decrypt(&k->gcm, n, iv, 12, ad, adn, tag, 16, in, out);
 }
 
 static int send_data(ovpn_t *o, const uint8_t *pt, size_t n)
 {
-    uint8_t b[1 + 4 + 16 + 1700];
+    uint8_t b[4 + 4 + 16 + 1700];
     ks_t *k = o->cur >= 0 ? o->slot[o->cur] : NULL;
     if (n > 1700 || !k || !k->enc.ok) return -1;
-    b[0] = (uint8_t)(P_DATA_V1 << 3 | k->kid);
-    put32(b + 1, ++k->pid_tx);
-    if (data_crypt(&k->enc, 1, pt, n, b + 1, b + 21, b + 5)) return -1;
+    size_t h = 1;
+    if (o->peer_id >= 0) {
+        b[0] = (uint8_t)(P_DATA_V2 << 3 | k->kid);
+        b[1] = (uint8_t)(o->peer_id >> 16); b[2] = (uint8_t)(o->peer_id >> 8); b[3] = (uint8_t)o->peer_id;
+        h = 4;
+    } else b[0] = (uint8_t)(P_DATA_V1 << 3 | k->kid);
+    put32(b + h, ++k->pid_tx);
+    const uint8_t *ad = h == 4 ? b : b + 1;
+    if (data_crypt(&k->enc, 1, pt, n, b + h, ad, h == 4 ? 8 : 4, b + h + 20, b + h + 4)) return -1;
     o->st.tx_pkts++;
     o->st.tx_bytes += (uint32_t)n;
     o->t_last_tx = o->now;
-    return o->ops.send(o->ops.ctx, b, 21 + n) < 0 ? -1 : 0;
+    return o->ops.send(o->ops.ctx, b, h + 20 + n) < 0 ? -1 : 0;
 }
 
 static void recv_data(ovpn_t *o, const uint8_t *d, size_t n)
@@ -776,14 +791,15 @@ static void recv_data(ovpn_t *o, const uint8_t *d, size_t n)
     uint8_t pt[1700];
     ks_t *k = NULL;
     for (int x = 0; x < 2; x++) if (o->slot[x] && o->slot[x]->kid == (d[0] & 7) && o->slot[x]->dec.ok) k = o->slot[x];
-    if (!k || n < 21 || n > 21 + sizeof pt) { o->st.bad_data++; return; }
-    uint32_t pid = get32(d + 1);
+    size_t h = (d[0] >> 3) == P_DATA_V2 ? 4 : 1;     /* V2: opcode + 3-byte peer-id */
+    if (!k || n < h + 20 || n > h + 20 + sizeof pt) { o->st.bad_data++; return; }
+    uint32_t pid = get32(d + h);
     if (pid == 0) { o->st.bad_data++; return; }
     if (pid <= k->pid_rx_max) {                   /* replay window of 64 */
         uint32_t diff = k->pid_rx_max - pid;
         if (diff >= 64 || (k->pid_rx_bits >> diff & 1)) { o->st.bad_data++; return; }
     }
-    if (data_crypt(&k->dec, 0, d + 21, n - 21, d + 1, pt, (uint8_t *)d + 5)) { o->st.bad_data++; return; }
+    if (data_crypt(&k->dec, 0, d + h + 20, n - h - 20, d + h, h == 4 ? d : d + 1, h == 4 ? 8 : 4, pt, (uint8_t *)d + h + 4)) { o->st.bad_data++; return; }
     if (pid > k->pid_rx_max) {
         uint32_t sh = pid - k->pid_rx_max;
         k->pid_rx_bits = sh >= 64 ? 1 : (k->pid_rx_bits << sh) | 1;
@@ -792,7 +808,7 @@ static void recv_data(ovpn_t *o, const uint8_t *d, size_t n)
         k->pid_rx_bits |= 1ull << (k->pid_rx_max - pid);
     }
     o->t_last_rx = o->now;
-    size_t m = n - 21;
+    size_t m = n - h - 20;
     if (m == 16 && !memcmp(pt, PING_MAGIC, 16)) return;
     if (m >= 20 && (pt[0] >> 4) == 4) {
         o->st.rx_pkts++;
@@ -896,6 +912,7 @@ ovpn_t *ovpn_new(const ovpn_conf_t *c, const ovpn_ops_t *ops)
     o->cf = *c;
     o->ops = *ops;
     o->cur = -1;
+    o->peer_id = -1;
     o->keylen = !strcmp(c->cipher, "AES-256-GCM") ? 32 : 16;
 
     uint8_t sk[256];
@@ -969,7 +986,7 @@ void ovpn_input(ovpn_t *o, const uint8_t *d, size_t n, uint32_t now)
     o->now = now;
     if (o->state < OVPN_RESET || o->state == OVPN_FAILED || n < 1) return;
     int op = d[0] >> 3;
-    if (op == P_DATA_V1) { if (o->state == OVPN_UP) recv_data(o, d, n); return; }
+    if (op == P_DATA_V1 || op == P_DATA_V2) { if (o->state == OVPN_UP) recv_data(o, d, n); return; }
     if (op == P_CONTROL_V1 || op == P_ACK_V1 || op == P_CONTROL_HARD_RESET_SERVER_V2 || op == P_CONTROL_SOFT_RESET_V1)
         recv_control(o, op, d, n);
 }
