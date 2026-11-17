@@ -32,6 +32,7 @@
 #include "lwip/ip4.h"
 #include "lwip/etharp.h"
 #include "lwip/tcpip.h"
+#include "lwip/sockets.h"
 #include "lwip/prot/ethernet.h"
 #include "netif/ethernet.h"
 #include "dclan_model.h"
@@ -49,6 +50,7 @@ static bool said_nothing_back, said_first_in;
 static char why_none[96] = "waiting for the home network";
 static volatile uint16_t ah_port;                 /* local TCP port of the request, 0 = none */
 static volatile uint32_t ah_peer;                 /* the router (host order) */
+static volatile uint8_t ah_proto = 6;             /* TCP (UPnP) or UDP (the check below) */
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void say(const char *fmt, ...) {
@@ -108,7 +110,7 @@ int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
     uint32_t src = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
     uint32_t dst = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
     uint16_t ap = ah_port;
-    if (ap && inp == up_nif && dst == lan && src == ah_peer && h[9] == 6) {       /* the router's answer to a UPnP request: to this box */
+    if (ap && inp == up_nif && dst == lan && src == ah_peer && h[9] == ah_proto) {   /* the answer to a request sent as the home address: to this box */
         size_t hl = (size_t)(h[0] & 15) * 4;
         if (p->tot_len >= hl + 4 && ((uint16_t)pbuf_get_at(p, (u16_t)(hl + 2)) << 8 | pbuf_get_at(p, (u16_t)(hl + 3))) == ap) {
             dcl_pkt_t pk = { pg, pp, p, p->tot_len };
@@ -144,7 +146,8 @@ int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
    (it answers ARP for it), so portfwd.c's requests go out from it: one TCP connection at a time,
    marked by its local port, rewritten on the way out (from this box's address to the home one)
    and back in. */
-void dclan_as_home(uint16_t port, uint32_t peer_n) { ah_peer = lwip_ntohl(peer_n); ah_port = port; }
+void dclan_as_home(uint16_t port, uint32_t peer_n) { ah_peer = lwip_ntohl(peer_n); ah_proto = 6; ah_port = port; }
+static void as_home_udp(uint16_t port, uint32_t peer_h) { ah_peer = peer_h; ah_proto = 17; ah_port = port; }
 void dclan_as_home_end(void) { ah_port = 0; }
 
 static netif_output_fn up_output_orig;
@@ -155,7 +158,7 @@ static err_t up_output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst) {
         size_t hl = (size_t)(h[0] & 15) * 4;
         uint32_t s = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
         uint32_t d = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
-        if ((h[0] >> 4) == 4 && h[9] == 6 && p->tot_len >= hl + 20 && d == ah_peer &&
+        if ((h[0] >> 4) == 4 && h[9] == ah_proto && p->tot_len >= hl + 8 && d == ah_peer &&
             s == lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(n))) &&
             ((uint16_t)pbuf_get_at(p, (u16_t)hl) << 8 | pbuf_get_at(p, (u16_t)(hl + 1))) == ap) {
             dcl_pkt_t pk = { pg, pp, p, p->tot_len };
@@ -233,16 +236,63 @@ static bool used(void *ctx, uint32_t a) {
     return false;
 }
 
-static void pick(struct netif *n, uint32_t ip, uint32_t gw) {
+/* One DNS question from this box's address, then the same from `lan`. 1 = the answer to lan
+   came back, 0 = only this box's came back (the network drops the second address), -1 = no
+   answer at all (nothing known: lan is used, as on DreamPi). */
+static int ask_dns(uint32_t server, bool as_lan) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return -1;
+    struct sockaddr_in me = { .sin_family = AF_INET, .sin_port = 0, .sin_addr.s_addr = INADDR_ANY };
+    socklen_t ml = sizeof me;
+    int got = -1;
+    if (bind(s, (struct sockaddr *)&me, sizeof me) == 0 && getsockname(s, (struct sockaddr *)&me, &ml) == 0) {
+        struct timeval tv = { .tv_sec = 2 };
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        if (as_lan) as_home_udp(ntohs(me.sin_port), server);
+        static const uint8_t q[] = { 0x44, 0x43, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,                 /* id "DC", RD, 1 question */
+                                     13, 'd', 'r', 'e', 'a', 'm', 'c', 'a', 's', 't', 'l', 'i', 'v', 'e', 3, 'n', 'e', 't', 0, 0, 1, 0, 1 };
+        struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = lwip_htonl(server) };
+        uint8_t b[512];
+        for (int tries = 0; tries < 2 && got < 0; tries++) {
+            sendto(s, q, sizeof q, 0, (struct sockaddr *)&to, sizeof to);
+            int k = recv(s, b, sizeof b, 0);
+            if (k >= 12 && b[0] == 0x44 && b[1] == 0x43) got = 1;
+        }
+        if (as_lan) dclan_as_home_end();
+    }
+    close(s);
+    return got;
+}
+static int check_home(struct netif *n, uint32_t lan) {
+    (void)n; (void)lan;
+    static const uint32_t servers[] = { 0x2e655b7bu /* 46.101.91.123, DreamPi's */, 0x01010101u, 0x08080808u };
+    for (size_t i = 0; i < sizeof servers / sizeof servers[0]; i++) {
+        if (ask_dns(servers[i], false) < 0) continue;                 /* this server does not answer even this box */
+        return ask_dns(servers[i], true) > 0 ? 1 : 0;
+    }
+    return -1;
+}
+static void pick(struct netif *n, uint32_t ip, uint32_t gw, uint32_t mask) {
     char a[16], b[16], c[16];
     probe_nif = n;
     uint32_t t, d;
     if (!gw) { snprintf(why_none, sizeof why_none, "the home network has no gateway"); lan_this = lan_dc = 0; return; }
-    if (!dcl_pick(gw, ip, used, NULL, &t, &d)) {
+    if (!dcl_pick(gw, ip, mask, used, NULL, &t, &d)) {
         char w[96]; snprintf(w, sizeof w, "no free address in %s/24", ips(gw & 0xffffff00u, a));
         if (strcmp(w, why_none)) say("home network: no free address for the Dreamcast in %s/24; it stays behind this box's NAT", a);
         snprintf(why_none, sizeof why_none, "%s", w);
         lan_this = lan_dc = 0;
+        return;
+    }
+    /* does the network deliver to a second address on this box? (phone hotspots, guest and mesh
+       Wi-Fi often do not: then NAT, as before) */
+    LOCK_TCPIP_CORE(); wrap(n); up_nif = n; lan_dc = d; UNLOCK_TCPIP_CORE();     /* answer ARP for it during the check */
+    int ok = check_home(n, d);
+    if (ok == 0) {
+        LOCK_TCPIP_CORE(); lan_dc = 0; UNLOCK_TCPIP_CORE();
+        char w[96]; snprintf(w, sizeof w, "this network does not deliver to a second address (hotspot, guest or mesh Wi-Fi?)");
+        if (strcmp(w, why_none)) say("home network: answers to %s do not come back here, so this network delivers only to this box's own address (a phone hotspot, guest or mesh Wi-Fi does that); the Dreamcast stays behind this box's NAT", ips(d, a));
+        snprintf(why_none, sizeof why_none, "%s", w);
         return;
     }
     LOCK_TCPIP_CORE();
@@ -252,7 +302,8 @@ static void pick(struct netif *n, uint32_t ip, uint32_t gw) {
     UNLOCK_TCPIP_CORE();
     up_ip = ip; up_gw = gw; conflict = false; cnt.picks++;
     why_none[0] = 0;
-    say("home network: the Dreamcast gets %s, this box is %s on its PPP link (as a DreamPi picks them, gateway %s)", ips(d, a), ips(t, b), ips(gw, c));
+    say("home network: the Dreamcast gets %s, this box is %s on its PPP link (as a DreamPi picks them, gateway %s)%s", ips(d, a), ips(t, b), ips(gw, c),
+        ok < 0 ? "; could not check that answers reach it (no DNS answer at all)" : "; checked: answers reach it");
 }
 
 /* where is the Dreamcast connected now? (one at a time: PPP, then the cable's network, then the BBA port) */
@@ -292,7 +343,7 @@ static void task(void *arg) {
         bool have = inet_up() && en && esp_netif_get_ip_info(en, &ii) == ESP_OK && ii.ip.addr;
         struct netif *n = have ? (struct netif *)esp_netif_get_netif_impl(en) : NULL;
         uint32_t ip = have ? lwip_ntohl(ii.ip.addr) : 0, gw = have ? lwip_ntohl(ii.gw.addr) : 0;
-        if (in_nif) {                                 /* never move the address under a connected Dreamcast */
+        if (in_nif || ppp_dc_ip() || dc_eth_dc_ip() || wired_dc_ip()) {   /* never move or change the address under a connected Dreamcast (NAT calls too) */
             if (conflict && cnt.conflicts == 1) {
                 char a[16]; say("home network: another device answers for %s too; a new address is picked after this call", ips(lan_dc, a));
                 cnt.conflicts++;
@@ -308,7 +359,7 @@ static void task(void *arg) {
                 LOCK_TCPIP_CORE(); lan_this = lan_dc = 0; UNLOCK_TCPIP_CORE();
                 conflict = false; cnt.conflicts = 0;
                 for_n = n; for_ip = ip; for_gw = gw;
-                pick(n, ip, gw);
+                pick(n, ip, gw, have ? lwip_ntohl(ii.netmask.addr) : 0);
                 if (!lan_dc) failed_at = esp_timer_get_time();
             }
         }

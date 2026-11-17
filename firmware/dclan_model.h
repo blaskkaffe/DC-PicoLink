@@ -21,11 +21,16 @@
 /* ---- the pick (find_next_unused_ip, twice) ---- */
 typedef bool (*dcl_used_fn)(void *ctx, uint32_t ip);
 
-/* gw: the uplink's gateway, own: the box's uplink address. false when nothing is free. */
-static inline bool dcl_pick(uint32_t gw, uint32_t own, dcl_used_fn used, void *ctx, uint32_t *this_ip, uint32_t *dc_ip) {
-    uint32_t net = gw & 0xffffff00u;
+/* gw: the uplink's gateway, own: the box's uplink address, mask: the uplink's netmask (0 = /24).
+   A /24 or bigger network: DreamPi's way (the gateway's /24, down from .99). A smaller one (a
+   phone hotspot's /28, say): the highest free addresses that exist in it. false = nothing free. */
+static inline bool dcl_pick(uint32_t gw, uint32_t own, uint32_t mask, dcl_used_fn used, void *ctx, uint32_t *this_ip, uint32_t *dc_ip) {
+    if (!mask) mask = 0xffffff00u;
+    uint32_t net, top;
+    if (mask <= 0xffffff00u) { net = gw & 0xffffff00u; top = 99; }          /* as dreampi.py: split('.')[:3] + .100 down */
+    else { net = gw & mask; top = (~mask) - 1; if (top > 99) top = 99; }      /* small subnet: below its broadcast address */
     uint32_t found[2]; int k = 0;
-    for (uint32_t h = 99; h >= 1 && k < 2; h--) {
+    for (uint32_t h = top; h >= 1 && k < 2; h--) {
         uint32_t a = net | h;
         if (a == gw || a == own) continue;
         if (used && used(ctx, a)) continue;

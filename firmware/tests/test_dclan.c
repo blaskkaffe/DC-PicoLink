@@ -45,19 +45,28 @@ int main(void) {
     uint32_t t, d;
     /* the usual home network: .99 for the box's end of PPP, .98 for the Dreamcast (DreamPi's values) */
     used_n = 0;
-    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), used, NULL, &t, &d), "pick on an empty network");
+    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), 0, used, NULL, &t, &d), "pick on an empty network");
     CHECK(t == IP(192, 168, 1, 99) && d == IP(192, 168, 1, 98), ".99 and .98 as on a DreamPi");
     /* .99 taken: the next ones down */
     used_n = 1; used_set[0] = IP(192, 168, 1, 99);
-    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), used, NULL, &t, &d) && t == IP(192, 168, 1, 98) && d == IP(192, 168, 1, 97), ".99 used -> .98/.97");
+    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), 0, used, NULL, &t, &d) && t == IP(192, 168, 1, 98) && d == IP(192, 168, 1, 97), ".99 used -> .98/.97");
     /* .98 taken: the Dreamcast goes below it */
     used_n = 1; used_set[0] = IP(192, 168, 1, 98);
-    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), used, NULL, &t, &d) && t == IP(192, 168, 1, 99) && d == IP(192, 168, 1, 97), ".98 used -> .99/.97");
+    CHECK(dcl_pick(IP(192, 168, 1, 1), IP(192, 168, 1, 186), 0, used, NULL, &t, &d) && t == IP(192, 168, 1, 99) && d == IP(192, 168, 1, 97), ".98 used -> .99/.97");
     /* the box itself and the gateway are never picked */
     used_n = 0;
-    CHECK(dcl_pick(IP(10, 0, 0, 99), IP(10, 0, 0, 98), used, NULL, &t, &d) && t == IP(10, 0, 0, 97) && d == IP(10, 0, 0, 96), "skips the gateway and the box's own address");
+    CHECK(dcl_pick(IP(10, 0, 0, 99), IP(10, 0, 0, 98), 0, used, NULL, &t, &d) && t == IP(10, 0, 0, 97) && d == IP(10, 0, 0, 96), "skips the gateway and the box's own address");
+    /* a phone hotspot (iPhone: 172.20.10.0/28, gateway .1): .98 does not exist there */
+    used_n = 0;
+    CHECK(dcl_pick(IP(172, 20, 10, 1), IP(172, 20, 10, 2), 0xfffffff0u, used, NULL, &t, &d) && t == IP(172, 20, 10, 14) && d == IP(172, 20, 10, 13), "a /28: the highest free addresses in it");
+    /* an Android hotspot (/24): as DreamPi */
+    CHECK(dcl_pick(IP(192, 168, 43, 1), IP(192, 168, 43, 120), 0xffffff00u, used, NULL, &t, &d) && t == IP(192, 168, 43, 99) && d == IP(192, 168, 43, 98), "Android hotspot /24: .99/.98");
+    /* a /16: still the gateway's /24, as DreamPi */
+    CHECK(dcl_pick(IP(10, 0, 0, 1), IP(10, 0, 5, 7), 0xffff0000u, used, NULL, &t, &d) && t == IP(10, 0, 0, 99), "a /16: the gateway's /24 like DreamPi");
+    /* a /30 has no room for two more */
+    CHECK(!dcl_pick(IP(10, 9, 9, 1), IP(10, 9, 9, 2), 0xfffffffcu, used, NULL, &t, &d), "a /30: nothing free");
     /* gateway's /24, like DreamPi's split('.')[:3] */
-    CHECK(dcl_pick(IP(172, 16, 5, 254), IP(172, 16, 4, 10), used, NULL, &t, &d) && t == IP(172, 16, 5, 99), "the gateway's /24");
+    CHECK(dcl_pick(IP(172, 16, 5, 254), IP(172, 16, 4, 10), 0, used, NULL, &t, &d) && t == IP(172, 16, 5, 99), "the gateway's /24");
 
     /* ---- the 1:1 rewrite keeps every checksum right ---- */
     uint8_t pk[1500];
