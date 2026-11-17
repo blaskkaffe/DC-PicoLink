@@ -158,23 +158,26 @@ static bool find_control(uint32_t ip, uint16_t port, const char *path, char *ctl
     return ok;
 }
 
-static bool ssdp(char *loc, size_t lc) {
+/* every UPnP device that answers (up to SSDP_MAX), the gateway's own first: like miniupnpc's
+   selectigd(), the first one that really offers port mapping is used (a TV or NAS may answer first) */
+#define SSDP_MAX 4
+static int ssdp(char loc[][160], uint32_t gw) {
     int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0) return false;
+    if (s < 0) return 0;
     struct timeval tv = { .tv_sec = 1 };
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(1900) };
     inet_aton("239.255.255.250", &to.sin_addr);
     static const char *const ST[] = { "urn:schemas-upnp-org:device:InternetGatewayDevice:1", "urn:schemas-upnp-org:device:InternetGatewayDevice:2", "urn:schemas-upnp-org:service:WANIPConnection:1" };
-    bool ok = false;
-    for (int round = 0; round < 2 && !ok; round++) {
+    int got = 0;
+    for (int round = 0; round < 2 && !got; round++) {
         for (int i = 0; i < 3; i++) {
             char q[220];
             int n = snprintf(q, sizeof q, "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: %s\r\n\r\n", ST[i]);
             sendto(s, q, (size_t)n, 0, (struct sockaddr *)&to, sizeof to);
         }
         int64_t t0 = esp_timer_get_time();
-        while (!ok && esp_timer_get_time() - t0 < 3000000) {
+        while (esp_timer_get_time() - t0 < 3000000 && got < SSDP_MAX) {
             char b[700];
             int n = recv(s, b, sizeof b - 1, 0);
             if (n <= 0) continue;
@@ -183,13 +186,23 @@ static bool ssdp(char *loc, size_t lc) {
             for (char *p = b; *p && !l; p++) if (!strncasecmp(p, "\nlocation:", 10)) l = p;
             if (!l) continue;
             l += 10; while (*l == ' ') l++;
-            size_t k = strcspn(l, "\r\n"); if (k >= lc) k = lc - 1;
-            memcpy(loc, l, k); loc[k] = 0;
-            ok = !strncmp(loc, "http://", 7);
+            size_t k = strcspn(l, "\r\n"); if (k >= 160) k = 159;
+            char one[160]; memcpy(one, l, k); one[k] = 0;
+            if (strncmp(one, "http://", 7)) continue;
+            bool dup = false;
+            for (int j = 0; j < got; j++) if (!strcmp(loc[j], one)) dup = true;
+            if (dup) continue;
+            /* the gateway's own address goes first */
+            char gws[16]; snprintf(gws, sizeof gws, "%s", inet_ntoa(*(struct in_addr *)&gw));
+            size_t gl = strlen(gws);
+            bool is_gw = gw && !strncmp(one + 7, gws, gl) && (one[7 + gl] == ':' || one[7 + gl] == '/');
+            if (is_gw) { for (int j = got; j > 0; j--) memcpy(loc[j], loc[j - 1], 160); memcpy(loc[0], one, 160); }
+            else memcpy(loc[got], one, 160);
+            got++;
         }
     }
     close(s);
-    return ok;
+    return got;
 }
 
 static char *body, *req, *ans;                    /* 900 + 1300 + 700, while upnp() runs */
@@ -255,12 +268,22 @@ static bool not_public(uint32_t h) {
 }
 
 static void upnp(uint32_t to, bool to_dc) {
-    char loc[160], ctl[160], svc[64], path[160];
+    static char locs[SSDP_MAX][160];
+    char ctl[160], svc[64], path[160];
     st.upnp_ok = st.upnp_fail = 0; st.err[0] = 0;
-    if (!ssdp(loc, sizeof loc)) { snprintf(st.err, sizeof st.err, "no UPnP router answered"); say("port forwarding: no UPnP router answered (is UPnP on in the router?)"); return; }
-    uint32_t rip; uint16_t rport;
-    if (!parse_url(loc, &rip, &rport, path, sizeof path)) { snprintf(st.err, sizeof st.err, "odd router address"); return; }
-    if (!find_control(rip, rport, path, ctl, sizeof ctl, svc, sizeof svc)) { snprintf(st.err, sizeof st.err, "router offers no port mapping"); say("port forwarding: the router (%s) offers no port mapping", loc); return; }
+    esp_netif_ip_info_t ii; esp_netif_t *en = esp_netif_get_default_netif();
+    uint32_t gw = en && esp_netif_get_ip_info(en, &ii) == ESP_OK ? ii.gw.addr : 0;
+    int nl = ssdp(locs, gw);
+    if (!nl) { snprintf(st.err, sizeof st.err, "no UPnP router answered"); say("port forwarding: no UPnP router answered (is UPnP on in the router?)"); return; }
+    uint32_t rip = 0; uint16_t rport = 0;
+    int use = -1;
+    for (int i = 0; i < nl && use < 0; i++)
+        if (parse_url(locs[i], &rip, &rport, path, sizeof path) && find_control(rip, rport, path, ctl, sizeof ctl, svc, sizeof svc)) use = i;
+    if (use < 0) {
+        snprintf(st.err, sizeof st.err, "router offers no port mapping");
+        say("port forwarding: %d UPnP device%s answered (first %s), none offers port mapping", nl, nl == 1 ? "" : "s", locs[0]);
+        return;
+    }
     if (!strncmp(ctl, "http://", 7)) { uint32_t i2; uint16_t p2; char pa[160]; if (parse_url(ctl, &i2, &p2, pa, sizeof pa)) { rip = i2; rport = p2; snprintf(ctl, sizeof ctl, "%s", pa); } }
     snprintf(st.router, sizeof st.router, "%s:%u", inet_ntoa(*(struct in_addr *)&rip), (unsigned)rport);
     body = malloc(900); req = malloc(1300); ans = malloc(700);
