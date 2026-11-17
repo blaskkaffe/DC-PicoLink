@@ -1382,7 +1382,8 @@ static void lspi_task(uint32_t now) {
 
 #if DC_LINK_SPI
 /* The RP2040-Zero's RGB LED (WS2812 on GPIO16): a sign of life without USB.
-   red blink = running, no ESP32 link; green = link up; blue = link up and the Dreamcast is on.
+   red blink = running, nothing from the ESP32; yellow blink = transactions/data from the ESP32 but no
+   good packet (damaged); green = link up; blue = link up and the Dreamcast is on.
    Bit-banged (no PIO state machine is free), 24 bits with interrupts off (~30 us), only on a change. */
 #define PIN_LED 16
 static void led_put(uint32_t grb) {
@@ -1408,8 +1409,13 @@ static void led_task(void) {
     uint32_t now = time_us_32();
     if (now - last_us < 20000u) return;                       /* also keeps the >280 us reset gap */
     last_us = now;
+    /* without the link: is anything arriving? (transactions clocked, or damaged packets) */
+    static uint32_t seen_x, seen_bad, active_until;
+    uint32_t bad = link_rx.crc_bad + link_rx.cobs_bad + link_rx.bad_hdr + link_rx.too_long;
+    if (lspi_xfers != seen_x || bad != seen_bad) { seen_x = lspi_xfers; seen_bad = bad; active_until = now + 1500000u; }
+    bool traffic = (int32_t)(active_until - now) > 0;
     uint32_t want;
-    if (!link_up) want = (now / 100000u) % 10u == 0 ? 0x001000u : 0;   /* GRB: red, 0.1 s every second */
+    if (!link_up) want = (now / 100000u) % 10u == 0 ? (traffic ? 0x101000u : 0x001000u) : 0;   /* GRB: yellow = data but no good packet, red = nothing */
     else if (dc_mode != MODE_OFFLINE) want = 0x000010u;          /* blue */
     else want = 0x100000u;                                       /* green */
     if (want != shown) { led_put(want); shown = want; }
