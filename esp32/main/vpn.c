@@ -29,6 +29,7 @@
 #include "lwip/pbuf.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "ovpn.h"
 #include "app.h"
 
@@ -350,11 +351,26 @@ static void session(int i) {
     cur_prof = i;
     if (!open_socket(pr)) { st.fails++; note("VPN: %s", st.err); return; }
     ovpn_ops_t ops = { .send = op_send, .ip_in = op_ip, .log = op_log, .random = op_rand };
+    /* the handshake is the RAM peak (certificates, RSA, TLS buffers): one secure connection at a
+       time, as DCNow! and the DNS list do. Held until TLS is done, at most 15 s. */
+    tls_lock();
+    bool locked = true;
+    uint32_t lock_t = now_ms();
     xSemaphoreTake(lk, portMAX_DELAY);
     vo = ovpn_new(&pr->cf, &ops);
     if (vo) ovpn_start(vo, now_ms());
     xSemaphoreGive(lk);
-    if (!vo) { st.fails++; snprintf(st.err, sizeof st.err, "out of memory"); return; }
+    if (!vo || ovpn_state(vo) == OVPN_FAILED) {
+        st.fails++;
+        if (!vo || !strcmp(ovpn_error(vo), "out of memory"))
+            snprintf(st.err, sizeof st.err, "not enough memory to connect (free %u bytes, largest block %u)",
+                     (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        else snprintf(st.err, sizeof st.err, "%s", ovpn_error(vo));
+        note("VPN: %s", st.err);
+        tls_unlock();
+        teardown();                                   /* closes the socket too (the old path leaked one per try) */
+        return;
+    }
     note("VPN: connecting to %s", pr->host);
     bool announced = false, pinged = false;
     uint32_t last_ping = 0;
@@ -375,6 +391,7 @@ static void session(int i) {
         ovpn_tick(vo, now_ms());
         ovpn_state_t s = ovpn_state(vo);
         xSemaphoreGive(lk);
+        if (locked && (s >= OVPN_KEYS || s == OVPN_FAILED || now_ms() - lock_t > 15000)) { tls_unlock(); locked = false; }
         if (s == OVPN_FAILED) { snprintf(st.err, sizeof st.err, "%s", ovpn_error(vo)); st.fails++; note("VPN: %s", st.err); break; }
         if (s == OVPN_UP && !announced) {
             const ovpn_info_t *in = ovpn_info(vo);
@@ -404,6 +421,7 @@ static void session(int i) {
             last_ping = now_ms();
         }
     }
+    if (locked) tls_unlock();
     teardown();
 }
 

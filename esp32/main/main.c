@@ -81,7 +81,7 @@ size_t log_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
 }
 
 /* ---- serial monitor: ring of the last 4 KiB, one direction bit per byte ---- */
-#define MON_SIZE 4096u
+#define MON_SIZE 2048u
 static uint8_t mon_b[MON_SIZE], mon_d[MON_SIZE / 8];
 static uint32_t mon_wr;
 static SemaphoreHandle_t mon_lock;

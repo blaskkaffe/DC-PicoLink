@@ -48,7 +48,7 @@ bool link_is_up(void) { return esp_timer_get_time() - last_rx_us < 3000000; }
 #if CONFIG_DCL_LINK_SPI
 #define LSPI_HOST   SPI3_HOST          /* SPI2 (FSPI, IO-MUX pins 10-13) stays free for a W5500 */
 #define LSPI_NBUF   3                  /* transactions kept loaded/queued */
-#define RING_BITS   14                 /* 16 KiB of wire bytes for the cable (RAM is tight: see heap in /api/status) */
+#define RING_BITS   13                 /* 8 KiB of wire bytes for the cable: send_full stayed 0 at 16 KiB, and RAM is tight (the VPN) */
 #define RING_SIZE   (1u << RING_BITS)
 static uint8_t ring[RING_SIZE];
 static uint32_t ring_wr, ring_rd;      /* free-running; guarded by tx_lock */

@@ -25,6 +25,7 @@ static const char *TAG = "dnsd";
 #define DNS_FILE_URL "https://dreamcast.online/dreampi/dreampi_dns.conf"
 #define PENDING 8
 #define PKT_MAX 512
+#define Q_MAX   288                              /* a waiting question (the Dreamcast's are < 100 bytes) */
 
 static dns_conf_t conf;
 static SemaphoreHandle_t conf_lk;
@@ -77,7 +78,7 @@ static struct {
     uint16_t cid, uid;
     uint32_t ms;
     uint8_t tries;
-    uint8_t pkt[PKT_MAX];
+    uint8_t pkt[Q_MAX];
     size_t plen;
     char name[DNS_NAME_MAX];
 } pend[PENDING];
@@ -126,7 +127,7 @@ static void on_client(int via, int ls, int us) {
     struct sockaddr_in from; socklen_t fl = sizeof from;
     int n = recvfrom(ls, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
     dns_q_t q;
-    if (n <= 0 || !dns_parse(buf, (size_t)n, &q)) return;
+    if (n <= 0 || n > Q_MAX || !dns_parse(buf, (size_t)n, &q)) return;
 
     xSemaphoreTake(conf_lk, portMAX_DELAY);
     cnt.q++;

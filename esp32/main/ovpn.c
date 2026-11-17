@@ -26,7 +26,10 @@
 #define CTL_POOL     12
 #define CTL_WINDOW   4         /* packets in flight */
 #define ACK_MAX      8
-#define RXS_SIZE     12288     /* TLS bytes received but not yet read by mbedTLS */
+#define RXS_SIZE     4096      /* TLS bytes received but not yet read by mbedTLS: tls_pump runs after
+                                  every packet, so this only bridges a packet or two; when full the
+                                  peer resends. Was 12 KB inside one 30 KB block, which a board without
+                                  PSRAM could never allocate (largest free block ~7 KB). */
 #define APP_SIZE     3072
 #define WR_SIZE      1536
 #define RESEND_MS    2000
@@ -42,7 +45,7 @@ typedef struct {
     uint8_t  used, tries;
     uint16_t len;
     uint32_t id, sent;
-    uint8_t  data[CTL_MAX];
+    uint8_t *data;              /* malloc'd per packet (small pieces fit a fragmented heap) */
 } ctl_t;
 
 typedef struct {
@@ -65,8 +68,8 @@ typedef struct ks {
 
     mbedtls_ssl_context ssl;
     int      ssl_ok;
-    uint8_t  rxs[RXS_SIZE]; size_t rxs_len;
-    uint8_t  app[APP_SIZE]; size_t app_len;
+    uint8_t *rxs;           size_t rxs_len;     /* RXS_SIZE, own allocation */
+    uint8_t *app;           size_t app_len;     /* APP_SIZE, own allocation */
     uint8_t  wr[WR_SIZE];   size_t wr_len;
     uint8_t  pre_master[48], r1[32], r2[32];
     int      sent_keymethod;
@@ -78,6 +81,8 @@ typedef struct ks {
     uint32_t t_born, t_keys, t_push, t_retire;
     uint32_t seq;               /* creation order: only a newer key takes over */
 } ks_t;
+/* ks_t is one allocation per key: keep it small, the big buffers are separate (fragmented heap) */
+_Static_assert(sizeof(ks_t) <= 4096, "ks_t grew: allocate the new buffer separately");
 
 struct ovpn {
     ovpn_conf_t cf;
@@ -353,9 +358,12 @@ static int ctl_queue(ks_t *k, const uint8_t *d, size_t n)
     for (int x = 0; x < CTL_POOL; x++) {
         ctl_t *c = &k->pool[x];
         if (c->used) continue;
+        uint8_t *b = malloc(n ? n : 1);
+        if (!b) return -1;
+        memcpy(b, d, n);
+        c->data = b;
         c->used = 1; c->tries = 0; c->len = (uint16_t)n; c->id = k->tx_next++;
         c->sent = 0;
-        memcpy(c->data, d, n);
         return x;
     }
     return -1;
@@ -399,9 +407,21 @@ static int bio_send(void *ctx, const unsigned char *d, size_t n)
     ks_t *k = ctx;
     size_t chunks = (n + CTL_MAX - 1) / CTL_MAX;
     if ((size_t)pool_free(k) < chunks) return MBEDTLS_ERR_SSL_WANT_WRITE;
-    for (size_t off = 0; off < n; off += CTL_MAX) {
-        size_t m = n - off < CTL_MAX ? n - off : CTL_MAX;
-        ctl_queue(k, d + off, m);
+    /* all or nothing: a half-queued TLS write would corrupt the stream */
+    uint8_t *bufs[CTL_POOL];
+    for (size_t c = 0; c < chunks; c++) {
+        size_t off = c * CTL_MAX, m = n - off < CTL_MAX ? n - off : CTL_MAX;
+        if (!(bufs[c] = malloc(m))) { while (c--) free(bufs[c]); return MBEDTLS_ERR_SSL_WANT_WRITE; }
+    }
+    for (size_t c = 0; c < chunks; c++) {
+        size_t off = c * CTL_MAX, m = n - off < CTL_MAX ? n - off : CTL_MAX;
+        for (int x = 0; x < CTL_POOL; x++) {
+            ctl_t *s = &k->pool[x];
+            if (s->used) continue;
+            memcpy(bufs[c], d + off, m);
+            s->data = bufs[c]; s->used = 1; s->tries = 0; s->len = (uint16_t)m; s->id = k->tx_next++; s->sent = 0;
+            break;
+        }
     }
     ctl_pump_tx(k);
     return (int)n;
@@ -686,6 +706,9 @@ static ks_t *slot_new(ovpn_t *o, int idx, uint8_t kid, int first)
 {
     ks_t *k = calloc(1, sizeof *k);
     if (!k) return NULL;
+    k->rxs = malloc(RXS_SIZE);
+    k->app = malloc(APP_SIZE);
+    if (!k->rxs || !k->app) { free(k->rxs); free(k->app); free(k); return NULL; }
     k->o = o;
     k->kid = kid;
     k->first = first;
@@ -695,11 +718,12 @@ static ks_t *slot_new(ovpn_t *o, int idx, uint8_t kid, int first)
     mbedtls_ssl_init(&k->ssl);
     k->ssl_ok = 1;
     int r = mbedtls_ssl_setup(&k->ssl, &o->conf);
-    if (r != 0) { fail(o, "TLS set-up failed (%d)", r); mbedtls_ssl_free(&k->ssl); free(k); return NULL; }
+    if (r != 0) { fail(o, "TLS set-up failed (%d)", r); mbedtls_ssl_free(&k->ssl); free(k->rxs); free(k->app); free(k); return NULL; }
     mbedtls_ssl_set_bio(&k->ssl, k, bio_send, bio_recv, NULL);
     if (rnd(o, k->pre_master, 48) || rnd(o, k->r1, 32) || rnd(o, k->r2, 32)) {
         fail(o, "no random numbers");
         mbedtls_ssl_free(&k->ssl);
+        free(k->rxs); free(k->app);
         free(k);
         return NULL;
     }
@@ -714,6 +738,9 @@ static void slot_free(ovpn_t *o, int idx)
     if (k->ssl_ok) mbedtls_ssl_free(&k->ssl);
     if (k->enc.ok) mbedtls_gcm_free(&k->enc.gcm);
     if (k->dec.ok) mbedtls_gcm_free(&k->dec.gcm);
+    for (int x = 0; x < CTL_POOL; x++) free(k->pool[x].data);
+    if (k->rxs) { memset(k->rxs, 0, RXS_SIZE); free(k->rxs); }
+    if (k->app) { memset(k->app, 0, APP_SIZE); free(k->app); }
     memset(k, 0, sizeof *k);
     free(k);
     o->slot[idx] = NULL;
@@ -817,7 +844,7 @@ static void recv_control(ovpn_t *o, int op, const uint8_t *d, size_t n)
     o->t_last_rx = o->now;
     for (int x = 0; x < na; x++) {
         uint32_t id = get32(acks + 4 * x);
-        for (int s = 0; s < CTL_POOL; s++) if (k->pool[s].used && k->pool[s].tries && k->pool[s].id == id) k->pool[s].used = 0;
+        for (int s = 0; s < CTL_POOL; s++) if (k->pool[s].used && k->pool[s].tries && k->pool[s].id == id) { k->pool[s].used = 0; free(k->pool[s].data); k->pool[s].data = NULL; }
     }
     if (op == P_ACK_V1) { ctl_pump_tx(k); return; }
     if (n < i + 4) return;
