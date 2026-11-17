@@ -180,7 +180,7 @@ static void vif_up(const ovpn_info_t *in) {
     if (k || in->redirect_gateway) {
         char t[140];
         int n = snprintf(t, sizeof t, "VPN: %d route%s from the server go into the tunnel%s", k, k == 1 ? "" : "s",
-                         in->redirect_gateway ? "; its \"everything through the VPN\" (redirect-gateway) is not followed, as on DreamPi" : "");
+                         in->redirect_gateway ? "; its \"everything through the VPN\" (redirect-gateway) is not followed: Internet traffic stays outside the tunnel" : "");
         log_add("esp32", t, (size_t)n);
     }
     netif_set_up(&vif);
