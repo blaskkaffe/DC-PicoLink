@@ -3,7 +3,8 @@
 # Without a build dir only the C model tests run; with one, the PIO simulations also
 # run against that build's assembled W5500 program (w5500_spi.pio.h).
 set -eu
-cd "$(dirname "$0")/../firmware"
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here/../firmware"
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 fail=0
 for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard; do
@@ -36,4 +37,6 @@ fi
 # the ESP32-only probe's bit-banged SPI slave (logic only; the probe firmware measures the timing)
 if gcc -O2 -Wall -o "$out/test_dcspi_bb" ../esp32/tests/dcspi_bb/test_dcspi_bb.c && "$out/test_dcspi_bb" > "$out/dcspi_bb.log"; then
     echo "PASS test_dcspi_bb: $(tail -1 "$out/dcspi_bb.log")"; else echo "FAIL test_dcspi_bb"; tail "$out/dcspi_bb.log"; fail=1; fi
+# the ESP32 web page's script must parse (a bad escape leaves the page at "link: ?")
+"$here/check-web-page.sh" || fail=1
 exit $fail
