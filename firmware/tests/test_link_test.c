@@ -31,7 +31,18 @@ static void run(int fault, link_test_t *t) {
     CHECK(maxout <= LINK_TEST_WINDOW);
 }
 
+/* the firmware's main loop takes `now` before reading the link, so an answer can be newer than
+   `now` in the same pass: that must not end the test */
+static int test_now_older(void) {
+    link_test_t t; link_test_start(&t, 1000);
+    uint8_t b[1600];
+    size_t n = link_test_next(&t, b); link_test_queued(&t);
+    link_test_rx(&t, b, n, 1500);                      /* answer at 1500 */
+    return link_test_poll(&t, 1400) == false && t.state == LINK_TEST_RUN;   /* pass started at 1400 */
+}
+
 int main(void) {
+    if (!test_now_older()) { printf("FAIL: an answer newer than now ended the test\n"); return 1; }
     link_test_t t;
     run(0, &t); CHECK(link_test_passed(&t)); CHECK(t.good == LINK_TEST_N && link_test_kb_per_s(&t) > 0);
     run(1, &t); CHECK(!link_test_passed(&t)); CHECK(t.lost == 1 && t.bad == 0 && t.good == LINK_TEST_N - 1);

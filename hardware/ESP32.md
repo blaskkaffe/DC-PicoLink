@@ -86,8 +86,7 @@ broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.
 NAT like on the cable's own network). In the stack GPIO9-13 sit over the Zero's GP15 and
 GP26-29: GP15 is an unused input, GP26-29 are not joined.
 
-Planned, not in the firmware yet: an SD slot on the Zero's SPI1 (SCK GP26, MOSI GP27,
-MISO GP28, CS GP29; on this layout GP9 belongs to the Dreamcast).
+SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP27, MISO GP28, CS GP29), see [SD-SLOT.md](SD-SLOT.md).
 
 **The link:** the cable is the SPI master (SPI0, ~15.6 MHz at 250 MHz, mode 1), the ESP32 the
 slave (SPI3). Every transaction is 1024 bytes both ways; the packets inside are the same as on

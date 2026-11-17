@@ -142,6 +142,19 @@ static bool vpn_in_allowed(const uint8_t *ip, size_t n) {
     return false;
 }
 
+/* routes the server pushed (beyond the tunnel's own subnet), for vpn_route() */
+static struct { uint32_t net, mask; } routes[8];
+static volatile int nroutes;
+
+/* lwIP's routing hook (hooks/dcl_lwip_hooks.h): a destination in a pushed route goes into the tunnel */
+struct netif *vpn_route(const ip4_addr_t *dest) {
+    int n = nroutes;
+    if (!n || !tun_ip || !dest) return NULL;
+    uint32_t d = lwip_ntohl(ip4_addr_get_u32(dest));
+    for (int i = 0; i < n; i++) if ((d & routes[i].mask) == routes[i].net) return &vif;
+    return NULL;
+}
+
 static void vif_up(const ovpn_info_t *in) {
     ip4_addr_t ip, mask, gw;
     ip.addr = lwip_htonl(in->ip);
@@ -156,6 +169,20 @@ static void vif_up(const ovpn_info_t *in) {
     vif.napt = 1;                    /* the Dreamcast's packets go into the tunnel unchanged (no NAT) */
 #endif
     tun_ip = in->ip;
+    int k = 0;
+    for (int i = 0; i < in->nroute && k < 8; i++) {
+        uint32_t m = in->route[i].mask;
+        routes[k].mask = m; routes[k].net = in->route[i].net & m; k++;
+        char a[16], b[16]; fmt_ip(a, sizeof a, in->route[i].net & m); fmt_ip(b, sizeof b, m);
+        ESP_LOGI(TAG, "pushed route %s/%s into the tunnel", a, b);
+    }
+    nroutes = k;
+    if (k || in->redirect_gateway) {
+        char t[140];
+        int n = snprintf(t, sizeof t, "VPN: %d route%s from the server go into the tunnel%s", k, k == 1 ? "" : "s",
+                         in->redirect_gateway ? "; its \"everything through the VPN\" (redirect-gateway) is not followed, as on DreamPi" : "");
+        log_add("esp32", t, (size_t)n);
+    }
     netif_set_up(&vif);
     netif_set_link_up(&vif);
     UNLOCK_TCPIP_CORE();
@@ -163,6 +190,7 @@ static void vif_up(const ovpn_info_t *in) {
 
 static void vif_down(void) {
     tun_ip = 0;
+    nroutes = 0;
     if (!vif_added) return;
     LOCK_TCPIP_CORE();
     netif_set_down(&vif);

@@ -67,6 +67,29 @@ static volatile bool cap_req;
 #define SDH_CAPTURE_HOOK(v) ((void)(v), cap_req = true)
 #include "sd_model.h"
 
+/* ---- a real SD card on SPI1 (hardware/SD-SLOT.md): the Dreamcast's SD card when no Pi
+   serves one over USB (sdcard_model.h) ---- */
+#include "hardware/spi.h"
+#define SDC_SPI       spi1
+#define PIN_SDC_SCK   26
+#define PIN_SDC_MOSI  27
+#define PIN_SDC_MISO  28
+#if DC_PIN_BASE == 9
+#define PIN_SDC_CS    29                 /* zero-stack: GP9-14 are the Dreamcast's */
+#else
+#define PIN_SDC_CS    9
+#endif
+#ifndef DC_SDC_HZ
+#define DC_SDC_HZ     12500000u          /* safe on short wires; cards take 25 MHz */
+#endif
+static inline uint8_t sdc_xfer(uint8_t b) { uint8_t r; spi_write_read_blocking(SDC_SPI, &b, &r, 1); return r; }
+#define SDL_XFER(b)   sdc_xfer(b)
+#define SDL_CS(on)    gpio_put(PIN_SDC_CS, !(on))
+#define SDL_SLOW()    spi_set_baudrate(SDC_SPI, 400000)
+#define SDL_FAST()    spi_set_baudrate(SDC_SPI, DC_SDC_HZ)
+#define SDL_NOW_US()  time_us_32()
+#include "sdcard_model.h"
+
 /* ---- configuration ---------------------------------------------------- */
 
 #ifndef DC_BAUD_MATCH
@@ -813,8 +836,15 @@ static void hello_task(void) {
                   DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
         return;
     }
-    if (dc_mode != MODE_OFFLINE || now - last < 10000000u) return;
+    /* offline: once after 10 s, then only when a pin changes, core1 stops, or every 5 minutes */
+    static uint32_t said_sig = 0xFFFFFFFFu, said_t;
+    if (dc_mode != MODE_OFFLINE) { said_sig = 0xFFFFFFFFu; return; }
+    if (now - last < 10000000u) return;
     uint32_t in = gpio_get_all();
+    bool stuck = core1_beat == beat0;
+    uint32_t psig = ((in >> DC_PIN_BASE) & 0x3F) | (stuck ? 0x100u : 0u);
+    if (psig == said_sig && now - said_t < 300000000u) { beat0 = core1_beat; last = now; return; }
+    said_sig = psig; said_t = now;
     status("offline: waiting for the DC (needs %s). pins CLK=%lu TXD=%lu RXD=%lu RTS=%lu CTSout=%lu; core1 %s",
            dc_sense ? "3.3 V on the sense wire" : "TXD or RTS high",
            (unsigned long)(in >> PIN_DC_CTS_SENSE & 1), (unsigned long)(in >> PIN_RX & 1), (unsigned long)(in >> PIN_TX & 1),
@@ -824,17 +854,30 @@ static void hello_task(void) {
 }
 
 /* ---- SPI / W5500 diagnostics ----------------------------------------------- */
+/* The SPI/W5500 lines: only when the Dreamcast did something on the SPI bus since the last
+   report (at most every 5 s); the error line only when there are errors; the USB network
+   counters (they move with any traffic of the computer) at most once a minute. */
 static void spi_report(void) {
-    static uint32_t last, sig;
+    static uint32_t last, sig, net_sig, net_last;
     uint32_t now = time_us_32();
     if (now - last < 5000000u) return;
-    uint32_t s = spi_stats.w5_frames * 3u + spi_stats.sd_frames * 5u + net_in * 7u + net_out * 11u + spi_stats.book_lost * 29u +
+    uint32_t s = spi_stats.w5_frames * 3u + spi_stats.sd_frames * 5u + spi_stats.book_lost * 29u +
                  spi_stats.late_frames * 37u + spi_stats.underruns * 41u + w5.n_recv_bad * 43u +
                  w5.n_open * 17u + w5.n_send * 19u + w5.n_recv * 23u;
 #if DC_DIAG
     s += spi_stats.cap_n * 31u;
 #endif
-    if (s == sig) return;
+    uint32_t ns = net_in * 7u + net_out * 11u + net_in_drop * 13u + net_in_full * 3u;
+    bool net_due = ns != net_sig && (s != sig || now - net_last > 60000000u);
+    if (s == sig) {
+        if (net_due && (spi_stats.w5_frames || net_out)) {       /* only once a W5500 session has existed */
+            net_sig = ns; net_last = now; last = now;
+            status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
+                   tud_mounted() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
+                   (unsigned long)net_in_drop, (unsigned long)net_in_full);
+        }
+        return;
+    }
     sig = s; last = now;
     const uint8_t *mac = &w5.common[W5C_SHAR];
     status("spi: %lu W5500 frames, %lu SD frames, switches to SD %lu / to W5500 %lu; W5500 version reads %lu, other common reads %lu; SD %s",
@@ -861,9 +904,10 @@ static void spi_report(void) {
         cap_shown = cap_shown + 3 < cn ? cap_shown + 3 : cn;
     }
 #endif
-    status("spi: %lu short/aborted frames (CS rose inside the header or a byte), %lu reads answered late, %lu burst underruns (MISO byte went out as ff), %lu RX resyncs (bad RECV pointer, buffered frames dropped)",
-           (unsigned long)spi_stats.short_frames,
-           (unsigned long)spi_stats.late_frames, (unsigned long)spi_stats.underruns, (unsigned long)w5.n_recv_bad);
+    if (spi_stats.short_frames || spi_stats.late_frames || spi_stats.underruns || w5.n_recv_bad)
+        status("spi: %lu short/aborted frames (CS rose inside the header or a byte), %lu reads answered late, %lu burst underruns (MISO byte went out as ff), %lu RX resyncs (bad RECV pointer, buffered frames dropped)",
+               (unsigned long)spi_stats.short_frames,
+               (unsigned long)spi_stats.late_frames, (unsigned long)spi_stats.underruns, (unsigned long)w5.n_recv_bad);
     static uint8_t rsd_shown;
     if (w5.n_rsd < rsd_shown) rsd_shown = 0;                /* new session (reset) */
     for (; rsd_shown < w5.n_rsd; rsd_shown++) {
@@ -889,9 +933,12 @@ static void spi_report(void) {
         late_shown = spi_stats.late_n;
     }
 #endif
-    status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
-           tud_mounted() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
-           (unsigned long)net_in_drop, (unsigned long)net_in_full);
+    if (ns != net_sig) {
+        net_sig = ns; net_last = now;
+        status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
+               tud_mounted() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
+               (unsigned long)net_in_drop, (unsigned long)net_in_full);
+    }
 }
 
 /* ---- follow the Dreamcast's real TX rate (auto-baud) --------------------- */
@@ -1070,7 +1117,60 @@ static void autobaud_task(void) {
 }
 
 /* ---- SD card backend (dcsd on the Pi) ------------------------------------ */
+/* the slot: looked for every 2 s while empty (no card-detect pin needed); the Pi's dcsd,
+   when connected, owns the Dreamcast's SD card instead */
+static sdl_card_t sdcard;
+static sdl_src_t sdsrc;
+static bool sdc_attached;
+static void sdcard_init(void) {
+    spi_init(SDC_SPI, 400000);
+    spi_set_format(SDC_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    gpio_set_function(PIN_SDC_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SDC_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SDC_MISO, GPIO_FUNC_SPI);
+    gpio_pull_up(PIN_SDC_MISO);                     /* no card: reads 0xFF */
+    gpio_init(PIN_SDC_CS);
+    gpio_put(PIN_SDC_CS, 1);
+    gpio_set_dir(PIN_SDC_CS, GPIO_OUT);
+}
+static void sdcard_task(void) {
+    static uint32_t next_try;
+    static const char *said_why;
+    uint32_t now = time_us_32();
+    if (sd_link_up) {                                /* the Pi serves the SD card */
+        if (sdc_attached) { sdc_attached = false; status("SD card: the Pi's dcsd serves the Dreamcast's SD card now; the slot rests"); }
+        return;
+    }
+    if (!sdc_attached) {
+        static bool tried;                           /* always once at start; then not while serial runs (a search costs a few ms) */
+        if (tried && ((int32_t)(now - next_try) < 0 || seen_mode == MODE_SERIAL)) return;
+        tried = true;
+        next_try = now + 2000000u;
+        if (!sdl_init(&sdcard)) {
+            if (said_why != sdcard.why && log_up()) {
+                said_why = sdcard.why;
+                status("SD card slot: %s", sdcard.why);
+            }
+            return;
+        }
+        said_why = NULL;
+        sdl_src_attach(&sdsrc, &sdcard);
+        sdc_attached = true;
+        status("SD card: %lu MB %s in the slot; the Dreamcast sees it as its SD card",
+               (unsigned long)(sdcard.blocks / 2048u), sdcard.sdhc ? "SDHC/SDXC" : "SD (byte addressed)");
+        return;
+    }
+    if (!sdl_src_poll(&sdsrc, &sdcard, 2)) {
+        sdl_src_detach(&sdsrc);
+        sdc_attached = false;
+        next_try = now + 1000000u;
+        status("SD card: removed or not answering (%lu blocks read, %lu written, %lu errors)",
+               (unsigned long)sdcard.reads, (unsigned long)sdcard.writes, (unsigned long)sdcard.errors);
+    }
+}
+
 static void sd_task(void) {
+    sdcard_task();
     /* No DTR on a vendor interface: the link is up while dcsd talks to us (it
        sends 'I' at start and every 2 s), and down after 5 s of silence. */
     static uint32_t last_rx;
@@ -1078,6 +1178,9 @@ static void sd_task(void) {
     if (!tud_mounted()) {
         if (sd_link_up) { sd_link_up = false; sdh_disconnected(); }
         return;
+    }
+    if (sdc_attached && tud_vendor_available()) {     /* the Pi's dcsd is back: hand over */
+        sdl_src_detach(&sdsrc);
     }
     uint8_t buf[256];
     uint32_t n;
@@ -1171,6 +1274,8 @@ static void request_baud(uint32_t b, uint32_t queued_bytes) {
 }
 
 static link_test_t link_test;        /* runs by itself whenever the link comes up */
+static char test_msg[160];
+static bool test_msg_pending;
 
 /* Deliver the packet in link_rx. false = not now (no room): keep it, stop reading. */
 static bool link_deliver(void) {
@@ -1312,17 +1417,6 @@ static void link_task(void) {
 done:
 #endif
     /* the self-test: a few packets per pass, never more than its window on their way */
-    {
-        static uint32_t last_prog;
-        if (link_up && now - last_prog > 5000000u && link_test.state != LINK_TEST_IDLE + 100) {
-            last_prog = now;
-            if (link_test.state != LINK_TEST_DONE)
-                status("esp32 link self-test: state %u, sent %lu, back %lu (good %lu, bad %lu, lost %lu), last answer %lu ms ago",
-                       (unsigned)link_test.state, (unsigned long)link_test.sent, (unsigned long)link_test.next_rx,
-                       (unsigned long)link_test.good, (unsigned long)link_test.bad, (unsigned long)link_test.lost,
-                       (unsigned long)((now - link_test.t_last) / 1000u));
-        }
-    }
     if (link_up && link_test.state == LINK_TEST_RUN) {
         static uint8_t tb[LINK_MAX_PAYLOAD];
         for (int k = 0; k < 2; k++) {
@@ -1332,13 +1426,19 @@ done:
         }
         if (link_test_poll(&link_test, now)) {
             if (link_test_passed(&link_test))
-                status("esp32 link self-test: PASS, %lu packets of 8-1508 bytes went there and back, %lu KB/s each way",
-                       (unsigned long)link_test.good, (unsigned long)link_test_kb_per_s(&link_test));
+                snprintf(test_msg, sizeof test_msg, "esp32 link self-test: PASS, %lu packets of 8-1508 bytes went there and back, %lu KB/s each way",
+                         (unsigned long)link_test.good, (unsigned long)link_test_kb_per_s(&link_test));
             else
-                status("esp32 link self-test: FAIL, %lu of %lu packets came back right, %lu damaged, %lu lost%s",
-                       (unsigned long)link_test.good, (unsigned long)LINK_TEST_N, (unsigned long)link_test.bad,
-                       (unsigned long)link_test.lost, link_test.good ? "" : " (is the ESP32's firmware as new as the cable's?)");
+                snprintf(test_msg, sizeof test_msg, "esp32 link self-test: FAIL, %lu of %lu packets came back right, %lu damaged, %lu lost%s",
+                         (unsigned long)link_test.good, (unsigned long)LINK_TEST_N, (unsigned long)link_test.bad,
+                         (unsigned long)link_test.lost, link_test.good ? "" : " (is the ESP32's firmware as new as the cable's?)");
+            test_msg_pending = true;
         }
+    }
+    /* the result waits for room on the link (right after the test the queue can be full) */
+    if (test_msg_pending && link_up && LINK_TX_SIZE - (link_tx_wr - link_tx_rd) >= LINK_MAX_WIRE) {
+        test_msg_pending = false;
+        status("%s", test_msg);
     }
     if (link_up && now - link_last_rx > 3000000u) {
         link_up = false;
@@ -1388,6 +1488,7 @@ int main(void) {
     w5500_spi_init();
     cap_init();
     link_init();
+    sdcard_init();
     tusb_init();
     multicore_launch_core1(core1_main);
     while (true) {

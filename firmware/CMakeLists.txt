@@ -24,7 +24,7 @@ target_include_directories(dc_usb_serial PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_compile_definitions(dc_usb_serial PRIVATE
     PICO_USE_FASTEST_SUPPORTED_CLOCK=1)      # 200 MHz: more headroom for SPI replies
 target_link_libraries(dc_usb_serial PRIVATE pico_stdlib pico_unique_id pico_multicore
-    hardware_pio hardware_dma hardware_clocks hardware_vreg tinyusb_device tinyusb_board)
+    hardware_pio hardware_dma hardware_clocks hardware_vreg hardware_spi tinyusb_device tinyusb_board)
 if(DC_SYS_KHZ)   # optional overclock: cmake -DDC_SYS_KHZ=250000 ..
     target_compile_definitions(dc_usb_serial PRIVATE DC_SYS_KHZ=${DC_SYS_KHZ})
 endif()

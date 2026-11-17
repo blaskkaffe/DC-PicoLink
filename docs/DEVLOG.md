@@ -351,3 +351,19 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   address.
 - VPN profiles live in their own partition (vpnprof, 0x190000), so flashing a new merged
   image keeps them.
+
+## Link self-test never reported; SD slot (Nov 2026)
+
+- The self-test logged "started" and then nothing. link_task() takes `now` before reading the
+  link, and an answer read in the same pass is stamped later, so `now - t_last` wrapped to a
+  huge number: the test "timed out" right after it started, and its FAIL line was sent while
+  the queue was full of test packets, so it got lost. The timeout compare is signed now
+  (tests/test_link_test.c checks it), and the result line waits for room on the link.
+- Debug log: the spi/w5500 lines only when the Dreamcast did something on the SPI bus, the error
+  line only with errors, USB network counters at most once a minute; "offline: waiting" once,
+  then only when a pin changes or every 5 minutes.
+- SD slot: sdcard_model.h drives a real card in SPI mode as a second block source for the SD
+  emulation (same contract as sdh_poll). tests/test_sdcard.c runs it against a simulated card.
+  core1's W5500 path: instructions identical to the previous build (only literal addresses moved).
+- VPN routes pushed by the server go into the tunnel through lwIP's route hook
+  (esp32/hooks/dcl_lwip_hooks.h wraps ESP-IDF's own ip4_route_src_hook).

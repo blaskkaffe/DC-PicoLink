@@ -72,11 +72,13 @@ static inline void link_test_rx(link_test_t *t, const uint8_t *p, size_t n, uint
     if (t->next_rx >= LINK_TEST_N) { t->state = LINK_TEST_DONE; t->t_end = now; }
 }
 
-/* Call regularly. true once, when the test has just ended (all back, or nothing for 2 s). */
+/* Call regularly. true once, when the test has just ended (all back, or nothing for 2 s).
+   `now` may be a little older than the last answer's time (taken earlier in the same pass):
+   the difference is signed, so that is not a 4295-second timeout. */
 static inline bool link_test_poll(link_test_t *t, uint32_t now) {
     if (t->state != LINK_TEST_RUN) return false;
     if (t->next_rx >= LINK_TEST_N) { t->state = LINK_TEST_DONE; t->t_end = now; return true; }
-    if (now - t->t_last > LINK_TEST_TIMEOUT_US) {
+    if ((int32_t)(now - t->t_last) > (int32_t)LINK_TEST_TIMEOUT_US) {
         t->lost += t->sent - t->next_rx;
         t->state = LINK_TEST_DONE; t->t_end = t->t_last;
         return true;

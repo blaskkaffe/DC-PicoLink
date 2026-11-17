@@ -1,4 +1,4 @@
-# SD card slot (planned, roadmap step 2)
+# SD card slot
 
 The SD card sits on the RP2040's own SPI bus (SPI1), never on the Dreamcast's wires.
 The same pins exist on all supported boards, so one firmware fits all of them.
@@ -8,8 +8,8 @@ The same pins exist on all supported boards, so one firmware fits all of them.
 | CLK / SCK | GPIO26 (SPI1 SCK) | 26 (A0) | GP26 | GP26 (pin 31) |
 | CMD / DI / MOSI | GPIO27 (SPI1 TX) | 27 (A1) | GP27 | GP27 (pin 32) |
 | DAT0 / DO / MISO | GPIO28 (SPI1 RX) | 28 (A2) | GP28 | GP28 (pin 34) |
-| DAT3 / CS | GPIO9 | 9 | GP9 | GP9 |
-| card detect (optional) | GPIO8 | 8 | GP8 | GP8 |
+| DAT3 / CS | GPIO9 (zero-stack: GPIO29) | 9 | GP29 (zero-stack) | GP9 |
+| card detect | not used: the firmware looks for a card every 2 s | | | |
 | GND | GND | | | |
 | VCC | see below | | | |
 
@@ -33,3 +33,13 @@ Pin order on the module: GND, MISO, CLK, MOSI, CS, 3V3 (no card-detect pin).
 * **Bare slot / module without a regulator**: 3V3 to VCC.
 * Either way: a 10 µF capacitor across the card's supply close to the slot (cards draw
   current spikes when writing).
+
+## What the firmware does
+
+The card is the Dreamcast's SD card (the same emulation the Pi's `dcsd` serves; when `dcsd` is
+connected it takes precedence). Status lines: `SD card: N MB SDHC/SDXC in the slot`, `SD card
+slot: no card (no answer)`, `SD card: removed or not answering`. Any FAT32 card the Dreamcast's
+SD loaders accept works; SDSC (2 GB and smaller) and SDHC/SDXC are handled. SPI clock 12.5 MHz
+(`-DDC_SDC_HZ=...` to change). Reads one block at a time, about 1 MB/s. The search for a card
+pauses while the Dreamcast uses the serial port (a search costs a few ms of the main loop); a
+card that is already found stays in use.
