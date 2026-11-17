@@ -43,7 +43,9 @@ static uint32_t up_ip, up_gw;                     /* the uplink's address/gatewa
 static struct netif *volatile in_nif;             /* where the Dreamcast is connected now, NULL = nowhere */
 static volatile uint32_t inside;                  /* its address there (host order) */
 static volatile bool conflict;                    /* another device answered for the Dreamcast's address */
-static struct { uint32_t arp_answered, rewritten_out, rewritten_in, picks, conflicts; } cnt;
+static struct { uint32_t arp_answered, arp_seen, rewritten_out, rewritten_in, from_dc, to_home, picks, conflicts; } cnt;
+static volatile uint32_t first_out_ms;              /* when the Dreamcast first sent out this call (0 = not yet) */
+static bool said_nothing_back, said_first_in;
 static char why_none[96] = "waiting for the home network";
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -103,7 +105,11 @@ int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
     if ((h[0] >> 4) != 4) return 0;
     uint32_t src = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
     uint32_t dst = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
-    if (inp == dcn && src == in) note_dest(h, p->len, dst);
+    if (inp == dcn && src == in) {
+        note_dest(h, p->len, dst);
+        if (!is_own_addr(dst)) { cnt.from_dc++; if (!first_out_ms) first_out_ms = (uint32_t)(esp_timer_get_time() / 1000) | 1; }
+    }
+    if (inp == up_nif && dst == lan) cnt.to_home++;                       /* something for its home address came */
     if (in == lan) return 0;                                            /* its home address on PPP: nothing to rewrite */
     dcl_pkt_t pk = { pg, pp, p, p->tot_len };
     if (inp == dcn && src == in) {
@@ -132,7 +138,7 @@ static err_t eth_in(struct pbuf *p, struct netif *inp) {
             if (dcl_arp_claims(a, 28, lan, inp->hwaddr)) {
                 if (!conflict) cnt.conflicts++;
                 conflict = true;
-            } else if (in_nif && dcl_arp_asks_for(a, 28, lan, mac, &sip)) {
+            } else if (dcl_arp_asks_for(a, 28, lan, mac, &sip) && (cnt.arp_seen++, in_nif)) {
                 struct pbuf *q = pbuf_alloc(PBUF_LINK, 28, PBUF_RAM);
                 if (q) {
                     dcl_arp_reply((uint8_t *)q->payload, inp->hwaddr, lan, mac, sip);
@@ -144,6 +150,18 @@ static err_t eth_in(struct pbuf *p, struct netif *inp) {
         }
     }
     return ethernet_input(p, inp);
+}
+/* "lan is at our MAC" to everyone (gratuitous ARP request): access points that answer ARP for
+   their clients (proxy ARP, mesh systems) learn the second address only this way. Core locked. */
+static void announce(struct netif *n, uint32_t lan) {
+    static const uint8_t bc[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, zero[6] = { 0 };
+    struct pbuf *q = pbuf_alloc(PBUF_LINK, 28, PBUF_RAM);
+    if (!q) return;
+    uint8_t *a = (uint8_t *)q->payload;
+    dcl_arp_reply(a, n->hwaddr, lan, zero, lan);
+    a[7] = 1;                                                    /* a request, as gratuitous ARP is sent */
+    ethernet_output(n, q, (const struct eth_addr *)n->hwaddr, (const struct eth_addr *)bc, ETHTYPE_ARP);
+    pbuf_free(q);
 }
 static err_t wrapped_input(struct pbuf *p, struct netif *inp) { return tcpip_inpkt(p, inp, eth_in); }
 
@@ -213,9 +231,11 @@ static void track(void) {
     if (n && n != ppp_dc_netif()) n->napt = 0;
     in_nif = n; inside = a;
     seen_n = 0; seen_logged = 0;
+    first_out_ms = 0; said_nothing_back = said_first_in = false;
+    if (n && up_nif) announce(up_nif, lan_dc);
     UNLOCK_TCPIP_CORE();
-    if (n && a == lan_dc) say("home network: the Dreamcast is %s there; this box answers for it (proxy ARP), no NAT", ips(a, x));
-    else if (n) say("home network: the Dreamcast (%s here) is %s at home; this box answers for it (proxy ARP)", ips(a, x), ips(lan_dc, y));
+    if (n && a == lan_dc) say("home network: the Dreamcast is %s there; this box answers for it (proxy ARP, announced), no NAT", ips(a, x));
+    else if (n) say("home network: the Dreamcast (%s here) is %s at home; this box answers for it (proxy ARP, announced)", ips(a, x), ips(lan_dc, y));
 }
 
 static void task(void *arg) {
@@ -250,6 +270,16 @@ static void task(void *arg) {
             }
         }
         track();
+        if (in_nif) {                                 /* does anything come back for the home address? */
+            static uint32_t home0; if (!first_out_ms) home0 = cnt.to_home;
+            char a[16];
+            if (!said_first_in && cnt.to_home != home0 && first_out_ms) { said_first_in = true; say("home network: answers for %s arrive (the router delivers to it)", ips(lan_dc, a)); }
+            else if (!said_first_in && !said_nothing_back && first_out_ms && (uint32_t)(esp_timer_get_time() / 1000) - first_out_ms > 10000) {
+                said_nothing_back = true;
+                say("home network: nothing has come back for %s in 10 s (%lu sent out; the router asked for it %lu times): the router or Wi-Fi may not deliver to a second address on this box",
+                    ips(lan_dc, a), (unsigned long)cnt.from_dc, (unsigned long)cnt.arp_seen);
+            }
+        }
         while (seen_logged < seen_n) {                /* where the Dreamcast goes (first few per call) */
             int i = seen_logged++;
             char a[16]; uint32_t ip = seen[i].ip; bool own = false;
@@ -264,9 +294,9 @@ static void task(void *arg) {
 
 size_t dclan_info_json(char *o, size_t cap) {
     char a[16], b[16], c[16];
-    return (size_t)snprintf(o, cap, "{\"dc\":\"%s\",\"this\":\"%s\",\"connected_as\":\"%s\",\"none\":\"%s\",\"arp_answered\":%lu,\"out\":%lu,\"in\":%lu,\"conflict\":%s}",
+    return (size_t)snprintf(o, cap, "{\"dc\":\"%s\",\"this\":\"%s\",\"connected_as\":\"%s\",\"none\":\"%s\",\"arp_answered\":%lu,\"arp_seen\":%lu,\"from_dc\":%lu,\"to_home\":%lu,\"out\":%lu,\"in\":%lu,\"conflict\":%s}",
         lan_dc ? ips(lan_dc, a) : "", lan_this ? ips(lan_this, b) : "", in_nif ? ips(inside, c) : "", why_none,
-        (unsigned long)cnt.arp_answered, (unsigned long)cnt.rewritten_out, (unsigned long)cnt.rewritten_in, conflict ? "true" : "false");
+        (unsigned long)cnt.arp_answered, (unsigned long)cnt.arp_seen, (unsigned long)cnt.from_dc, (unsigned long)cnt.to_home, (unsigned long)cnt.rewritten_out, (unsigned long)cnt.rewritten_in, conflict ? "true" : "false");
 }
 
 void dclan_start(void) { xTaskCreate(task, "dclan", 3072, NULL, 4, NULL); }
