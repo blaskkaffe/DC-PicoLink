@@ -1380,6 +1380,45 @@ static void lspi_task(uint32_t now) {
 }
 #endif
 
+#if DC_LINK_SPI
+/* The RP2040-Zero's RGB LED (WS2812 on GPIO16): a sign of life without USB.
+   red blink = running, no ESP32 link; green = link up; blue = link up and the Dreamcast is on.
+   Bit-banged (no PIO state machine is free), 24 bits with interrupts off (~30 us), only on a change. */
+#define PIN_LED 16
+static void led_put(uint32_t grb) {
+    uint32_t c = clock_get_hz(clk_sys) / 1000000u;           /* cycles per us */
+    uint32_t t0h = c * 35u / 100u, t1h = c * 80u / 100u, tb = c * 125u / 100u;
+    uint32_t irq = save_and_disable_interrupts();
+    for (int i = 23; i >= 0; i--) {
+        uint32_t h = (grb >> i) & 1u ? t1h : t0h;
+        sio_hw->gpio_set = 1u << PIN_LED;
+        busy_wait_at_least_cycles(h);
+        sio_hw->gpio_clr = 1u << PIN_LED;
+        busy_wait_at_least_cycles(tb - h);
+    }
+    restore_interrupts(irq);
+}
+static void led_init(void) {
+    gpio_init(PIN_LED);
+    gpio_set_dir(PIN_LED, GPIO_OUT);
+    gpio_put(PIN_LED, 0);
+}
+static void led_task(void) {
+    static uint32_t shown = 0xFFFFFFFFu, last_us;
+    uint32_t now = time_us_32();
+    if (now - last_us < 20000u) return;                       /* also keeps the >280 us reset gap */
+    last_us = now;
+    uint32_t want;
+    if (!link_up) want = (now / 100000u) % 10u == 0 ? 0x001000u : 0;   /* GRB: red, 0.1 s every second */
+    else if (dc_mode != MODE_OFFLINE) want = 0x000010u;          /* blue */
+    else want = 0x100000u;                                       /* green */
+    if (want != shown) { led_put(want); shown = want; }
+}
+#else
+static void led_init(void) {}
+static void led_task(void) {}
+#endif
+
 /* computer's terminal -> ESP32 while no Dreamcast is on (see ser_bridge) */
 static void ser_bridge_task(void) {
     if (!ser_bridge()) return;
@@ -1489,6 +1528,7 @@ int main(void) {
     cap_init();
     link_init();
     sdcard_init();
+    led_init();
     tusb_init();
     multicore_launch_core1(core1_main);
     while (true) {
@@ -1516,5 +1556,6 @@ int main(void) {
         pins_offline_task();
         power_sense_task();
         sense_report_task();
+        led_task();
     }
 }
