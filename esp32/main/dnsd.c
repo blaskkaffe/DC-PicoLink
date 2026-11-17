@@ -280,12 +280,17 @@ void dnsd_fetch_poll(void) {
     if (now_ms() - due_ms > 0x80000000u) return;           /* not yet (wraps fine) */
     if (!inet_up()) { due_ms = now_ms() + 2000; return; }
     if (fetch_file()) { warned = false; due_ms = now_ms() + 6u * 3600 * 1000; return; }
+    /* the file is only DreamPi's backup (answers locally if the DNS servers are down); without it
+       DreamPi says "Did not find remote DNS config; will use upstream" and asks its two servers,
+       as this box does. Not there (404): ask again in 6 hours; other errors: in 30 s. */
+    bool gone = !strcmp(fetch_err, "HTTP 404");
     if (!warned) {
         char m[160];
-        int k = snprintf(m, sizeof m, "DNS: could not fetch dreampi_dns.conf (%s); using the built-in servers, will retry", fetch_err);
+        int k = gone ? snprintf(m, sizeof m, "DNS: no dreampi_dns.conf on the server (DreamPi's backup list); asking the DNS servers directly, as DreamPi then does")
+                     : snprintf(m, sizeof m, "DNS: could not fetch dreampi_dns.conf (%s); asking the DNS servers directly, will retry", fetch_err);
         log_add("esp32", m, (size_t)k); warned = true;
     }
-    due_ms = now_ms() + 30000;
+    due_ms = now_ms() + (gone ? 6u * 3600 * 1000 : 30000);
 }
 
 void dnsd_start(void) {
