@@ -272,26 +272,24 @@ static bool fetch_file(void) {
     return ok;
 }
 
-static void fetch_task(void *arg) {
-    (void)arg;
-    bool warned = false;
-    vTaskDelay(pdMS_TO_TICKS(8000));                       /* Wi-Fi first */
-    for (;;) {
-        if (fetch_file()) { warned = false; vTaskDelay(pdMS_TO_TICKS(6 * 3600 * 1000)); }
-        else {
-            if (!warned && inet_up()) {
-                char m[160];
-                int k = snprintf(m, sizeof m, "DNS: could not fetch dreampi_dns.conf (%s); using the built-in servers, will retry", fetch_err);
-                log_add("esp32", m, (size_t)k); warned = true;
-            }
-            vTaskDelay(pdMS_TO_TICKS(30000));
-        }
+/* the DNS list download: called often from DCNow!'s task (dcnow.c), the one task for secure
+   connections (they take turns anyway: tls_lock), so no 8 KB stack of its own */
+void dnsd_fetch_poll(void) {
+    static bool warned;
+    static uint32_t due_ms = 8000;                         /* Wi-Fi first */
+    if (now_ms() - due_ms > 0x80000000u) return;           /* not yet (wraps fine) */
+    if (!inet_up()) { due_ms = now_ms() + 2000; return; }
+    if (fetch_file()) { warned = false; due_ms = now_ms() + 6u * 3600 * 1000; return; }
+    if (!warned) {
+        char m[160];
+        int k = snprintf(m, sizeof m, "DNS: could not fetch dreampi_dns.conf (%s); using the built-in servers, will retry", fetch_err);
+        log_add("esp32", m, (size_t)k); warned = true;
     }
+    due_ms = now_ms() + 30000;
 }
 
 void dnsd_start(void) {
     conf_lk = xSemaphoreCreateMutex();
     dns_conf_defaults(&conf);
     xTaskCreate(dns_task, "dnsd", 4096, NULL, 5, NULL);
-    xTaskCreate(fetch_task, "dns_fetch", 8192, NULL, 3, NULL);
 }

@@ -67,7 +67,7 @@ size_t log_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
     char t[LOG_LEN];
     for (; i < log_next; i++) {
         typeof(logi[0]) *e = &logi[i % LOG_N];
-        if (o + LOG_LEN * 6 + 64 > cap) break;
+        if (o + (size_t)e->len * 6 + 64 > cap) break;          /* room for this line, escaped */
         for (size_t k = 0; k < e->len; k++) t[k] = logt[(e->pos + k) % LOG_TXT];
         o += (size_t)snprintf(out + o, cap - o, "%s{\"n\":%lu,\"t\":%lu,\"src\":\"%s\",\"text\":\"",
                               o > 1 ? "," : "", (unsigned long)e->num, (unsigned long)e->t_ms, e->src);

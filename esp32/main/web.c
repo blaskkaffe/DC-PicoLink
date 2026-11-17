@@ -82,66 +82,61 @@ static uint32_t query_u32(httpd_req_t *r, const char *key) {
     return (uint32_t)strtoul(v, NULL, 10);
 }
 
+/* The status goes out in chunks from one fixed buffer: no heap at all. (It used to malloc 16 KB
+   once a second while the page was open, and that big block was what the VPN and DCNow!
+   needed for TLS: their "out of memory" during calls.) The page catches up on log lines over
+   several polls when there are many. */
+static char sb[4096];
+static size_t sn;
+static void sflush(httpd_req_t *r) { if (sn) httpd_resp_send_chunk(r, sb, (ssize_t)sn); sn = 0; }
+static void sroom(httpd_req_t *r, size_t need) { if (sizeof sb - sn < need) sflush(r); }
+#define SPUT(...) (sn += (size_t)snprintf(sb + sn, sizeof sb - sn, __VA_ARGS__))
+#define SPART(r, key, fn) do { sroom(r, 1400); SPUT(",\"" key "\":"); sn += fn(sb + sn, sizeof sb - sn); } while (0)
+
 static esp_err_t status(httpd_req_t *r) {
-    /* Small and short-lived: a board without PSRAM has little heap, and the secure connections
-       (DNS list, DCNow!) fail when this page takes it once a second. The log/serial parts shrink to fit. */
-    size_t cap = 16 * 1024;
-    char *o = NULL;
-    while (cap >= 4 * 1024 && !(o = malloc(cap))) cap /= 2;
-    if (!o) {
-        ESP_LOGE("web", "status: no memory (free %u, largest block %u)", (unsigned)esp_get_free_heap_size(),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-        return httpd_resp_send_500(r);
-    }
-    size_t n = 0;
+    httpd_resp_set_type(r, "application/json");
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    sn = 0;
     link_stats_t s; link_get_stats(&s);
-    n += (size_t)snprintf(o + n, cap - n,
-        "{\"link\":{\"up\":%s,\"good\":%lu,\"crc_bad\":%lu,\"broken\":%lu,\"lost\":%lu,\"sent\":%lu,\"send_full\":%lu,"
+    SPUT("{\"link\":{\"up\":%s,\"good\":%lu,\"crc_bad\":%lu,\"broken\":%lu,\"lost\":%lu,\"sent\":%lu,\"send_full\":%lu,"
         "\"ser_in\":%lu,\"ser_out\":%lu,\"eth_in\":%lu},\"cable\":\"",
         link_is_up() ? "true" : "false", (unsigned long)s.good, (unsigned long)s.crc_bad, (unsigned long)s.broken,
         (unsigned long)s.lost, (unsigned long)s.sent, (unsigned long)s.send_full,
         (unsigned long)s.ser_in, (unsigned long)s.ser_out, (unsigned long)s.eth_in);
-    char t[1024];
+    static char t[1024];
     size_t k = link_cable_info(t, sizeof t);
-    n += json_escape(o + n, cap - n, t, k);
-    n += (size_t)snprintf(o + n, cap - n, "\",\"wifi\":");
-    n += wifi_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"net\":");
-    n += net_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"eth\":");
-    n += eth_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"wired\":");
-    n += wired_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"home\":");
-    n += dclan_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"portfwd\":");
-    n += portfwd_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"netlink\":");
-    n += netlink_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"dcnet\":");
-    n += dcnet_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"modem\":");
-    n += usbmodem_info_json(o + n, cap - n);
-    n += (size_t)snprintf(o + n, cap - n, ",\"heap\":{\"free\":%u,\"largest\":%u,\"min\":%u}",
+    sroom(r, k * 6 + 8);
+    sn += json_escape(sb + sn, sizeof sb - sn, t, k);
+    SPUT("\"");
+    SPART(r, "wifi", wifi_info_json);
+    SPART(r, "net", net_info_json);
+    SPART(r, "eth", eth_info_json);
+    SPART(r, "wired", wired_info_json);
+    SPART(r, "home", dclan_info_json);
+    SPART(r, "portfwd", portfwd_info_json);
+    SPART(r, "netlink", netlink_info_json);
+    SPART(r, "dcnet", dcnet_info_json);
+    SPART(r, "modem", usbmodem_info_json);
+    sroom(r, 120);
+    SPUT(",\"heap\":{\"free\":%u,\"largest\":%u,\"min\":%u}",
         (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
         (unsigned)esp_get_minimum_free_heap_size());
-    n += (size_t)snprintf(o + n, cap - n, ",\"vpn\":");
-    n += vpn_info_json(o + n, cap - n);
+    SPART(r, "vpn", vpn_info_json);
     uint32_t aseq;
     k = link_last_answer(t, sizeof t, &aseq);
-    n += (size_t)snprintf(o + n, cap - n, ",\"answer\":{\"seq\":%lu,\"text\":\"", (unsigned long)aseq);
-    n += json_escape(o + n, cap - n, t, k);
+    sroom(r, k * 6 + 64);
+    SPUT(",\"answer\":{\"seq\":%lu,\"text\":\"", (unsigned long)aseq);
+    sn += json_escape(sb + sn, sizeof sb - sn, t, k);
     uint32_t next;
-    n += (size_t)snprintf(o + n, cap - n, "\"},\"ser\":");
-    n += ser_mon_since(query_u32(r, "ser"), o + n, (cap - n) / 3, &next);   /* leave room for the log */
-    n += (size_t)snprintf(o + n, cap - n, ",\"sernext\":%lu,\"log\":", (unsigned long)next);
-    n += log_since(query_u32(r, "log"), o + n, cap - n - 32, &next);
-    n += (size_t)snprintf(o + n, cap - n, ",\"lognext\":%lu}", (unsigned long)next);
-    httpd_resp_set_type(r, "application/json");
-    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
-    esp_err_t e = httpd_resp_send(r, o, (ssize_t)n);
-    free(o);
-    return e;
+    SPUT("\"},\"ser\":");
+    sflush(r);
+    sn += ser_mon_since(query_u32(r, "ser"), sb, sizeof sb - 64, &next);
+    SPUT(",\"sernext\":%lu,\"log\":", (unsigned long)next);
+    sflush(r);
+    sn += log_since(query_u32(r, "log"), sb, sizeof sb - 32, &next);
+    SPUT(",\"lognext\":%lu}", (unsigned long)next);
+    sflush(r);
+    return httpd_resp_send_chunk(r, NULL, 0);
 }
 
 static int body(httpd_req_t *r, char *buf, size_t cap) {

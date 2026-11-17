@@ -13,6 +13,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "mdns.h"
@@ -128,6 +129,7 @@ static void cfg_start(void) {
     log_add("esp32", m, strlen(m));
 }
 
+static char why[96];                                    /* the last failure, for the log */
 static bool post_once(void) {
     char id[65], dom[DCNOW_NAME], body[16 + 64 + 1] = "";
     my_id(id);
@@ -145,11 +147,17 @@ static bool post_once(void) {
     esp_http_client_config_t c = { .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 15000, .crt_bundle_attach = esp_crt_bundle_attach };
     tls_lock();                                         /* one secure connection at a time: RAM */
     esp_http_client_handle_t h = esp_http_client_init(&c);
-    if (!h) { tls_unlock(); return false; }
+    if (!h) { tls_unlock(); snprintf(why, sizeof why, "out of memory"); return false; }
     esp_http_client_set_header(h, "User-Agent", DCNOW_UA);
     esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
     esp_http_client_set_post_field(h, body, (int)strlen(body));
-    bool ok = esp_http_client_perform(h) == ESP_OK && esp_http_client_get_status_code(h) < 400;
+    esp_err_t e = esp_http_client_perform(h);
+    int code = e == ESP_OK ? esp_http_client_get_status_code(h) : 0;
+    bool ok = e == ESP_OK && code < 400;
+    if (!ok) {                                       /* why: no route, no memory for TLS, or the server said no */
+        if (e != ESP_OK) snprintf(why, sizeof why, "%s; largest free block %u", esp_err_to_name(e), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        else snprintf(why, sizeof why, "HTTP %d", code);
+    }
     esp_http_client_cleanup(h);
     tls_unlock();
     return ok;
@@ -161,11 +169,12 @@ static void dcnow_task(void *arg) {
         if (online && enabled) {
             bool ok = post_once();
             if (ok) ok_n++; else fail_n++;
-            if (!ok && !last_failed) { const char *m = "DCNow!: report failed (no internet?); will keep trying"; log_add("esp32", m, strlen(m)); }
+            if (!ok && !last_failed) { char m[140]; int k = snprintf(m, sizeof m, "DCNow!: report failed (%s); will keep trying", why); log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1)); }
             if (ok && last_failed) { const char *m = "DCNow!: reports work again"; log_add("esp32", m, strlen(m)); }
             last_failed = !ok;
-            for (int i = 0; i < DCNOW_EVERY_MS / 250 && online; i++) vTaskDelay(pdMS_TO_TICKS(250));
+            for (int i = 0; i < DCNOW_EVERY_MS / 250 && online; i++) { dnsd_fetch_poll(); vTaskDelay(pdMS_TO_TICKS(250)); }
         } else {
+            dnsd_fetch_poll();
             vTaskDelay(pdMS_TO_TICKS(250));
         }
     }

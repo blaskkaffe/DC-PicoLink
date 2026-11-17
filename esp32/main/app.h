@@ -120,6 +120,7 @@ void dclan_start(void);
 bool dclan_addrs(uint32_t *this_ip, uint32_t *dc_ip);    /* host order; false = none (NAT as before) */
 uint32_t dclan_dc_ip(void);                              /* host order, 0 = none */
 size_t dclan_info_json(char *o, size_t cap);
+void dnsd_fetch_poll(void);                              /* dnsd.c: the DNS list download, run from dcnow.c's task */
 /* portfwd.c: game ports to the Dreamcast (NAT port maps) and from the router (UPnP), as DreamPi */
 void portfwd_start(void);
 void portfwd_set_enabled(bool on);

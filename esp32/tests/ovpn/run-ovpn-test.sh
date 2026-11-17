@@ -3,7 +3,7 @@
 # OpenVPN server with the DreamPi 2.1 settings (UDP, AES-128-GCM, SHA256, tls-auth, client
 # certificate, no compression) and pings through the tunnel.
 # Needs: openvpn, openssl, a C compiler, ESP-IDF (IDF_PATH) for the mbedTLS sources, root + /dev/net/tun.
-# usage: [LOSS=25] run-ovpn-test.sh [mode]   mode: full (default, ~15 s) | up | reneg (server renegotiates every 8 s)
+# usage: [LOSS=25] [OVPN_DATA_CIPHERS=AES-256-GCM] run-ovpn-test.sh [mode]   mode: full (default, ~15 s) | up | reneg (server renegotiates every 8 s)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 idf=${IDF_PATH:-/home/claude/esp-idf}
@@ -62,7 +62,7 @@ key server.key
 dh none
 tls-auth ta.key 0
 cipher AES-128-GCM
-data-ciphers AES-128-GCM
+data-ciphers ${OVPN_DATA_CIPHERS:-AES-128-GCM}
 auth SHA256
 server 10.88.0.0 255.255.255.0
 topology subnet

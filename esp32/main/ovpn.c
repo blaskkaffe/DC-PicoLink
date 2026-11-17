@@ -76,6 +76,7 @@ typedef struct ks {
     int      sent_keymethod;
 
     dkey_t   enc, dec;
+    uint8_t  km[256];           /* key material, kept until the push reply names the cipher (NCP) */
     uint32_t pid_tx, pid_rx_max;
     uint64_t pid_rx_bits;
 
@@ -506,7 +507,9 @@ static int derive_keys(ks_t *k, const uint8_t sr1[32], const uint8_t sr2[32])
     memcpy(seed, k->r2, 32); memcpy(seed + 32, sr2, 32);
     memcpy(seed + 64, o->sid, 8); memcpy(seed + 72, o->rsid, 8);
     if (tls1_prf("OpenVPN key expansion", master, 48, seed, 80, key2, 256)) return -1;
-    /* the client sends with key[0] and receives with key[1] */
+    /* the client sends with key[0] and receives with key[1]; set up for the current cipher, again
+       at the push reply if the server picks another one */
+    memcpy(k->km, key2, sizeof k->km);
     if (dkey_init(o, &k->enc, key2 + 0, key2 + 64)) return -1;
     if (dkey_init(o, &k->dec, key2 + 128, key2 + 192)) return -1;
     memset(master, 0, sizeof master);
@@ -528,7 +531,8 @@ static void send_keymethod(ks_t *k)
     /* push-peer-info: what OpenVPN 2.5/2.6 sends, minus the compression flags (none here) */
     char peer[320];
     int pl = snprintf(peer, sizeof peer, "IV_VER=2.6.0\nIV_PLAT=linux\nIV_PROTO=2\nIV_NCP=2\nIV_CIPHERS=%s\n"
-                      "IV_TCPNL=1\n%s%s%sIV_SSL=mbed TLS\nIV_GUI_VER=DC-PicoLink\n", k->o->cf.cipher,
+                      "IV_TCPNL=1\n%s%s%sIV_SSL=mbed TLS\nIV_GUI_VER=DC-PicoLink\n",
+                      !strcmp(k->o->cf.cipher, "AES-256-GCM") ? "AES-256-GCM:AES-128-GCM" : "AES-128-GCM:AES-256-GCM",
                       k->o->cf.hwaddr[0] ? "IV_HWADDR=" : "", k->o->cf.hwaddr, k->o->cf.hwaddr[0] ? "\n" : "");
     uint8_t z[4] = {0, 0, 0, 0}, m = 2, l[2];
     tls_put(k, z, 4);
@@ -600,7 +604,11 @@ static void handle_push_reply(ks_t *k, char *msg)
 
     int want = !strcmp(in->cipher, "AES-256-GCM") ? 32 : !strcmp(in->cipher, "AES-128-GCM") ? 16 : 0;
     if (!want) { fail(o, "server wants cipher %s", in->cipher); return; }
-    if (want != o->keylen) { fail(o, "server picked %s, only the profile's cipher is built in", in->cipher); return; }
+    if (want != o->keylen) {                   /* NCP: the server picked the other AES-GCM; same key material */
+        o->keylen = want;
+        if (dkey_init(o, &k->enc, k->km + 0, k->km + 64) || dkey_init(o, &k->dec, k->km + 128, k->km + 192)) { fail(o, "key set-up for %s failed", in->cipher); return; }
+        logf_(o, "VPN data cipher %s (the server's choice)", in->cipher);
+    }
     k->st = OVPN_UP;
     o->state = OVPN_UP;
     o->cur = k == o->slot[0] ? 0 : 1;
@@ -747,7 +755,7 @@ static void slot_free(ovpn_t *o, int idx)
     for (int x = 0; x < CTL_POOL; x++) free(k->pool[x].data);
     if (k->rxs) { memset(k->rxs, 0, RXS_SIZE); free(k->rxs); }
     if (k->app) { memset(k->app, 0, APP_SIZE); free(k->app); }
-    memset(k, 0, sizeof *k);
+    memset(k, 0, sizeof *k);              /* key material included */
     free(k);
     o->slot[idx] = NULL;
 }

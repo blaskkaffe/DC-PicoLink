@@ -182,9 +182,15 @@ static void vif_up(const ovpn_info_t *in) {
     }
     nroutes = k;
     if (k || in->redirect_gateway) {
-        char t[140];
-        int n = snprintf(t, sizeof t, "VPN: %d route%s from the server go into the tunnel%s", k, k == 1 ? "" : "s",
-                         in->redirect_gateway ? "; its \"everything through the VPN\" (redirect-gateway) is not followed: Internet traffic stays outside the tunnel" : "");
+        char t[300];
+        int n = snprintf(t, sizeof t, "VPN: %d route%s from the server go into the tunnel:", k, k == 1 ? "" : "s");
+        for (int i = 0; i < k && n < (int)sizeof t - 24; i++) {      /* which ones: a wide one would take Internet traffic too */
+            uint32_t a = routes[i].net, m = routes[i].mask; int bits = 0; while (m & 0x80000000u) { bits++; m <<= 1; }
+            n += snprintf(t + n, sizeof t - n, " %u.%u.%u.%u/%d", (unsigned)(a >> 24), (unsigned)(a >> 16 & 255), (unsigned)(a >> 8 & 255), (unsigned)(a & 255), bits);
+        }
+        if (in->redirect_gateway && n < (int)sizeof t - 1)
+            n += snprintf(t + n, sizeof t - n, "; its \"everything through the VPN\" (redirect-gateway) is not followed: Internet traffic stays outside the tunnel");
+        if (n > (int)sizeof t - 1) n = sizeof t - 1;
         log_add("esp32", t, (size_t)n);
     }
     netif_set_up(&vif);
