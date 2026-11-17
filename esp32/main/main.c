@@ -133,12 +133,12 @@ void app_main(void) {
     }
     const char *hi = "DC-PicoLink ESP32 side starting (steps E-1..E-4: link, web page, Internet over serial and over the cable's network)";
     log_add("esp32", hi, strlen(hi));
+    usbmodem_start();                /* first: the USB host needs internal DMA memory before Wi-Fi and the rest take it */
     wifi_start();
     link_start();
     ppp_srv_start();
     dc_eth_start();
     wired_start();
-    usbmodem_start();
     vpn_start();
     pubip_start();
     netlink_start();

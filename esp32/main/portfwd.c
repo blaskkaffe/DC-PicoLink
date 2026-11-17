@@ -168,10 +168,13 @@ static int ssdp(char loc[][160], uint32_t gw) {
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(1900) };
     inet_aton("239.255.255.250", &to.sin_addr);
-    static const char *const ST[] = { "urn:schemas-upnp-org:device:InternetGatewayDevice:1", "urn:schemas-upnp-org:device:InternetGatewayDevice:2", "urn:schemas-upnp-org:service:WANIPConnection:1" };
+    /* what miniupnpc asks for too: some routers answer only one of these */
+    static const char *const ST[] = { "urn:schemas-upnp-org:device:InternetGatewayDevice:1", "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
+                                      "urn:schemas-upnp-org:service:WANIPConnection:1", "urn:schemas-upnp-org:service:WANPPPConnection:1", "upnp:rootdevice" };
     int got = 0;
-    for (int round = 0; round < 2 && !got; round++) {
-        for (int i = 0; i < 3; i++) {
+    bool have_gw = false;
+    for (int round = 0; round < 3 && !have_gw; round++) {          /* again while the gateway itself has not answered */
+        for (int i = 0; i < (int)(sizeof ST / sizeof ST[0]); i++) {
             char q[220];
             int n = snprintf(q, sizeof q, "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: %s\r\n\r\n", ST[i]);
             sendto(s, q, (size_t)n, 0, (struct sockaddr *)&to, sizeof to);
@@ -196,7 +199,7 @@ static int ssdp(char loc[][160], uint32_t gw) {
             char gws[16]; snprintf(gws, sizeof gws, "%s", inet_ntoa(*(struct in_addr *)&gw));
             size_t gl = strlen(gws);
             bool is_gw = gw && !strncmp(one + 7, gws, gl) && (one[7 + gl] == ':' || one[7 + gl] == '/');
-            if (is_gw) { for (int j = got; j > 0; j--) memcpy(loc[j], loc[j - 1], 160); memcpy(loc[0], one, 160); }
+            if (is_gw) { have_gw = true; for (int j = got; j > 0; j--) memcpy(loc[j], loc[j - 1], 160); memcpy(loc[0], one, 160); }
             else memcpy(loc[got], one, 160);
             got++;
         }

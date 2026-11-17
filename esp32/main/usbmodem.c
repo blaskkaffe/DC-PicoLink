@@ -30,6 +30,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
 #include "usbmodem_model.h"
@@ -403,7 +404,14 @@ void usbmodem_start(void) {
         tone[i] = (uint8_t)(v == USBM_DLE ? USBM_DLE + 1 : v);
     }
     const usb_host_config_t hc = { .skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1 };
-    if (usb_host_install(&hc) != ESP_OK) { say("USB modem port: the USB host could not start; port off"); state = "USB host failed to start"; return; }
+    /* started first thing (main.c), while internal DMA memory is still free; a few tries anyway */
+    esp_err_t he = ESP_FAIL;
+    for (int t = 0; t < 5 && (he = usb_host_install(&hc)) != ESP_OK; t++) vTaskDelay(pdMS_TO_TICKS(300));
+    if (he != ESP_OK) {
+        say("USB modem port: the USB host could not start (%s; free %u bytes, largest block %u); port off", esp_err_to_name(he),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+        state = "USB host failed to start"; return;
+    }
     xTaskCreate(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL);
     const cdc_acm_host_driver_config_t dc = { .driver_task_stack_size = 6144, .driver_task_priority = 9, .xCoreID = 0, .new_dev_cb = new_dev_cb };
     if (cdc_acm_host_install(&dc) != ESP_OK) { say("USB modem port: the modem driver could not start; port off"); state = "modem driver failed to start"; return; }
