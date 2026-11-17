@@ -124,6 +124,7 @@ int main(int argc, char **argv)
     ovpn_ops_t ops = {.send = op_send, .ip_in = op_ip, .log = op_log, .random = op_rand};
     ovpn_t *o = ovpn_new(&cf, &ops);
     CHECK(o, "ovpn_new");
+    ovpn_conf_free(&cf);                     /* as vpn.c: the profile text is freed once parsed */
     t0 = now_ms();
     ovpn_start(o, now_ms());
     for (int i = 0; i < 400 && ovpn_state(o) != OVPN_UP && ovpn_state(o) != OVPN_FAILED; i++) run(o, 50);

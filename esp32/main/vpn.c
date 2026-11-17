@@ -40,7 +40,10 @@ extern const char vpn_profiles_start[] asm("_binary_vpn_profiles_txt_start");
 extern const char vpn_profiles_end[]   asm("_binary_vpn_profiles_txt_end");
 
 #define MAX_PROF 6
-typedef struct { ovpn_conf_t cf; char host[64]; } prof_t;
+/* only the server and where the profile's text is: the full profile (certificates, key) is parsed
+   when connecting and freed afterwards (3 parsed profiles held ~22 KB of RAM for good) */
+typedef struct { char host[64]; int port; size_t off, len; } prof_t;
+static bool prof_uploaded;                       /* text in the vpnprof partition (else built in) */
 static prof_t prof[MAX_PROF];
 static int nprof;
 
@@ -239,16 +242,18 @@ static void parse_profiles(const char *txt) {
         if (l < 100) continue;
         char *copy = strndup(body, l);
         ovpn_conf_t cf;
-        if (!copy || ovpn_conf_parse(copy, &cf) != 0) { free(copy); continue; }
-        { uint8_t m[6]; esp_read_mac(m, ESP_MAC_WIFI_STA);      /* IV_HWADDR, as a DreamPi sends its MAC */
-          snprintf(cf.hwaddr, sizeof cf.hwaddr, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]); }
+        if (!copy || ovpn_conf_parse(copy, &cf) != 0) { free(copy); continue; }   /* checked once here */
         free(copy);
         bool listed = no == 0;
         for (int k = 0; k < no; k++) if (!strcmp(order[k], cf.host)) listed = true;
-        if (!listed || nprof >= MAX_PROF) { ovpn_conf_free(&cf); continue; }
-        prof[nprof].cf = cf;
-        snprintf(prof[nprof].host, sizeof prof[nprof].host, "%s", cf.host);
-        nprof++;
+        if (listed && nprof < MAX_PROF) {
+            snprintf(prof[nprof].host, sizeof prof[nprof].host, "%s", cf.host);
+            prof[nprof].port = cf.port;
+            prof[nprof].off = (size_t)(body - txt);
+            prof[nprof].len = l;
+            nprof++;
+        }
+        ovpn_conf_free(&cf);
     }
     for (int a = 0; a < nprof; a++)                  /* order of server.list */
         for (int b = a + 1; b < nprof; b++) {
@@ -271,15 +276,14 @@ static void load_profiles(void) {
             const void *map; esp_partition_mmap_handle_t mh;
             if (len && len < p->size - 13 && esp_partition_mmap(p, 0, len + 13, ESP_PARTITION_MMAP_DATA, &map, &mh) == ESP_OK) {
                 const char *t = (const char *)map + 12;
-                if (t[len] == 0) { parse_profiles(t); src_name = "uploaded"; }
+                if (t[len] == 0) { parse_profiles(t); if (nprof) { src_name = "uploaded"; prof_uploaded = true; } }
                 esp_partition_munmap(mh);
             }
         }
     }
     if (!nprof) {
-        size_t len = (size_t)(vpn_profiles_end - vpn_profiles_start);
-        char *txt = len > 1 ? malloc(len + 1) : NULL;
-        if (txt) { memcpy(txt, vpn_profiles_start, len); txt[len] = 0; parse_profiles(txt); free(txt); if (nprof) src_name = "built in"; }
+        size_t len = (size_t)(vpn_profiles_end - vpn_profiles_start);   /* EMBED_TXTFILES ends it with a NUL */
+        if (len > 1 && vpn_profiles_start[len - 1] == 0) { parse_profiles((const char *)vpn_profiles_start); if (nprof) src_name = "built in"; }
     }
 }
 
@@ -334,7 +338,7 @@ static void teardown(void) {
 static bool open_socket(const prof_t *pr) {
     struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_DGRAM }, *res = NULL;
     char port[8];
-    snprintf(port, sizeof port, "%d", pr->cf.port);
+    snprintf(port, sizeof port, "%d", pr->port);
     if (getaddrinfo(pr->host, port, &hints, &res) != 0 || !res) { snprintf(st.err, sizeof st.err, "cannot find %s", pr->host); return false; }
     memcpy(&vdst, res->ai_addr, sizeof vdst);
     freeaddrinfo(res);
@@ -355,7 +359,34 @@ static void save_last(int v) {
 }
 
 /* one connection attempt to profile i; returns when the tunnel is gone or switched off */
+/* the full profile i, parsed now (freed with ovpn_conf_free after the session) */
+static bool load_conf(int i, ovpn_conf_t *cf) {
+    prof_t *pr = &prof[i];
+    char *txt = malloc(pr->len + 1);
+    if (!txt) return false;
+    bool ok = true;
+    if (prof_uploaded) {
+        const esp_partition_t *p = prof_part();
+        ok = p && esp_partition_read(p, 12 + pr->off, txt, pr->len) == ESP_OK;
+    } else memcpy(txt, (const char *)vpn_profiles_start + pr->off, pr->len);
+    txt[pr->len] = 0;
+    ok = ok && ovpn_conf_parse(txt, cf) == 0;
+    free(txt);
+    if (!ok) return false;
+    uint8_t m[6]; esp_read_mac(m, ESP_MAC_WIFI_STA);          /* IV_HWADDR, as a DreamPi sends its MAC */
+    snprintf(cf->hwaddr, sizeof cf->hwaddr, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+    return true;
+}
+
+static void session_conf(int i, ovpn_conf_t *cf);
 static void session(int i) {
+    ovpn_conf_t cf;
+    if (!load_conf(i, &cf)) { st.fails++; snprintf(st.err, sizeof st.err, "profile %s could not be loaded (memory?)", prof[i].host); note("VPN: %s", st.err); return; }
+    session_conf(i, &cf);
+    ovpn_conf_free(&cf);                              /* after teardown: the session used its strings */
+}
+
+static void session_conf(int i, ovpn_conf_t *cf) {
     prof_t *pr = &prof[i];
     snprintf(st.server, sizeof st.server, "%s", pr->host);
     st.err[0] = 0;
@@ -368,7 +399,8 @@ static void session(int i) {
     bool locked = true;
     uint32_t lock_t = now_ms();
     xSemaphoreTake(lk, portMAX_DELAY);
-    vo = ovpn_new(&pr->cf, &ops);
+    vo = ovpn_new(cf, &ops);
+    ovpn_conf_free(cf);                               /* parsed into vo: the profile's text is not needed any more */
     if (vo) ovpn_start(vo, now_ms());
     xSemaphoreGive(lk);
     if (!vo || ovpn_state(vo) == OVPN_FAILED) {

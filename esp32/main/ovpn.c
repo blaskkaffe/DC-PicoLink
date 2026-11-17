@@ -702,7 +702,7 @@ static void tls_pump(ks_t *k)
                 return;
             }
         }
-        if (k->st >= OVPN_KEYS) {
+        if (k->st >= OVPN_KEYS && (k->app || (k->app = malloc(APP_SIZE)))) {
             int r = mbedtls_ssl_read(&k->ssl, k->app + k->app_len, APP_SIZE - k->app_len);
             if (r > 0) { k->app_len += (size_t)r; progress = 1; app_consume(k); if (o->state == OVPN_FAILED) return; }
             else if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || r == 0) {
@@ -877,6 +877,7 @@ static void recv_control(ovpn_t *o, int op, const uint8_t *d, size_t n)
     size_t pl = n - i;
     if (id == k->rx_next) {
         if (op == P_CONTROL_V1) {
+            if (!k->rxs && !(k->rxs = malloc(RXS_SIZE))) return;                         /* freed once up (housekeeping): back for new control data */
             if (k->rxs_len + pl > RXS_SIZE) return;                                     /* no room: peer resends */
             memcpy(k->rxs + k->rxs_len, d + i, pl);
             k->rxs_len += pl;
@@ -899,6 +900,12 @@ static void keys_housekeeping(ovpn_t *o)
     for (int x = 0; x < 2; x++) {
         ks_t *k = o->slot[x];
         if (!k) continue;
+        /* a key that is up needs its handshake buffers only when control data comes again (rare):
+           7 KB back to the heap until then */
+        if (k->st == OVPN_UP && !k->rxs_len && !k->app_len) {
+            if (k->rxs) { free(k->rxs); k->rxs = NULL; }
+            if (k->app) { free(k->app); k->app = NULL; }
+        }
         if (x != o->cur && o->cur >= 0 && o->slot[o->cur] && k->seq > o->slot[o->cur]->seq && k->st == OVPN_UP && !k->first && inflight(k) == 0 &&
             (uint32_t)(o->now - k->t_keys) >= SWITCH_MS) {
             ks_t *old = o->slot[o->cur];

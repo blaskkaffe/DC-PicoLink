@@ -79,15 +79,32 @@ static bool is_own_addr(uint32_t h) {
     return false;
 }
 
+/* the first places the Dreamcast talks to in a call, for the log (which DNS server, which game
+   server): filled here on lwIP's thread, written to the log by the task */
+#define SEEN_N 8
+static struct { uint32_t ip; uint16_t port; uint8_t proto; } seen[SEEN_N];
+static volatile int seen_n, seen_logged;
+static void note_dest(const uint8_t *h, size_t n, uint32_t dst) {
+    if (seen_n >= SEEN_N || n < 20) return;
+    size_t hl = (size_t)(h[0] & 15) * 4;
+    uint8_t pr = h[9];
+    uint16_t port = (pr == 6 || pr == 17) && n >= hl + 4 ? (uint16_t)(h[hl + 2] << 8 | h[hl + 3]) : 0;
+    for (int i = 0; i < seen_n; i++) if (seen[i].ip == dst && seen[i].port == port && seen[i].proto == pr) return;
+    seen[seen_n].ip = dst; seen[seen_n].port = port; seen[seen_n].proto = pr;
+    seen_n++;
+}
+
 /* the 1:1 rewrite (DreamPi's SNAT/DNAT); never eats a packet */
 int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
     struct netif *dcn = in_nif;
     uint32_t in = inside, lan = lan_dc;
-    if (!dcn || !in || !lan || in == lan || !p || p->len < 20) return 0;
+    if (!dcn || !in || !lan || !p || p->len < 20) return 0;
     const uint8_t *h = (const uint8_t *)p->payload;
     if ((h[0] >> 4) != 4) return 0;
     uint32_t src = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
     uint32_t dst = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
+    if (inp == dcn && src == in) note_dest(h, p->len, dst);
+    if (in == lan) return 0;                                            /* its home address on PPP: nothing to rewrite */
     dcl_pkt_t pk = { pg, pp, p, p->tot_len };
     if (inp == dcn && src == in) {
         if (is_own_addr(dst) || ip4_addr_ismulticast(&(ip4_addr_t){ .addr = lwip_htonl(dst) }) || dst == 0xffffffffu) return 0;
@@ -195,6 +212,7 @@ static void track(void) {
     if (old && old != n && old != ppp_dc_netif()) old->napt = 1;
     if (n && n != ppp_dc_netif()) n->napt = 0;
     in_nif = n; inside = a;
+    seen_n = 0; seen_logged = 0;
     UNLOCK_TCPIP_CORE();
     if (n && a == lan_dc) say("home network: the Dreamcast is %s there; this box answers for it (proxy ARP), no NAT", ips(a, x));
     else if (n) say("home network: the Dreamcast (%s here) is %s at home; this box answers for it (proxy ARP)", ips(a, x), ips(lan_dc, y));
@@ -232,6 +250,15 @@ static void task(void *arg) {
             }
         }
         track();
+        while (seen_logged < seen_n) {                /* where the Dreamcast goes (first few per call) */
+            int i = seen_logged++;
+            char a[16]; uint32_t ip = seen[i].ip; bool own = false;
+            uint32_t t_ = lan_this; own = ip == t_;
+            const char *pr = seen[i].proto == 6 ? "TCP" : seen[i].proto == 17 ? "UDP" : seen[i].proto == 1 ? "ICMP" : "IP";
+            if (seen[i].port) say("home network: the Dreamcast talks to %s:%u (%s)%s", ips(ip, a), (unsigned)seen[i].port, pr,
+                                  seen[i].port == 53 && !own && ip != inside + 1 ? ": a DNS server of its own settings, not this box" : "");
+            else say("home network: the Dreamcast talks to %s (%s)", ips(ip, a), pr);
+        }
     }
 }
 

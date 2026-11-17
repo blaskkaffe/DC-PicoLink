@@ -23,7 +23,7 @@ if [ ! -f "$work/libmbedtls-pc.a" ]; then
     wait
     ar rcs "$work/libmbedtls-pc.a" "$work"/mb/*.o
 fi
-gcc -O1 -Wall -Wextra -Werror -I"$mb/include" "$here/harness.c" "$here/../../main/ovpn.c" "$work/libmbedtls-pc.a" -o "$work/ovpn-harness"
+gcc ${OVPN_CFLAGS:-} -O1 -Wall -Wextra -Werror -I"$mb/include" "$here/harness.c" "$here/../../main/ovpn.c" "$work/libmbedtls-pc.a" -o "$work/ovpn-harness"
 
 # --- the real DreamPi profiles, when they are in esp32/vpn/ (git-ignored): they must load
 if [ "$mode" = full ] || [ "$mode" = parse ]; then
