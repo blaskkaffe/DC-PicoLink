@@ -15,6 +15,9 @@
  *   - dc2k2 (TCP to the DC, destination port 5011, PSH+ACK): a message starting with byte 1 gets
  *     the packet's source address in its bytes 1-4.
  *   - dcdaytona (UDP 12079 -> 12079, Daytona USA; to the DC only): see ipf__daytona().
+ * and DreamPi's address swaps (iptables -t nat PREROUTING -d A -j DNAT --to B: the AFO patch and
+ * the rules of dnat.txt): a packet from the Dreamcast to A goes to B instead, and the answers
+ * from B reach the Dreamcast as if they came from A (ipf_dnat_t, set in ipf_t.dnat).
  * ipf_packet() handles packets from the Dreamcast, ipf_to_dc() packets going to it.
  */
 #pragma once
@@ -26,7 +29,13 @@
 #define IPF_SYN_SLOTS  8
 #define IPF_TTL_OUT    65
 
+#define IPF_DNAT_MAX   24
+typedef struct { uint32_t from, to; uint16_t port; uint8_t proto; } ipf_dnat_rule_t;   /* port 0 = every port */
+typedef struct { ipf_dnat_rule_t r[IPF_DNAT_MAX]; int n; } ipf_dnat_t;
+
 typedef struct {
+    const ipf_dnat_t *dnat;                   /* address swaps; NULL = none */
+    uint32_t dnat_out, dnat_in;
     struct { uint32_t dst; uint32_t ms; bool used; } syn[IPF_SYN_SLOTS];
     uint32_t ip_packets, ttl_fixed, syn_dropped;
     uint32_t public_ip;                       /* our address on the Internet (dcvoip -p); 0 = unknown */
@@ -92,6 +101,77 @@ static inline bool ipf__syn_drop(ipf_t *h, uint32_t dst, uint32_t now_ms) {
     return false;
 }
 
+/* ---- address swaps (DNAT) ---- */
+/* one line of a rule file: "A B" (TCP, every port: dreampi.py) or "A B port proto" (dcnatrules) */
+static inline bool ipf__ip4(const char **pp, const char *e, uint32_t *out) {
+    const char *p = *pp; uint32_t v = 0;
+    for (int i = 0; i < 4; i++) {
+        if (p >= e || *p < '0' || *p > '9') return false;
+        uint32_t o = 0; int dg = 0;
+        while (p < e && *p >= '0' && *p <= '9' && dg < 3) { o = o * 10 + (uint32_t)(*p++ - '0'); dg++; }
+        if (o > 255) return false;
+        v = v << 8 | o;
+        if (i < 3) { if (p >= e || *p != '.') return false; p++; }
+    }
+    *pp = p; *out = v;
+    return true;
+}
+static inline bool ipf_dnat_line(ipf_dnat_t *d, const char *l, size_t n) {
+    const char *p = l, *e = l + n;
+    ipf_dnat_rule_t r = { .proto = 6 };
+    while (p < e && (*p == ' ' || *p == '\t')) p++;
+    if (!ipf__ip4(&p, e, &r.from) || p >= e || (*p != ' ' && *p != '\t')) return false;
+    while (p < e && (*p == ' ' || *p == '\t')) p++;
+    if (!ipf__ip4(&p, e, &r.to)) return false;
+    while (p < e && (*p == ' ' || *p == '\t')) p++;
+    if (p < e && *p >= '0' && *p <= '9') {
+        uint32_t port = 0;
+        while (p < e && *p >= '0' && *p <= '9') { port = port * 10 + (uint32_t)(*p++ - '0'); if (port > 65535) return false; }
+        r.port = (uint16_t)port;
+        while (p < e && (*p == ' ' || *p == '\t')) p++;
+        if (p < e && (*p == 'u' || *p == 'U')) r.proto = 17;
+    }
+    if (!r.from || !r.to || d->n >= IPF_DNAT_MAX) return false;
+    d->r[d->n++] = r;
+    return true;
+}
+
+/* a 32-bit field changed from a to b: bring the checksum at c along */
+static inline void ipf__csum_adj(uint8_t *c, uint32_t a, uint32_t b) {
+    uint32_t s = (uint16_t)~(uint16_t)(c[0] << 8 | c[1]);
+    s += (uint16_t)~(uint16_t)(a >> 16); s += (uint16_t)~(uint16_t)a; s += b >> 16; s += b & 0xFFFF;
+    while (s >> 16) s = (s & 0xFFFF) + (s >> 16);
+    uint16_t r = (uint16_t)~s;
+    c[0] = (uint8_t)(r >> 8); c[1] = (uint8_t)r;
+}
+
+/* out: a packet from the Dreamcast (destination A -> B); else one to it (source B -> A) */
+static inline bool ipf__dnat(ipf_t *h, uint8_t *ip, size_t ihl, size_t n, bool out) {
+    const ipf_dnat_t *d = h->dnat;
+    if (!d || !d->n) return false;
+    int off = out ? 16 : 12;
+    uint32_t addr = ipf__get32(ip + off);
+    bool first = ((ip[6] & 0x1F) | ip[7]) == 0;                  /* not a later fragment: the ports are here */
+    bool ports = first && n >= ihl + 4;
+    uint16_t port = ports ? (uint16_t)(ip[ihl + (out ? 2 : 0)] << 8 | ip[ihl + (out ? 3 : 1)]) : 0;
+    for (int i = 0; i < d->n; i++) {
+        const ipf_dnat_rule_t *r = &d->r[i];
+        if (addr != (out ? r->from : r->to) || ip[9] != r->proto) continue;
+        if (r->port && (!ports || port != r->port)) continue;
+        uint32_t to = out ? r->to : r->from;
+        ipf__put32(ip + off, to);
+        ipf__csum_adj(ip + 10, addr, to);
+        if (first && ip[9] == 6 && n >= ihl + 18) ipf__csum_adj(ip + ihl + 16, addr, to);
+        if (first && ip[9] == 17 && n >= ihl + 8 && (ip[ihl + 6] | ip[ihl + 7])) {
+            ipf__csum_adj(ip + ihl + 6, addr, to);
+            if (!(ip[ihl + 6] | ip[ihl + 7])) ip[ihl + 6] = ip[ihl + 7] = 0xFF;
+        }
+        if (out) h->dnat_out++; else h->dnat_in++;
+        return true;
+    }
+    return false;
+}
+
 /* ip points at an IPv4 header, n bytes available. Changes TTL and checksum in place.
    Returns false if the packet must be dropped. Anything that is not IPv4 passes. */
 static inline bool ipf_packet(ipf_t *h, uint8_t *ip, size_t n, uint32_t now_ms) {
@@ -115,6 +195,7 @@ static inline bool ipf_packet(ipf_t *h, uint8_t *ip, size_t n, uint32_t now_ms) 
         }
     }
     if (((ip[6] & 0x1F) | ip[7]) == 0) ipf__voip(h, ip, ihl, n, true);
+    ipf__dnat(h, ip, ihl, n, true);
     if (ip[8] != IPF_TTL_OUT) {
         ip[8] = IPF_TTL_OUT;
         ip[10] = ip[11] = 0;
@@ -178,7 +259,9 @@ static inline bool ipf__daytona(ipf_t *h, uint8_t *ip, size_t ihl, size_t n) {
 static inline void ipf_to_dc(ipf_t *h, uint8_t *ip, size_t n) {
     if (n < 20 || (ip[0] >> 4) != 4) return;
     size_t ihl = (size_t)(ip[0] & 15) * 4;
-    if (ihl < 20 || ihl > n || ((ip[6] & 0x1F) | ip[7]) != 0) return;
+    if (ihl < 20 || ihl > n) return;
+    ipf__dnat(h, ip, ihl, n, false);
+    if (((ip[6] & 0x1F) | ip[7]) != 0) return;
     size_t tot = (size_t)(ip[2] << 8 | ip[3]);
     if (tot > n || tot < ihl) return;
     if (ipf__voip(h, ip, ihl, tot, false)) return;

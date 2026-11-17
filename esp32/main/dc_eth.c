@@ -64,11 +64,15 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     esp_netif_receive(eth_if, c, n, c);       /* lwIP frees it through free_cb */
 }
 
+static uint32_t lease_ip;
+uint32_t dc_eth_dc_ip(void) { return active ? lease_ip : 0; }
+
 static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base; (void)id;
     const ip_event_ap_staipassigned_t *e = data;
     if (e->esp_netif != eth_if) return;
     cnt.leases++;
+    lease_ip = e->ip.addr;
     snprintf(cnt.last_ip, sizeof cnt.last_ip, IPSTR, IP2STR(&e->ip));
     char t[96];
     int k = snprintf(t, sizeof t, "Ethernet: the Dreamcast got " IPSTR " by DHCP", IP2STR(&e->ip));

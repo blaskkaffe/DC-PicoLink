@@ -141,15 +141,20 @@ static uint8_t ser_in[SER_IN_SIZE];
 static uint32_t ser_in_wr, ser_in_rd;
 static bool link_send(uint8_t ch, const void *p, size_t n);
 static void request_baud(uint32_t b, uint32_t queued_bytes);
+#ifndef DC_USB_BRIDGE
+#define DC_USB_BRIDGE 0
+#endif
 static inline bool ser_to_link(void) { return link_up && !tud_cdc_connected(); }
 static inline bool eth_to_link(void) { return link_up && !tud_mounted(); }
+/* No Dreamcast (cable offline), ESP32 linked, computer on USB: the computer takes the Dreamcast's
+   place, so the modem/PPP and the Dreamcast network on the ESP32 can be tested from a terminal
+   or the computer's network interface. As soon as a Dreamcast is on, the normal routes apply. */
+static inline bool ser_bridge(void) { return link_up && dc_mode == MODE_OFFLINE && tud_cdc_connected(); }
+static inline bool eth_bridge(void) { return DC_USB_BRIDGE || (link_up && dc_mode == MODE_OFFLINE && tud_mounted()); }
 /* Test build (cmake -DDC_USB_BRIDGE=1): the computer's USB network interface is wired straight
    to the ESP32 (channel ETH, both ways) instead of to the W5500 emulation, so the link and the
    ESP32's Dreamcast network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi) can be tested with
    a computer and no Dreamcast. The W5500 emulation's own frames are dropped in this build. */
-#ifndef DC_USB_BRIDGE
-#define DC_USB_BRIDGE 0
-#endif
 /* someone reads the status lines: dcsd on the Pi, or the ESP32 */
 static inline bool log_up(void) { return sd_link_up || link_up; }
 
@@ -317,7 +322,7 @@ static void usb_to_dc(void) {
     if (ser_to_link()) {                          /* bytes from the ESP32 */
         while (n < limit && ser_in_rd != ser_in_wr)
             tx_buf[tx_cur][n++] = ser_in[ser_in_rd++ % SER_IN_SIZE];
-    } else if (tud_cdc_available())
+    } else if (!ser_bridge() && tud_cdc_available())
         n = tud_cdc_read(tx_buf[tx_cur], limit);
     if (!n) return;
     if (pending_baud) pending_old_bytes -= n;
@@ -569,14 +574,14 @@ static bool net_rx_retry;
 static uint32_t net_in, net_in_drop, net_out, net_in_full;
 
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
-#if DC_USB_BRIDGE
+    if (eth_bridge()) {
     net_rx_retry = true;
     if (!link_up || size > 1514) { net_in_drop++; return true; }
     if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) { net_in_full++; return false; }
     link_send(LINK_CH_ETH, src, size);
     net_in++;
     return true;
-#endif
+    }
     if (dc_mode != MODE_W5500 || !w5.sock_open) {
         net_in_drop++;
         net_rx_retry = true;
@@ -593,11 +598,11 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
 }
 
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
-#if DC_USB_BRIDGE
-    memcpy(dst, ref, arg);          /* ref = frame from the ESP32, arg = its length */
-    net_out++;
-    return arg;
-#endif
+    if (arg) {                      /* from the ESP32 (bridge): ref = the frame, arg = its length; the W5500 path passes 0 */
+        memcpy(dst, ref, arg);
+        net_out++;
+        return arg;
+    }
     (void)arg;
     w5_txd_t *d = (w5_txd_t *)ref;
     uint16_t n = d->len;
@@ -612,10 +617,10 @@ void tud_network_init_cb(void) { }
 static void net_task(void) {
     w5.link_up = tud_mounted() || link_up;
     w5_txd_t *d = w5_net_tx_peek();
-#if DC_USB_BRIDGE
-    if (d) w5_net_tx_pop();                           /* the W5500 emulation isn't wired to anything */
-    d = NULL;
-#endif
+    if (eth_bridge()) {
+        if (d) w5_net_tx_pop();                       /* the W5500 emulation isn't wired to anything */
+        d = NULL;
+    }
     if (d) {
         if (eth_to_link()) {                          /* to the ESP32 */
             static uint8_t f[1514];
@@ -1176,8 +1181,8 @@ static bool link_deliver(void) {
         static char out[600];
         if (LINK_TX_SIZE - (link_tx_wr - link_tx_rd) < LINK_MAX_WIRE) return false;
         cable_api_t s = { .version = DC_VERSION, .mode = dc_mode, .baud = cur_baud, .wire = (uint32_t)(wire_baud + 0.5f),
-                          .force = dc_force, .route_ser = ser_to_link() ? "esp32" : "usb",
-                          .route_eth = DC_USB_BRIDGE ? "usb<->esp32 bridge (test build)" : eth_to_link() ? "esp32" : "usb" };
+                          .force = dc_force, .route_ser = ser_to_link() ? "esp32" : ser_bridge() ? "usb<->esp32 (no Dreamcast)" : "usb",
+                          .route_eth = eth_bridge() ? "usb<->esp32 (no Dreamcast)" : eth_to_link() ? "esp32" : "usb" };
         size_t k = cable_api_handle(&s, (const char *)p, n, out, sizeof out);
         if (s.set_baud) request_baud(s.set_baud, ser_in_wr - ser_in_rd);
         if (s.set_force != 0xFF) force_req = s.set_force;
@@ -1185,17 +1190,23 @@ static bool link_deliver(void) {
         return true;
     }
     case LINK_CH_SER:
+        if (ser_bridge()) {                                   /* ESP32 -> the computer's terminal */
+            if (tud_cdc_write_available() < n) return false;
+            tud_cdc_write(p, (uint32_t)n);
+            tud_cdc_write_flush();
+            return true;
+        }
         if (!ser_to_link() || dc_mode != MODE_SERIAL) { link_ser_drop += (uint32_t)n; return true; }
         if (SER_IN_SIZE - (ser_in_wr - ser_in_rd) < n) return false;
         for (size_t i = 0; i < n; i++) ser_in[ser_in_wr++ % SER_IN_SIZE] = p[i];
         return true;
     case LINK_CH_ETH:
-#if DC_USB_BRIDGE
-        if (!tud_mounted() || n > 1514) { link_eth_drop++; return true; }
-        if (!tud_network_can_xmit((uint16_t)n)) return false;
-        tud_network_xmit((void *)p, (uint16_t)n);
-        return true;
-#endif
+        if (eth_bridge()) {
+            if (!tud_mounted() || n > 1514) { link_eth_drop++; return true; }
+            if (!tud_network_can_xmit((uint16_t)n)) return false;
+            tud_network_xmit((void *)p, (uint16_t)n);
+            return true;
+        }
         if (!eth_to_link() || dc_mode != MODE_W5500 || !w5.sock_open || n > 1514) { link_eth_drop++; return true; }
         if (!w5_net_rx(p, (uint16_t)n)) { net_in_full++; return false; }
         net_in++;
@@ -1215,6 +1226,7 @@ static bool link_on_packet(uint32_t now) {
         link_up = true;
         link_tx_rd = link_tx_wr;      /* drop anything queued before (nothing should be) */
         link_test_start(&link_test, now);
+        status("esp32 link self-test: started (%u packets)", (unsigned)LINK_TEST_N);
     }
     return link_deliver();
 }
@@ -1263,6 +1275,17 @@ static void lspi_task(uint32_t now) {
 }
 #endif
 
+/* computer's terminal -> ESP32 while no Dreamcast is on (see ser_bridge) */
+static void ser_bridge_task(void) {
+    if (!ser_bridge()) return;
+    while (tud_cdc_available() && LINK_TX_SIZE - (link_tx_wr - link_tx_rd) >= LINK_MAX_WIRE) {
+        uint8_t b[256];
+        uint32_t n = tud_cdc_read(b, sizeof b);
+        if (!n) break;
+        link_send(LINK_CH_SER, b, n);
+    }
+}
+
 static void link_task(void) {
     uint32_t now = time_us_32();
 #if DC_LINK_SPI
@@ -1289,6 +1312,17 @@ static void link_task(void) {
 done:
 #endif
     /* the self-test: a few packets per pass, never more than its window on their way */
+    {
+        static uint32_t last_prog;
+        if (link_up && now - last_prog > 5000000u && link_test.state != LINK_TEST_IDLE + 100) {
+            last_prog = now;
+            if (link_test.state != LINK_TEST_DONE)
+                status("esp32 link self-test: state %u, sent %lu, back %lu (good %lu, bad %lu, lost %lu), last answer %lu ms ago",
+                       (unsigned)link_test.state, (unsigned long)link_test.sent, (unsigned long)link_test.next_rx,
+                       (unsigned long)link_test.good, (unsigned long)link_test.bad, (unsigned long)link_test.lost,
+                       (unsigned long)((now - link_test.t_last) / 1000u));
+        }
+    }
     if (link_up && link_test.state == LINK_TEST_RUN) {
         static uint8_t tb[LINK_MAX_PAYLOAD];
         for (int k = 0; k < 2; k++) {
@@ -1324,7 +1358,7 @@ done:
                (unsigned long)LINK_BAUD,
 #endif
                ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
-               DC_USB_BRIDGE ? "nowhere (test build: USB network <-> ESP32)" : eth_to_link() ? "the ESP32" : "USB (mounted)");
+               eth_bridge() ? "the ESP32 (no Dreamcast: USB network <-> ESP32)" : eth_to_link() ? "the ESP32" : "USB (mounted)");
     }
     said_up = link_up;
     static uint32_t rep_t, rep_sig;
@@ -1364,11 +1398,13 @@ int main(void) {
             dc_to_usb();
         } else {
             uint8_t junk[64];             /* serial port idle in W5500 mode */
-            while (tud_cdc_available()) tud_cdc_read(junk, sizeof(junk));
+            if (!ser_bridge())            /* (with no Dreamcast the computer's terminal talks to the ESP32 instead) */
+                while (tud_cdc_available()) tud_cdc_read(junk, sizeof(junk));
             ser_in_rd = ser_in_wr;
         }
         link_task();
         net_task();
+        ser_bridge_task();
         spi_report();
         console_task();
         hello_task();

@@ -28,24 +28,28 @@
 #include "netif/ppp/pppos.h"
 #include "link_model.h"
 #include "hayes_model.h"
+#include "dcnet_model.h"
 #include "hdlc_model.h"
 #include "app.h"
 
 static const char *TAG = "ppp";
 
 
-enum { ST_CMD, ST_PPP };
-enum { C_UP, C_DOWN };
+enum { ST_CMD, ST_PPP, ST_DCNET };
+enum { C_UP, C_DOWN, C_DCNET_DONE };
 typedef struct { uint8_t what; uint32_t session; int err; } ctl_t;
 
 static SemaphoreHandle_t lk;
 static QueueHandle_t ctl_q;
 static hayes_t hay;
 static hdlc_t flt;
+static hdlc_t *dcw;                         /* DCNet: only watches for the Dreamcast talking AT again (during the call) */
+static void dcw_drop(void *ctx, const uint8_t *p, size_t n) { (void)ctx; (void)p; (void)n; }
 static ppp_pcb *pcb;
 static struct netif pppif;
 static uint32_t session;                    /* bumped for every call; late events of an old call are ignored */
 static int st = ST_CMD;
+static int carrier;                         /* who carries the call: 0 = the serial cable, 1 = the USB modem */
 static volatile bool up;
 static bool enabled = true;
 static struct { uint32_t sessions, dials, stray, lwip_drop; } cnt;
@@ -63,6 +67,7 @@ static void say(const char *fmt, ...) {
 /* bytes to the Dreamcast; waits a little when the link queue is full */
 static size_t ser_out(const void *data, size_t len) {
     const uint8_t *d = data; size_t done = 0;
+    if (carrier == 1) return usbmodem_write(data, len);
     while (done < len) {
         size_t c = len - done; if (c > 1024) c = 1024;
         int tries = 0;
@@ -106,6 +111,7 @@ static void teardown_locked(void) {
     session++;
     if (up) { up = false; dnsd_set_listen(0, false, 0); dcnow_set_online(0, false); }
     st = ST_CMD;
+    carrier = 0;
 }
 
 /* packets to the Dreamcast pass the DreamPi helper rules (dc2k2, dcvoip: ipfilter_model.h) */
@@ -117,24 +123,37 @@ static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_
     return ppp_output_orig(nif, p, dst);
 }
 
-static bool start_ppp(void) {
+/* DCNet ended (dcnet.c's task): back to the modem's command mode, tell the Dreamcast */
+static void dcnet_done(void) { ctl_t c = { .what = C_DCNET_DONE, .session = session }; xQueueSend(ctl_q, &c, 0); }
+
+static uint32_t dc_addr, our_addr;           /* this call's addresses (network order) */
+uint32_t ppp_dc_ip(void) { return up ? dc_addr : 0; }
+static bool fast_echo;                      /* Capcom matching: LCP echo every second, 4 missed = gone (netlink.py capcom) */
+
+static bool start_ppp(int who) {
     teardown_locked();
     if (pcb) return false;
+    carrier = who;
     memset(&pppif, 0, sizeof pppif);
     hdlc_init(&flt, emit_to_lwip, NULL);
     pcb = pppapi_pppos_create(&pppif, out_cb, status_cb, (void *)(uintptr_t)session);
-    if (!pcb) { say("PPP: out of memory"); return false; }
+    if (!pcb) { say("PPP: out of memory"); carrier = 0; return false; }
     ppp_output_orig = pppif.output;
     pppif.output = ppp_output_to_dc;
     ip4_addr_t our, his;
     IP4_ADDR(&our, 10, 64, 0, 1);
     IP4_ADDR(&his, 10, 64, 0, 2);
+    uint32_t vip = vpn_dc_addr();                 /* VPN up: the Dreamcast gets its address in the VPN, as on DreamPi */
+    if (vip) { his.addr = lwip_htonl(vip); our.addr = lwip_htonl(vip + 1); }
+    dc_addr = his.addr; our_addr = our.addr;
     ppp_set_ipcp_ouraddr(pcb, &our);
     ppp_set_ipcp_hisaddr(pcb, &his);
     ppp_set_ipcp_dnsaddr(pcb, 0, &our);
+    if (fast_echo) { pcb->settings.lcp_echo_interval = 1; pcb->settings.lcp_echo_fails = 4; fast_echo = false; }
     if (pppapi_listen(pcb) != ERR_OK) {
         say("PPP: could not start the server");
         pppapi_free(pcb); pcb = NULL;
+        carrier = 0;
         return false;
     }
     st = ST_PPP;
@@ -144,7 +163,7 @@ static bool start_ppp(void) {
 
 void ser_from_dc(const uint8_t *p, size_t n) {
     xSemaphoreTake(lk, portMAX_DELAY);
-    if (!enabled) {
+    if (!enabled || carrier == 1) {             /* off, or a USB modem call is up: only the monitor */
         ser_mon_add(true, p, n);
         xSemaphoreGive(lk);
         return;
@@ -156,20 +175,33 @@ void ser_from_dc(const uint8_t *p, size_t n) {
             hayes_ev_t ev = hayes_byte(&hay, p[i], o, sizeof o, &ol);
             ser_mon_add(true, &p[i], 1);
             if (ol) { ser_out(o, ol); ser_mon_add(false, (const uint8_t *)o, ol); }
-            if (ev == HAYES_DIAL) {
+            char num[32];
+            if (ev == HAYES_DIAL && dcnet_wanted(dcnet_mode(), hay.number, false, num, sizeof num)) {
                 cnt.dials++;
-                say("Dreamcast dialled; starting PPP");
-                if (!start_ppp()) {
+                say("Dreamcast dialled %s; passing the call to DCNet", hay.number);
+                teardown_locked();
+                if (dcnet_call(num, ser_out, dcnet_done)) { st = ST_DCNET; carrier = 0; if (!dcw) dcw = malloc(sizeof *dcw); if (dcw) hdlc_init(dcw, dcw_drop, NULL); }
+                else { size_t k = hayes_no_carrier(&hay, o, sizeof o); ser_out(o, k); }
+                i++;
+            } else if (ev == HAYES_DIAL) {
+                cnt.dials++;
+                say("Dreamcast dialled%s%s; starting PPP", hay.number[0] ? " " : "", hay.number);
+                if (!start_ppp(0)) {
                     size_t k = hayes_no_carrier(&hay, o, sizeof o);
                     ser_out(o, k);
                 }
                 i++;
             } else if (ev == HAYES_PPP_FLAG) {
                 say("PPP started without a dial");
-                if (!start_ppp()) i++;          /* on success the same byte goes again, now as PPP */
+                if (!start_ppp(0)) i++;          /* on success the same byte goes again, now as PPP */
             } else {
                 i++;
             }
+        } else if (st == ST_DCNET) {                 /* the bytes go to DCNet as they are */
+            dcnet_from_dc(p + i, n - i);
+            if (dcw) hdlc_feed(dcw, p + i, n - i, (uint32_t)(esp_timer_get_time() / 1000));
+            i = n;
+            if (dcw && dcw->saw_at) { dcw->saw_at = false; say("Dreamcast sent AT during the DCNet call; ending it"); dcnet_hangup(); }
         } else {
             flt.ipf.public_ip = pubip_get();
             hdlc_feed(&flt, &p[i], 1, (uint32_t)(esp_timer_get_time() / 1000));
@@ -189,9 +221,35 @@ void ser_from_dc(const uint8_t *p, size_t n) {
     xSemaphoreGive(lk);
 }
 
+/* ---- a call that came in through the USB modem (usbmodem.c) ---- */
+bool ppp_modem_call_start(bool capcom) {
+    xSemaphoreTake(lk, portMAX_DELAY);
+    fast_echo = capcom;
+    bool ok = enabled && start_ppp(1);
+    xSemaphoreGive(lk);
+    return ok;
+}
+
+void ppp_modem_bytes(const uint8_t *p, size_t n) {
+    xSemaphoreTake(lk, portMAX_DELAY);
+    if (carrier == 1 && pcb && st == ST_PPP) {
+        flt.ipf.public_ip = pubip_get();
+        hdlc_feed(&flt, p, n, (uint32_t)(esp_timer_get_time() / 1000));
+    }
+    xSemaphoreGive(lk);
+}
+
+void ppp_modem_call_end(void) {
+    xSemaphoreTake(lk, portMAX_DELAY);
+    if (carrier == 1) teardown_locked();
+    xSemaphoreGive(lk);
+}
+
+bool ppp_srv_up(void) { return up; }
+
 void ppp_srv_set_enabled(bool on) {
     xSemaphoreTake(lk, portMAX_DELAY);
-    if (!on) { teardown_locked(); hayes_init(&hay); }
+    if (!on) { teardown_locked(); if (st == ST_DCNET) { dcnet_hangup(); st = ST_CMD; } hayes_init(&hay); }
     enabled = on;
     xSemaphoreGive(lk);
     say("Internet for the Dreamcast over serial: %s", on ? "on" : "off (serial bytes go to the monitor)");
@@ -203,10 +261,22 @@ static void ctl_task(void *arg) {
     for (;;) {
         if (xQueueReceive(ctl_q, &c, portMAX_DELAY) != pdTRUE) continue;
         if (c.session != session) continue;                       /* an old call */
-        if (c.what == C_UP) {
+        if (c.what == C_DCNET_DONE) {
+            xSemaphoreTake(lk, portMAX_DELAY);
+            if (st == ST_DCNET) {
+                st = ST_CMD;
+                free(dcw); dcw = NULL;
+                hayes_init(&hay);
+                char o[32]; size_t k = hayes_no_carrier(&hay, o, sizeof o);
+                if (k) ser_out(o, k);
+            }
+            xSemaphoreGive(lk);
+        } else if (c.what == C_UP) {
             up = true;
-            say("PPP is up: Dreamcast 10.64.0.2, DNS and gateway 10.64.0.1");
-            dnsd_set_listen(0, true, 0x0A400001);
+            uint32_t d = lwip_ntohl(dc_addr), o = lwip_ntohl(our_addr);
+            say("PPP is up: Dreamcast %u.%u.%u.%u, DNS and gateway %u.%u.%u.%u%s", (unsigned)(d >> 24), (unsigned)(d >> 16 & 255), (unsigned)(d >> 8 & 255), (unsigned)(d & 255),
+                (unsigned)(o >> 24), (unsigned)(o >> 16 & 255), (unsigned)(o >> 8 & 255), (unsigned)(o & 255), vpn_dc_addr() ? " (in the VPN)" : "");
+            dnsd_set_listen(0, true, o);
             dcnow_set_online(0, true);
         } else {
             static const char *const why[] = { "ended", "bad parameter", "could not open", "no device", "out of memory",
@@ -215,9 +285,13 @@ static void ctl_task(void *arg) {
             say("PPP %s", c.err >= 0 && c.err < 13 ? why[c.err] : "ended");
             xSemaphoreTake(lk, portMAX_DELAY);
             if (c.session == session) {
+                bool modem = carrier == 1;
                 teardown_locked();
-                char o[32]; size_t k = hayes_no_carrier(&hay, o, sizeof o);
-                if (k) ser_out(o, k);
+                if (modem) usbmodem_call_over();
+                else {
+                    char o[32]; size_t k = hayes_no_carrier(&hay, o, sizeof o);
+                    if (k) ser_out(o, k);
+                }
             }
             xSemaphoreGive(lk);
         }
@@ -230,15 +304,15 @@ size_t net_info_json(char *out, size_t cap) {
     dcnow_info(&ok, &fail);
     char le[260]; size_t ln = json_escape(le, sizeof le - 1, last, strlen(last)); le[ln] = 0;
     return (size_t)snprintf(out, cap,
-        "{\"on\":%s,\"mode\":\"%s\",\"up\":%s,\"calls\":%lu,\"dials\":%lu,\"stray_at\":%lu,"
+        "{\"on\":%s,\"mode\":\"%s\",\"via\":\"%s\",\"up\":%s,\"calls\":%lu,\"dials\":%lu,\"stray_at\":%lu,"
         "\"frames\":%lu,\"ttl_fixed\":%lu,\"syn_dropped\":%lu,\"fcs_bad\":%lu,\"lwip_drop\":%lu,"
-        "\"dns\":{\"queries\":%lu,\"forwarded\":%lu,\"overridden\":%lu,\"refused\":%lu,\"overrides\":%d,\"servers\":%d,\"last\":\"%s\"},"
+        "\"dns\":{\"tcp\":%s,\"queries\":%lu,\"forwarded\":%lu,\"overridden\":%lu,\"refused\":%lu,\"overrides\":%d,\"servers\":%d,\"last\":\"%s\"},"
         "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu}}",
-        enabled ? "true" : "false", st == ST_PPP ? "ppp" : "command", up ? "true" : "false",
+        enabled ? "true" : "false", st == ST_PPP ? "ppp" : st == ST_DCNET ? "dcnet" : "command", carrier == 1 ? "USB modem" : "serial cable", up ? "true" : "false",
         (unsigned long)cnt.sessions, (unsigned long)cnt.dials, (unsigned long)cnt.stray,
         (unsigned long)flt.frames, (unsigned long)flt.ipf.ttl_fixed, (unsigned long)flt.ipf.syn_dropped,
         (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop,
-        (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
+        dnsd_tcp() ? "true" : "false", (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
         dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail);
 }
 
@@ -250,4 +324,5 @@ void ppp_srv_start(void) {
     xTaskCreate(ctl_task, "ppp_ctl", 4096, NULL, 6, NULL);
     dnsd_start();
     dcnow_start();
+    dcnet_start();
 }

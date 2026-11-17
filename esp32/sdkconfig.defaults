@@ -1,6 +1,7 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # console on the board's own USB (USB-Serial-JTAG); UART1 is the cable link
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
@@ -24,3 +25,17 @@ CONFIG_ESP_TLS_USING_MBEDTLS=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_ETH_USE_SPI_ETHERNET=y
 CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# RAM is tight (no PSRAM): the serial speeds here need little Wi-Fi buffering
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+# secure connections: we only send small requests, so a small send buffer (saves about 12 KB per connection)
+CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+# RAM (no PSRAM): on the S3, code kept in IRAM comes out of the same RAM as the heap. The game
+# traffic is small, so the Wi-Fi fast paths stay in flash, and fewer fixed receive buffers.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_RX_BA_WIN=4
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

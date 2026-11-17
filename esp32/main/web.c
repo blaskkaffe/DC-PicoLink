@@ -5,7 +5,9 @@
  *   POST /api/wifi              ssid=...&pass=...   (form encoded)
  *   POST /api/dc1               a dc1 message for the cable (text); answer shows in status
  *   POST /api/serial            raw bytes to send to the Dreamcast's serial port (testing)
- *   POST /api/net               ppp=0|1 (Internet over serial on/off), dcnow=0|1 (DCNow! reports), vpn=0|1
+ *   POST /api/vpnprof           VPN profiles (text with @@SERVERS@@ / @@PROFILE@@ markers); restarts
+ *   POST /api/net               pf=0|1 (port forwarding), ppp=0|1 (Internet over serial on/off), dcnow=0|1 (DCNow! reports), vpn=0|1,
+ *                               dcnet=0|1|2 (DCNet: off, when *69 is dialled first, every call)
  */
 #include <string.h>
 #include <stdio.h>
@@ -13,6 +15,10 @@
 #include <ctype.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "link_model.h"
 #include "app.h"
 
@@ -38,7 +44,7 @@ static const char PAGE[] =
 "<form id=sf><input id=sv placeholder='text to the Dreamcast, e.g. AT' style='flex:1'><button>Send</button></form></div>"
 "<div class=c><h2>dc1 to the cable</h2><form id=df><input id=dv value='get link.*' style='flex:1'><button>Send</button></form><pre id=ans class=m></pre></div>"
 "<div class=c><h2>Internet for the Dreamcast</h2><pre id=net class=m></pre><form id=nf>"
-"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><button>Save</button></form></div>"
+"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><p class=m>VPN profiles (dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client): <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></p></div>"
 "<div class=c><h2>Wi-Fi</h2><pre id=wf class=m></pre><form id=wfm><input id=ws placeholder='home network name'>"
 "<input id=wp type=password placeholder=password><button>Save</button></form></div>"
 "</main><script>"
@@ -54,13 +60,13 @@ static const char PAGE[] =
 "const S=$('ser');for(const e of j.ser){const sp=document.createElement('span');sp.className=e.d=='dc'?'dc':'';sp.textContent=hexs(e.hex);S.appendChild(sp)}"
 "while(S.childNodes.length>600)S.removeChild(S.firstChild);S.scrollTop=S.scrollHeight;sn=j.sernext;"
 "if(j.answer.seq!=asq){asq=j.answer.seq;$('ans').textContent=j.answer.text}"
-"const n=j.net,e=j.eth,v=j.vpn;$('net').textContent=(n.on?`serial PPP: ${n.mode=='ppp'?(n.up?'online':'connecting'):'waiting for the Dreamcast to dial'}; calls ${n.calls}\nPPP frames ${n.frames}, TTL set ${n.ttl_fixed}, double SYN dropped ${n.syn_dropped}, bad checksum ${n.fcs_bad}`:'serial PPP: off (serial bytes only go to the monitor above)')+`\ncable network (W5500): ${e.active?'Dreamcast active':'quiet'}, ${e.frames_in} frames in, ${e.frames_out} out (${e.out_dropped} dropped), DHCP leases ${e.leases}${e.dc_ip?' ('+e.dc_ip+')':''}, TTL set ${e.ttl_fixed}, double SYN dropped ${e.syn_dropped}\nDNS: ${n.dns.queries} questions (${n.dns.forwarded} sent on, ${n.dns.overridden} answered here, ${n.dns.refused} refused), ${n.dns.overrides} overrides, ${n.dns.servers} servers; last: ${n.dns.last||'-'}\nDCNow!: ${n.dcnow.on?`on, ${n.dcnow.ok} sent, ${n.dcnow.failed} failed`:'off'}\nVPN: ${!v.profiles?'no VPN profiles in this firmware':!v.on?'off':v.up?`up to ${v.server} for ${v.up_s} s, tunnel address ${v.ip}, ${v.ping_ms>=0?v.ping_ms+' ms to the gateway':'no answer from the gateway yet'}`:`connecting (${v.server||'-'})${v.error?': '+v.error:''}`}${v.profiles?` [${v.connects} connected, ${v.fails} failed]`:''}`;"
-"if(!nfx){$('np').checked=n.on;$('nd').checked=n.dcnow.on;$('nv').checked=v.on;$('nv').disabled=!v.profiles}"
+"const n=j.net,e=j.eth,v=j.vpn,um=j.modem,dn=j.dcnet,pf=j.portfwd,nl=j.netlink;$('net').textContent=(n.on?`PPP: ${n.mode=='ppp'?(n.up?'online':'connecting')+' ('+n.via+')':'waiting for the Dreamcast to dial'}; calls ${n.calls}\nPPP frames ${n.frames}, TTL set ${n.ttl_fixed}, double SYN dropped ${n.syn_dropped}, bad checksum ${n.fcs_bad}`:'serial PPP: off (serial bytes only go to the monitor above)')+`\ncable network (W5500): ${e.active?'Dreamcast active':'quiet'}, ${e.frames_in} frames in, ${e.frames_out} out (${e.out_dropped} dropped), DHCP leases ${e.leases}${e.dc_ip?' ('+e.dc_ip+')':''}, TTL set ${e.ttl_fixed}, double SYN dropped ${e.syn_dropped}\nDNS: ${n.dns.queries} questions (${n.dns.forwarded} sent on, ${n.dns.overridden} answered here, ${n.dns.refused} refused), ${n.dns.overrides} overrides, ${n.dns.servers} servers${n.dns.tcp?' (asked over TCP: the router intercepts DNS)':''}; last: ${n.dns.last||'-'}\nDCNow!: ${n.dcnow.on?`on, ${n.dcnow.ok} sent, ${n.dcnow.failed} failed`:'off'}\nVPN: ${!v.profiles?'no VPN profiles yet (upload them below)':!v.on?'off':v.up?`up to ${v.server} for ${v.up_s} s, tunnel address ${v.ip}, ${v.ping_ms>=0?v.ping_ms+' ms to the gateway':'no answer from the gateway yet'}`:`connecting (${v.server||'-'})${v.error?': '+v.error:''}`}${v.profiles?` [${v.profiles} ${v.source} profiles; ${v.connects} connected, ${v.fails} failed${v.dc_ip?'; the Dreamcast is '+v.dc_ip+' in the VPN':''}]`:''}`+`\nDCNet: ${dn.mode=='off'?'off':dn.mode=='prefix'?'when *69 is dialled first':'every call'}${dn.active?' - in a call via '+dn.ap:''}; calls ${dn.calls}, connected ${dn.connected}, failed ${dn.failed}`+`\nport forwarding: ${!pf.on?'off':pf.shared==1?'your IPv4 is shared by your provider: peer-to-peer games need the VPN':pf.shared==2?'another NAT in front of the router: peer-to-peer games need the VPN':(pf.router?`router ${pf.router} forwards ${pf.upnp_ok} ports to this box${pf.upnp_failed?', refused '+pf.upnp_failed+' ('+pf.error+')':''}`:(pf.error||'looking for the router'))+(pf.dc?`; ${pf.maps} game ports on to ${pf.dc}`:'')}`+`\nNetlink: ${nl.servers} game server codes; calls ${nl.calls}, connected ${nl.connected}, failed ${nl.failed}${nl.peer?', last with '+nl.peer:''}${nl.ping_ms>=0?', ping '+nl.ping_ms+' ms':''}${nl.xband_listening?'; taking XBAND calls':''}`+(um.built?`\nUSB modem: ${um.present?um.id+', ':''}${um.state}; calls heard ${um.calls} (last number ${um.dialled||'-'}), answered ${um.answered}, failed ${um.failed}`:'');"
+"if(!nfx){$('np').checked=n.on;$('nd').checked=n.dcnow.on;$('nv').checked=v.on;$('nv').disabled=!v.profiles;$('nc').value={off:0,prefix:1,always:2}[j.dcnet.mode];$('npf').checked=j.portfwd.on}"
 "const w=j.wifi;$('wf').textContent=`setup network: ${w.ap} (http://192.168.4.1)\\nhome network: ${w.ssid||'none saved'}`+(w.ssid?(w.up?` - connected, ${w.ip}`:' - not connected'):'');"
 "}catch(e){$('lkt').textContent='page lost the ESP32'}setTimeout(tick,1000)}"
 "$('sf').onsubmit=e=>{e.preventDefault();fetch('/api/serial',{method:'POST',body:$('sv').value+'\\r'})};"
 "$('df').onsubmit=e=>{e.preventDefault();fetch('/api/dc1',{method:'POST',body:'dc1\\n'+$('dv').value.replace(/;\\s*/g,'\\n')+'\\n'})};"
-"$('nf').onchange=()=>{nfx=true};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,vpn:$('nv').checked?1:0})})};"
+"$('nf').onchange=()=>{nfx=true};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\n'+t+'\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\n'+sv+'\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,vpn:$('nv').checked?1:0,dcnet:$('nc').value,pf:$('npf').checked?1:0})})};"
 "$('wfm').onsubmit=e=>{e.preventDefault();fetch('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ws').value,pass:$('wp').value})})};"
 "tick();</script></body></html>";
 
@@ -77,9 +83,16 @@ static uint32_t query_u32(httpd_req_t *r, const char *key) {
 }
 
 static esp_err_t status(httpd_req_t *r) {
-    const size_t cap = 48 * 1024;
-    char *o = malloc(cap);
-    if (!o) return httpd_resp_send_500(r);
+    /* Small and short-lived: a board without PSRAM has little heap, and the secure connections
+       (DNS list, DCNow!) fail when this page takes it once a second. The log/serial parts shrink to fit. */
+    size_t cap = 16 * 1024;
+    char *o = NULL;
+    while (cap >= 4 * 1024 && !(o = malloc(cap))) cap /= 2;
+    if (!o) {
+        ESP_LOGE("web", "status: no memory (free %u, largest block %u)", (unsigned)esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        return httpd_resp_send_500(r);
+    }
     size_t n = 0;
     link_stats_t s; link_get_stats(&s);
     n += (size_t)snprintf(o + n, cap - n,
@@ -99,6 +112,17 @@ static esp_err_t status(httpd_req_t *r) {
     n += eth_info_json(o + n, cap - n);
     n += (size_t)snprintf(o + n, cap - n, ",\"wired\":");
     n += wired_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"portfwd\":");
+    n += portfwd_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"netlink\":");
+    n += netlink_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"dcnet\":");
+    n += dcnet_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"modem\":");
+    n += usbmodem_info_json(o + n, cap - n);
+    n += (size_t)snprintf(o + n, cap - n, ",\"heap\":{\"free\":%u,\"largest\":%u,\"min\":%u}",
+        (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+        (unsigned)esp_get_minimum_free_heap_size());
     n += (size_t)snprintf(o + n, cap - n, ",\"vpn\":");
     n += vpn_info_json(o + n, cap - n);
     uint32_t aseq;
@@ -176,8 +200,32 @@ static esp_err_t post_net(httpd_req_t *r) {
     if (body(r, b, sizeof b) < 0) return httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, "too long");
     if (httpd_query_key_value(b, "ppp", v, sizeof v) == ESP_OK) ppp_srv_set_enabled(v[0] == '1');
     if (httpd_query_key_value(b, "dcnow", v, sizeof v) == ESP_OK) dcnow_set_enabled(v[0] == '1');
-    if (httpd_query_key_value(b, "vpn", v, sizeof v) == ESP_OK) vpn_set_enabled(v[0] == '1');
+    /* only a real change counts as a choice (Save also sends the boxes that were not touched) */
+    if (httpd_query_key_value(b, "vpn", v, sizeof v) == ESP_OK && (v[0] == '1') != vpn_enabled() && vpn_profiles_n()) vpn_set_enabled(v[0] == '1');
+    if (httpd_query_key_value(b, "dcnet", v, sizeof v) == ESP_OK) dcnet_set_mode(v[0] - '0');
+    if (httpd_query_key_value(b, "pf", v, sizeof v) == ESP_OK) portfwd_set_enabled(v[0] == '1');
     return httpd_resp_sendstr(r, "ok");
+}
+
+/* VPN profiles from the page: written to flash as they arrive, then the box restarts */
+static void restart_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
+static esp_err_t post_vpnprof(httpd_req_t *r) {
+    if (r->content_len > 120 * 1024) return httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, "too big for the profile space (120 KB)");
+    char b[1024];
+    size_t left = r->content_len;
+    bool ok = vpn_profiles_write(NULL, 0, true, false);
+    while (ok && left) {
+        int k = httpd_req_recv(r, b, left < sizeof b ? left : sizeof b);
+        if (k <= 0) { ok = false; break; }
+        ok = vpn_profiles_write(b, (size_t)k, false, false);
+        left -= (size_t)k;
+    }
+    if (ok) ok = vpn_profiles_write(NULL, 0, false, true);
+    if (!ok) return httpd_resp_sendstr(r, "could not write the profiles to flash");
+    { const char *m = "VPN: new profiles uploaded; restarting to load them"; log_add("esp32", m, strlen(m)); }
+    httpd_resp_sendstr(r, "saved; the box restarts now (reload the page in a few seconds and switch the VPN on)");
+    xTaskCreate(restart_soon, "restart", 2048, NULL, 5, NULL);
+    return ESP_OK;
 }
 
 void web_start(void) {
@@ -192,6 +240,7 @@ void web_start(void) {
         { .uri = "/api/dc1", .method = HTTP_POST, .handler = post_dc1 },
         { .uri = "/api/serial", .method = HTTP_POST, .handler = post_serial },
         { .uri = "/api/net", .method = HTTP_POST, .handler = post_net },
+        { .uri = "/api/vpnprof", .method = HTTP_POST, .handler = post_vpnprof },
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
 }

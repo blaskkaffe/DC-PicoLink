@@ -33,7 +33,9 @@ int main(void) {
     CHECK(FEED(&h, "ATDT#555\r", a) == HAYES_DIAL);           CHECK(strstr(a, "\r\nCONNECT 33600\r\n"));
     h.baud = 115200;
     CHECK(FEED(&h, "ATD1234\r", a) == HAYES_DIAL);            CHECK(strstr(a, "\r\nCONNECT 115200\r\n"));
-    CHECK(FEED(&h, "ATA\r", a) == HAYES_DIAL);
+    CHECK(!strcmp(h.number, "1234"));
+    CHECK(FEED(&h, "ATDT*69,0053600100 05\r", a) == HAYES_DIAL); CHECK(!strcmp(h.number, "*69005360010005"));
+    CHECK(FEED(&h, "ATA\r", a) == HAYES_DIAL);                CHECK(!strcmp(h.number, ""));
 
     /* settings stick: echo off, numeric results, quiet */
     CHECK(FEED(&h, "ATE0\r", a) == HAYES_NONE);               CHECK(!strcmp(a, "ATE0\r\r\nOK\r\n"));   /* the echo of this line is still on the wire */

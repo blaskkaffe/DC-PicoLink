@@ -93,11 +93,15 @@ static void on_eth(void *arg, esp_event_base_t base, int32_t id, void *data) {
     else if (id == ETHERNET_EVENT_DISCONNECTED || id == ETHERNET_EVENT_STOP) link_on = false;
 }
 
+static uint32_t lease_ip;
+uint32_t wired_dc_ip(void) { return role == R_BBA ? lease_ip : 0; }
+
 static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base; (void)id;
     const ip_event_ap_staipassigned_t *e = data;
     if (e->esp_netif != bba_if) return;
     cnt.leases++;
+    lease_ip = e->ip.addr;
     char t[96];
     int k = snprintf(t, sizeof t, "wired port: the Dreamcast's broadband adapter got " IPSTR " by DHCP", IP2STR(&e->ip));
     log_add("esp32", t, (size_t)k);
@@ -293,6 +297,7 @@ void wired_start(void) {
 }
 #else
 bool wired_uplink_up(void) { return false; }
+uint32_t wired_dc_ip(void) { return 0; }
 size_t wired_info_json(char *out, size_t cap) { return (size_t)snprintf(out, cap, "{\"present\":false}"); }
 void wired_start(void) { }
 #endif

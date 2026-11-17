@@ -207,3 +207,50 @@ Needs a firmware built with the profiles in `esp32/vpn/` (the image you were giv
 4. Leave it up for an hour or two: the server renegotiates keys (`VPN server renegotiates`, `VPN now sends with key N`)
    and the tunnel should stay up.
 
+
+## Testing from a computer (no Dreamcast)
+
+While no Dreamcast is on (the cable says "offline") and the ESP32 link is up, the Zero's USB port is
+bridged to the ESP32: the serial port (open it with `screen`, then `ATD...` / PPP like a Dreamcast
+would) goes to the ESP32's modem and PPP, and the USB network interface gets the ESP32's Dreamcast
+network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi). The moment a Dreamcast is on, the usual
+routes apply again. `link.route` in the cable's hello shows which one is active.
+
+## USB modem on the ESP32's USB socket
+
+Build with `sdkconfig.modem` (image `...-modem-merged.bin`). The Dreamcast's own modem is joined
+to a USB voice modem by a phone cord (plus a line voltage inducer if your Dreamcast needs one),
+as with a DreamPi; the USB modem plugs into the ESP32's USB-C socket through an OTG adapter.
+
+- VPN: the Dreamcast Live profiles are built in (`esp32/vpn/`); the VPN is on by default.
+- The modem must be a USB CDC-ACM voice modem (the Conexant-based ones used with DreamPi).
+- The socket has to give the modem 5 V: feed the stack through the 5V pin and check that 5 V
+  appears on the socket (some boards have a diode in the way; bridge it or power the modem
+  through a Y-cable).
+- What happens: dial tone, the first dialled key is heard, 8 s later ATA, then PPP: the same
+  PPP server, DNS, DCNow! and packet rules as for the serial cable. The page shows a
+  "USB modem:" line, and the modem's answers appear in the serial monitor.
+- The USB socket is no longer the ESP32's console in this build (console: UART0, GPIO43/44).
+  The page's log is unchanged. To flash again, hold BOOT while plugging into the computer.
+
+## DCNet
+
+Like DreamPi (netlink.py + dcnet.rpi): a call goes to flyinghead's DCNet instead of our own PPP
+server when the number starts with `*69` (or `*69` is dialled just before it), or for every call
+if the page says so (Internet for the Dreamcast > DCNet). The box finds the closest access point
+(UDP 7655 at dcnet.flyca.st) and passes the modem bytes over TCP 7654 (7656 for the Power Smash /
+VOOT numbers 0053600100xx). Dreamcast ISP settings for DCNet: any user name, password `password`.
+Works for the USB modem and for the serial cable (`ATDT*69...`).
+
+## Compared with a DreamPi (Kazade/dreampi, Sept 2026)
+
+| DreamPi | here |
+|---|---|
+| dial tone, number ends after 2 s without a key, answer 8 s later (ATZ0, AT&F0, ATE0W2, ATA) | same |
+| dnsmasq with dreampi_dns.conf from dreamcast.online, upstream 46.101.91.123 / 209.50.50.129 | same; if the router intercepts DNS (UDP 53), the questions go over TCP |
+| TTL 64 for the Dreamcast's packets, double-SYN drop for ports 3200-3205 | same |
+| DCNow! reports, config service on port 1998 (dreamcast.online/now/configure) | same, as `dreampi.local` |
+| DCNet with `*69` | same |
+| VPN (Dreamcast Live): the Dreamcast gets the tunnel address + 1, inbound limited to ICMP, TCP 65432/65433, UDP 20001/20002 | same; profiles uploaded on the page (Internet for the Dreamcast > VPN profiles) |
+| UPnP port forwarding (only with `--enable-port-forwarding`, off by default) | same port list, on by default (page switch); plus the Netlink ports, and the box's own NAT forwards the game ports on to the Dreamcast |
+| Netlink: direct dial, matchmaking, game server codes (netlink_config.ini), XBAND server and calls, Capcom matching | same, over the USB modem; no SIP ring on XBAND calls |

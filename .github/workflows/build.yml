@@ -149,6 +149,8 @@ jobs:
           # the RP2040-Zero + SuperMini stack: SPI link
           idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build
           (cd build-zero && esptool.py --chip esp32s3 merge_bin -o ../../dist-esp32/dc-picolink-esp32-zero-stack-$ver-merged.bin @flash_args)
+          idf.py -B build-modem -D SDKCONFIG=build-modem/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack;sdkconfig.modem" build
+          (cd build-modem && esptool.py --chip esp32s3 merge_bin -o ../../dist-esp32/dc-picolink-esp32-zero-stack-modem-$ver-merged.bin @flash_args)
           # the ESP32-only probe (hardware/ESP32-ONLY.md)
           (cd probe && idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o ../../../dist-esp32/dc-picolink-esp32-probe-$ver-merged.bin @flash_args)
           ls -l ../dist-esp32

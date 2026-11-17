@@ -1,0 +1,7 @@
+# DC-PicoLink ESP32: the default "single app, large" table, plus room for VPN profiles
+# uploaded on the web page (kept when the firmware is flashed again).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x177000,
+vpnprof,  data, 0x40,    0x190000, 0x20000,

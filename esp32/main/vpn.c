@@ -27,6 +27,8 @@
 #include "lwip/tcpip.h"
 #include "lwip/ip4.h"
 #include "lwip/pbuf.h"
+#include "esp_partition.h"
+#include "esp_system.h"
 #include "ovpn.h"
 #include "app.h"
 
@@ -49,7 +51,10 @@ static int cur_prof = -1;
 static struct netif vif;
 static bool vif_added;
 static volatile int64_t up_since_us;
-static struct { uint32_t connects, fails; char err[96]; char ip[16]; char gw[16]; char server[64]; int ping_ms; } st = { .ping_ms = -1 };
+static struct { uint32_t connects, fails, blocked; char err[96]; char ip[16]; char gw[16]; char server[64]; int ping_ms; } st = { .ping_ms = -1 };
+
+static volatile uint32_t tun_ip;                 /* our tunnel address (host order), 0 = down */
+static bool vpn_in_allowed(const uint8_t *ip, size_t n);
 
 static void fmt_ip(char *d, size_t n, uint32_t a) {
     snprintf(d, n, "%u.%u.%u.%u", (unsigned)(a >> 24), (unsigned)((a >> 16) & 255), (unsigned)((a >> 8) & 255), (unsigned)(a & 255));
@@ -85,6 +90,7 @@ static void op_ip(void *c, const uint8_t *ip, size_t n) {
         return;
     }
     if (!vif_added) return;
+    if (!vpn_in_allowed(ip, n)) { st.blocked++; return; }
     struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)n, PBUF_RAM);
     if (!p) return;
     memcpy(p->payload, ip, n);
@@ -112,6 +118,30 @@ static err_t vif_init(struct netif *nif) {
     return ERR_OK;
 }
 
+/* DreamPi: while the tunnel is up the Dreamcast's PPP address is the tunnel address + 1, so
+   other VPN users reach it directly; its Internet traffic still goes out through Wi-Fi. */
+uint32_t vpn_dc_addr(void) { return tun_ip ? tun_ip + 1 : 0; }
+
+/* DreamPi's INPUT rules for tun0: to our own tunnel address only ICMP, TCP 65432/65433 and
+   UDP 20001/20002 (Netlink), and replies to what we sent. Everything else passes on. */
+static bool vpn_in_allowed(const uint8_t *ip, size_t n) {
+    if (n < 20 || (ip[0] >> 4) != 4) return false;
+    uint32_t dst = (uint32_t)ip[16] << 24 | (uint32_t)ip[17] << 16 | (uint32_t)ip[18] << 8 | ip[19];
+    if (dst != tun_ip) return true;                     /* for the Dreamcast or others: forwarded */
+    size_t hl = (size_t)(ip[0] & 15) * 4;
+    if (ip[9] == 1) return true;
+    if (n < hl + 4) return false;
+    uint16_t dp = (uint16_t)(ip[hl + 2] << 8 | ip[hl + 3]);
+    if (ip[9] == 6) {
+        if (dp == 65432 || dp == 65433) return true;
+        if (n < hl + 14) return false;
+        uint8_t fl = ip[hl + 13];
+        return !((fl & 0x02) && !(fl & 0x10));          /* no new connections to anything else */
+    }
+    if (ip[9] == 17) return dp == 20001 || dp == 20002 || dp >= 49152;    /* lwIP's own ports for replies */
+    return false;
+}
+
 static void vif_up(const ovpn_info_t *in) {
     ip4_addr_t ip, mask, gw;
     ip.addr = lwip_htonl(in->ip);
@@ -122,12 +152,17 @@ static void vif_up(const ovpn_info_t *in) {
         netif_add(&vif, &ip, &mask, &gw, NULL, vif_init, tcpip_input);
         vif_added = true;
     }
+#if IP_NAPT
+    vif.napt = 1;                    /* the Dreamcast's packets go into the tunnel unchanged (no NAT) */
+#endif
+    tun_ip = in->ip;
     netif_set_up(&vif);
     netif_set_link_up(&vif);
     UNLOCK_TCPIP_CORE();
 }
 
 static void vif_down(void) {
+    tun_ip = 0;
     if (!vif_added) return;
     LOCK_TCPIP_CORE();
     netif_set_down(&vif);
@@ -136,16 +171,16 @@ static void vif_down(void) {
     vif_added = false;
 }
 
-/* ---------- profiles ---------- */
-static void load_profiles(void) {
+/* ---------- profiles ----------
+   Built in (esp32/vpn/, git-ignored) or uploaded on the page into the "vpnprof" partition:
+   "DCLVPN1\0", length (4 bytes), then the same text as the built-in file, NUL-terminated. */
+#define PROF_MAGIC "DCLVPN1"
+static const char *src_name = "none";
+
+static void parse_profiles(const char *txt) {
     static const char M[] = "@@PROFILE@@", S[] = "@@SERVERS@@";
-    size_t len = (size_t)(vpn_profiles_end - vpn_profiles_start);
-    char *txt = malloc(len + 1);
-    if (!txt) return;
-    memcpy(txt, vpn_profiles_start, len);
-    txt[len] = 0;
-    char *servers = strstr(txt, S);
-    char *first = strstr(txt, M);
+    const char *servers = strstr(txt, S);
+    const char *first = strstr(txt, M);
     char order[MAX_PROF][64];
     int no = 0;
     if (servers) {                                   /* server.list: the servers DreamPi uses, in order */
@@ -157,10 +192,10 @@ static void load_profiles(void) {
         }
         free(list);
     }
-    char *s = first;
+    const char *s = first;
     while (s) {
-        char *body = s + strlen(M);
-        char *nx = strstr(body, M);
+        const char *body = s + strlen(M);
+        const char *nx = strstr(body, M);
         size_t l = nx ? (size_t)(nx - body) : strlen(body);
         s = nx;
         if (l < 100) continue;
@@ -181,7 +216,57 @@ static void load_profiles(void) {
             for (int k = 0; k < no; k++) { if (!strcmp(order[k], prof[a].host)) ra = k; if (!strcmp(order[k], prof[b].host)) rb = k; }
             if (rb < ra) { prof_t t = prof[a]; prof[a] = prof[b]; prof[b] = t; }
         }
-    free(txt);
+}
+
+static const esp_partition_t *prof_part(void) {
+    return esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x40, "vpnprof");
+}
+
+static void load_profiles(void) {
+    const esp_partition_t *p = prof_part();
+    if (p) {
+        char hdr[12];
+        if (esp_partition_read(p, 0, hdr, sizeof hdr) == ESP_OK && !memcmp(hdr, PROF_MAGIC, 8)) {
+            uint32_t len; memcpy(&len, hdr + 8, 4);
+            const void *map; esp_partition_mmap_handle_t mh;
+            if (len && len < p->size - 13 && esp_partition_mmap(p, 0, len + 13, ESP_PARTITION_MMAP_DATA, &map, &mh) == ESP_OK) {
+                const char *t = (const char *)map + 12;
+                if (t[len] == 0) { parse_profiles(t); src_name = "uploaded"; }
+                esp_partition_munmap(mh);
+            }
+        }
+    }
+    if (!nprof) {
+        size_t len = (size_t)(vpn_profiles_end - vpn_profiles_start);
+        char *txt = len > 1 ? malloc(len + 1) : NULL;
+        if (txt) { memcpy(txt, vpn_profiles_start, len); txt[len] = 0; parse_profiles(txt); free(txt); if (nprof) src_name = "built in"; }
+    }
+}
+
+/* the page's upload: the text (as above, without the header) in pieces; n == 0 at the end.
+   Returns false on a flash error. An empty upload removes the profiles. */
+static size_t up_off;
+bool vpn_profiles_write(const void *d, size_t n, bool first, bool last) {
+    const esp_partition_t *p = prof_part();
+    if (!p) return false;
+    if (first) {
+        if (esp_partition_erase_range(p, 0, p->size) != ESP_OK) return false;
+        up_off = 12;
+    }
+    if (n) {
+        if (up_off + n + 1 > p->size) return false;
+        if (esp_partition_write(p, up_off, d, n) != ESP_OK) return false;
+        up_off += n;
+    }
+    if (last) {
+        uint32_t len = (uint32_t)(up_off - 12);
+        if (!len) return true;                              /* erased: no profiles */
+        char z = 0, hdr[12];
+        if (esp_partition_write(p, up_off, &z, 1) != ESP_OK) return false;
+        memcpy(hdr, PROF_MAGIC, 8); memcpy(hdr + 8, &len, 4);
+        if (esp_partition_write(p, 0, hdr, sizeof hdr) != ESP_OK) return false;
+    }
+    return true;
 }
 
 /* ---------- connect ---------- */
@@ -314,19 +399,33 @@ static void vpn_task(void *arg) {
 }
 
 /* ---------- control and status ---------- */
+static bool chosen_off;                               /* switched off on the page: never switched on by itself */
+/* the box found a reason (IPv4 shared by the provider): on, unless switched off on the page */
+void vpn_auto_on(const char *why) {
+    if (!nprof) { char m[160]; int k = snprintf(m, sizeof m, "VPN: would switch on (%s), but there are no VPN profiles yet", why); log_add("esp32", m, (size_t)k); return; }
+    if (enabled || chosen_off) return;
+    enabled = true;
+    char m[160]; int k = snprintf(m, sizeof m, "VPN: switched on by itself (%s)", why);
+    log_add("esp32", m, (size_t)k);
+}
+
 void vpn_set_enabled(bool on) {
-    enabled = on;
+    enabled = on && nprof;
+    chosen_off = !on;
     nvs_handle_t h;
     if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "vpn", on); nvs_commit(h); nvs_close(h); }
 }
 bool vpn_enabled(void) { return enabled; }
+int vpn_profiles_n(void) { return nprof; }
 
 size_t vpn_info_json(char *out, size_t cap) {
     bool up = up_since_us != 0;
+    char dcip[16] = "";
+    if (vpn_dc_addr()) fmt_ip(dcip, sizeof dcip, vpn_dc_addr());
     return (size_t)snprintf(out, cap,
-        "{\"profiles\":%d,\"on\":%s,\"up\":%s,\"server\":\"%s\",\"ip\":\"%s\",\"gateway\":\"%s\",\"ping_ms\":%d,"
+        "{\"profiles\":%d,\"source\":\"%s\",\"dc_ip\":\"%s\",\"blocked\":%lu,\"on\":%s,\"up\":%s,\"server\":\"%s\",\"ip\":\"%s\",\"gateway\":\"%s\",\"ping_ms\":%d,"
         "\"connects\":%lu,\"fails\":%lu,\"error\":\"%s\",\"up_s\":%lu}",
-        nprof, enabled ? "true" : "false", up ? "true" : "false", st.server, st.ip, st.gw, st.ping_ms,
+        nprof, src_name, dcip, (unsigned long)st.blocked, enabled ? "true" : "false", up ? "true" : "false", st.server, st.ip, st.gw, st.ping_ms,
         (unsigned long)st.connects, (unsigned long)st.fails, st.err,
         up ? (unsigned long)((esp_timer_get_time() - up_since_us) / 1000000) : 0UL);
 }
@@ -334,9 +433,11 @@ size_t vpn_info_json(char *out, size_t cap) {
 void vpn_start(void) {
     lk = xSemaphoreCreateMutex();
     load_profiles();
-    nvs_handle_t h; uint8_t v = 0;
+    nvs_handle_t h; uint8_t v = 2;                       /* 2 = never chosen on the page */
     if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "vpn", &v); nvs_close(h); }
-    enabled = v && nprof;
+    chosen_off = v == 0;
+    enabled = nprof && v != 0;                           /* on by default when there are profiles, as on DreamPi 2.1 */
+    if (nprof && v == 2) { const char *m = "VPN: on (the default with profiles; switch it off on the page if you do not want it)"; log_add("esp32", m, strlen(m)); }
     ESP_LOGI(TAG, "%d VPN profile(s) in this firmware, VPN %s", nprof, enabled ? "on" : "off");
-    xTaskCreate(vpn_task, "vpn", 12288, NULL, 5, NULL);
+    if (nprof) xTaskCreate(vpn_task, "vpn", 12288, NULL, 5, NULL);   /* 12 KB of stack only when there is a VPN */
 }

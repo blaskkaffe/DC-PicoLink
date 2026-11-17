@@ -14,6 +14,8 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_http_client.h"
+#include "esp_http_server.h"
+#include "mdns.h"
 #include "esp_crt_bundle.h"
 #include "nvs.h"
 #include "mbedtls/sha256.h"
@@ -24,7 +26,7 @@ static const char *TAG = "dcnow";
 static dcnow_t dn;
 static SemaphoreHandle_t lk;
 static volatile bool online, enabled = true;
-static bool src_on[3];
+static bool src_on[4];
 static volatile uint32_t ok_n, fail_n;
 static volatile bool last_failed;
 
@@ -41,11 +43,11 @@ void dcnow_note_domain(const char *d) {
 }
 
 void dcnow_set_online(int source, bool on) {
-    if (source < 0 || source > 2) return;
+    if (source < 0 || source > 3) return;
     xSemaphoreTake(lk, portMAX_DELAY);
-    bool was = src_on[0] || src_on[1] || src_on[2];
+    bool was = src_on[0] || src_on[1] || src_on[2] || src_on[3];
     src_on[source] = on;
-    bool now = src_on[0] || src_on[1] || src_on[2];
+    bool now = src_on[0] || src_on[1] || src_on[2] || src_on[3];
     if (now && !was) dcnow_reset(&dn);                       /* a new session */
     xSemaphoreGive(lk);
     online = now;
@@ -65,12 +67,70 @@ void dcnow_set_enabled(bool on) {
 
 void dcnow_info(uint32_t *ok, uint32_t *fail) { *ok = ok_n; *fail = fail_n; }
 
-static bool post_once(void) {
+/* the box's ID at DCNow!: SHA-256 of the Wi-Fi MAC as text */
+static void my_id(char *id) {
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char macs[24], id[65], dom[DCNOW_NAME], body[16 + 64 + 1] = "";
+    char macs[24];
     snprintf(macs, sizeof macs, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     sha_hex(macs, id);
+}
+
+/* ---- DreamPi's configuration service (config_server.py): http://dreampi.local:1998 ----
+   dreamcast.online/now/configure asks it for the box's ID to link it to a user name, and
+   switches the reports on (POST) or off (POST with "disable"). */
+static esp_err_t cfg_reply(httpd_req_t *r) {
+    char id[65], o[128];
+    my_id(id);
+    int k = snprintf(o, sizeof o, "{\"mac_address\": \"%s\", \"is_enabled\": %s}", id, enabled ? "true" : "false");
+    httpd_resp_set_type(r, "application/json");
+    httpd_resp_set_hdr(r, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(r, o, k);
+}
+static esp_err_t cfg_get(httpd_req_t *r) { return cfg_reply(r); }
+static esp_err_t cfg_post(httpd_req_t *r) {
+    char b[256]; int n = 0;
+    while (n < (int)sizeof b - 1 && n < (int)r->content_len) {
+        int k = httpd_req_recv(r, b + n, sizeof b - 1 - (size_t)n);
+        if (k <= 0) break;
+        n += k;
+    }
+    b[n] = 0;
+    bool on = !strstr(b, "disable");
+    if (on != enabled) {
+        dcnow_set_enabled(on);
+        const char *m = on ? "DCNow!: switched on from dreamcast.online" : "DCNow!: switched off from dreamcast.online";
+        log_add("esp32", m, strlen(m));
+    }
+    return cfg_reply(r);
+}
+static esp_err_t cfg_options(httpd_req_t *r) {                 /* a browser may ask first */
+    httpd_resp_set_hdr(r, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(r, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(r, "Access-Control-Allow-Headers", "*");
+    return httpd_resp_send(r, NULL, 0);
+}
+
+static void cfg_start(void) {
+    httpd_config_t c = HTTPD_DEFAULT_CONFIG();
+    c.server_port = 1998; c.ctrl_port = 32769; c.stack_size = 3584;
+    c.max_open_sockets = 2; c.lru_purge_enable = true;
+    c.uri_match_fn = httpd_uri_match_wildcard;
+    httpd_handle_t h;
+    if (httpd_start(&h, &c) != ESP_OK) { const char *m = "DCNow!: the settings service (port 1998) could not start"; log_add("esp32", m, strlen(m)); return; }
+    static const httpd_uri_t g = { .uri = "/*", .method = HTTP_GET, .handler = cfg_get };
+    static const httpd_uri_t p = { .uri = "/*", .method = HTTP_POST, .handler = cfg_post };
+    static const httpd_uri_t o = { .uri = "/*", .method = HTTP_OPTIONS, .handler = cfg_options };
+    httpd_register_uri_handler(h, &g); httpd_register_uri_handler(h, &p); httpd_register_uri_handler(h, &o);
+    /* the page looks for the box under DreamPi's name */
+    if (mdns_init() == ESP_OK) { mdns_hostname_set("dreampi"); mdns_instance_name_set("DC-PicoLink (as DreamPi)"); }
+    const char *m = "DCNow!: settings service on, as on a DreamPi (http://dreampi.local:1998, for dreamcast.online/now/configure)";
+    log_add("esp32", m, strlen(m));
+}
+
+static bool post_once(void) {
+    char id[65], dom[DCNOW_NAME], body[16 + 64 + 1] = "";
+    my_id(id);
     xSemaphoreTake(lk, portMAX_DELAY);
     bool have = dcnow_pick(&dn, dom);
     xSemaphoreGive(lk);
@@ -83,13 +143,15 @@ static bool post_once(void) {
     char url[160];
     snprintf(url, sizeof url, "https://" DCNOW_HOST DCNOW_PATH, id);
     esp_http_client_config_t c = { .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 15000, .crt_bundle_attach = esp_crt_bundle_attach };
+    tls_lock();                                         /* one secure connection at a time: RAM */
     esp_http_client_handle_t h = esp_http_client_init(&c);
-    if (!h) return false;
+    if (!h) { tls_unlock(); return false; }
     esp_http_client_set_header(h, "User-Agent", DCNOW_UA);
     esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
     esp_http_client_set_post_field(h, body, (int)strlen(body));
     bool ok = esp_http_client_perform(h) == ESP_OK && esp_http_client_get_status_code(h) < 400;
     esp_http_client_cleanup(h);
+    tls_unlock();
     return ok;
 }
 
@@ -116,5 +178,6 @@ void dcnow_start(void) {
     if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "dcnow", &v); nvs_close(h); }
     enabled = v != 0;
     xTaskCreate(dcnow_task, "dcnow", 8192, NULL, 4, NULL);
+    cfg_start();
     ESP_LOGI(TAG, "DCNow! reports %s", enabled ? "on" : "off");
 }

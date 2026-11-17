@@ -14,6 +14,7 @@
 #include <stdio.h>
 
 #define DNS_NAME_MAX   128
+#define DNS_CONF_NAME  64     /* names in the downloaded file (longer ones are skipped): keeps the table small */
 #define DNS_OVR_MAX    96
 #define DNS_SRV_MAX    24
 #define DNS_UP_MAX     6
@@ -103,9 +104,9 @@ static inline bool dns_ip(const char *s, size_t n, uint32_t *ip) {
 
 /* ---- configuration: the built-in servers plus lines in dnsmasq syntax ---- */
 typedef struct {
-    struct { char name[DNS_NAME_MAX]; uint32_t ip; } ovr[DNS_OVR_MAX];       /* address=/name/ip */
+    struct { char name[DNS_CONF_NAME]; uint32_t ip; } ovr[DNS_OVR_MAX];       /* address=/name/ip */
     int n_ovr;
-    struct { char name[DNS_NAME_MAX]; uint32_t ip; } dom[DNS_SRV_MAX];       /* server=/name/ip */
+    struct { char name[DNS_CONF_NAME]; uint32_t ip; } dom[DNS_SRV_MAX];       /* server=/name/ip */
     int n_dom;
     uint32_t up[DNS_UP_MAX];                                                 /* server=ip */
     int n_up;
@@ -133,7 +134,7 @@ static inline bool dns_conf_line(dns_conf_t *c, const char *l, size_t n) {
             const char *e = memchr(v + 1, '/', vn - 1);
             if (!e) return false;
             nl = (size_t)(e - v - 1);
-            if (nl >= DNS_NAME_MAX) return false;
+            if (nl >= DNS_CONF_NAME) return false;
             for (size_t i = 0; i < nl; i++) { char ch = v[1 + i]; name[i] = (ch >= 'A' && ch <= 'Z') ? (char)(ch + 32) : ch; }
             name[nl] = 0;
             vn -= (size_t)(e + 1 - v); v = e + 1;

@@ -50,6 +50,12 @@ menu "DC-PicoLink ESP32"
     config DCL_AP_PASSWORD
         string "Password of the setup Wi-Fi (8+ characters, empty = open)"
         default "dreamcast"
+    config DCL_USB_MODEM
+        bool "USB modem on this board's USB socket (the Dreamcast's own modem calls it, as with a DreamPi)"
+        default n
+        help
+            The board becomes the USB host. Its USB console is gone then: use sdkconfig.modem,
+            which moves the console to UART0. To flash, hold BOOT while plugging in.
     config DCL_W5500
         bool "Wired Ethernet port: a W5500 module on the ESP32's own SPI pins"
         default y

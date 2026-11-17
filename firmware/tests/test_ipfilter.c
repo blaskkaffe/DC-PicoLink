@@ -152,6 +152,32 @@ int main(void) {
         uint8_t g3[200]; memcpy(g3, ip, m);
         CHECK(ipf_packet(&h, ip, m, 7000) && !memcmp(g3 + 20, ip + 20, m - 20));
     }
+    {   /* address swaps: AFO style (TCP, every port) and a rule with port and protocol */
+        ipf_dnat_t d = { 0 };
+        CHECK(ipf_dnat_line(&d, "63.251.242.131 46.101.91.123", 28));
+        CHECK(ipf_dnat_line(&d, " 1.2.3.4\t5.6.7.8 27950 udp", 26));
+        CHECK(!ipf_dnat_line(&d, "# comment", 9) && !ipf_dnat_line(&d, "1.2.3 4.5.6.7", 13) && !ipf_dnat_line(&d, "1.2.3.4", 7));
+        CHECK(d.n == 2 && d.r[0].proto == 6 && d.r[0].port == 0 && d.r[1].proto == 17 && d.r[1].port == 27950);
+        ipf_t g = { 0 }; g.dnat = &d;
+        uint8_t ip[200], t[20] = { 0x0C, 0x80, 0x1F, 0x2C, 0, 0, 0, 0, 0, 0, 0, 0, 0x50, 0x10 };
+        size_t m = pkt(ip, 0x0A400002, 0x3FFBF283, 6, t, 20);                 /* DC -> 63.251.242.131 */
+        CHECK(ipf_packet(&g, ip, m, 1) && ipf__get32(ip + 16) == 0x2E655B7B && sums_ok(ip) && g.dnat_out == 1);
+        m = pkt(ip, 0x2E655B7B, 0x0A400002, 6, t, 20);                        /* the answer comes "from" the old address */
+        ipf_to_dc(&g, ip, m);
+        CHECK(ipf__get32(ip + 12) == 0x3FFBF283 && sums_ok(ip) && g.dnat_in == 1);
+        uint8_t u[12] = { 0x04, 0x00, 0x6D, 0x2E, 0, 12, 0, 0, 'g', 'e', 't', 's' };   /* UDP 1024 -> 27950 */
+        m = pkt(ip, 0x0A400002, 0x01020304, 17, u, 12);
+        CHECK(ipf_packet(&g, ip, m, 2) && ipf__get32(ip + 16) == 0x05060708 && sums_ok(ip));
+        u[2] = 0x6D; u[3] = 0x2F;                                             /* another port: untouched */
+        m = pkt(ip, 0x0A400002, 0x01020304, 17, u, 12);
+        CHECK(ipf_packet(&g, ip, m, 3) && ipf__get32(ip + 16) == 0x01020304 && sums_ok(ip));
+        m = pkt(ip, 0x0A400002, 0x01020304, 6, t, 20);                        /* TCP to the UDP rule's address: untouched */
+        CHECK(ipf_packet(&g, ip, m, 4) && ipf__get32(ip + 16) == 0x01020304);
+        uint8_t r2[12] = { 0x6D, 0x2E, 0x04, 0x00, 0, 12, 0, 0, 1, 2, 3, 4 };   /* answer from 5.6.7.8:27950 */
+        m = pkt(ip, 0x05060708, 0x0A400002, 17, r2, 12);
+        ipf_to_dc(&g, ip, m);
+        CHECK(ipf__get32(ip + 12) == 0x01020304 && sums_ok(ip) && g.dnat_in == 2 && g.dnat_out == 2);
+    }
     printf("ipfilter: ok (ip %u, ttl fixed %u, syn dropped %u)\n", h.ip_packets, h.ttl_fixed, h.syn_dropped);
     return 0;
 }

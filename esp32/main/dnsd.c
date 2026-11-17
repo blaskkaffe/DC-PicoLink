@@ -23,7 +23,7 @@
 
 static const char *TAG = "dnsd";
 #define DNS_FILE_URL "https://dreamcast.online/dreampi/dreampi_dns.conf"
-#define PENDING 16
+#define PENDING 8
 #define PKT_MAX 512
 
 static dns_conf_t conf;
@@ -31,7 +31,43 @@ static SemaphoreHandle_t conf_lk;
 #define LISTEN_N 3                              /* 0: the PPP call, 1: the Ethernet side (E-4), 2: the wired port (BBA) */
 static volatile bool online[LISTEN_N];
 static volatile uint32_t bind_ip[LISTEN_N];
-static struct { uint32_t q, fwd, ovr, nx; } cnt;
+static struct { uint32_t q, fwd, ovr, nx, tcp; } cnt;
+static volatile bool use_tcp;                    /* the router answers UDP DNS itself: ask over TCP */
+static int *g_ls;                                /* the listening sockets (dns_task) */
+
+/* One DNS question over TCP (RFC 1035 4.2.2): 2-byte length, then the message. Returns the
+   answer's length, or -1. Blocks up to ms. Also used by pubip.c. */
+int dns_tcp_ask(uint32_t server_host_order, const uint8_t *q, size_t qn, uint8_t *a, size_t cap, int ms) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return -1;
+    struct timeval tv = { .tv_sec = ms / 1000, .tv_usec = (ms % 1000) * 1000 };
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = htonl(server_host_order) };
+    int r = -1;
+    uint8_t hdr[2] = { (uint8_t)(qn >> 8), (uint8_t)qn };
+    if (connect(s, (struct sockaddr *)&to, sizeof to) == 0 && send(s, hdr, 2, 0) == 2 && send(s, q, qn, 0) == (int)qn) {
+        uint8_t l[2]; int got = 0;
+        while (got < 2) { int k = recv(s, l + got, (size_t)(2 - got), 0); if (k <= 0) break; got += k; }
+        if (got == 2) {
+            size_t want = (size_t)(l[0] << 8 | l[1]), have = 0;
+            uint8_t sink[64];
+            while (have < want) {                                        /* keep what fits, read the rest away */
+                size_t room = have < cap ? cap - have : 0;
+                int k = room ? recv(s, a + have, room < want - have ? room : want - have, 0)
+                             : recv(s, sink, want - have < sizeof sink ? want - have : sizeof sink, 0);
+                if (k <= 0) break;
+                have += (size_t)k;
+            }
+            if (have == want) r = (int)(want < cap ? want : cap);
+        }
+    }
+    close(s);
+    return r;
+}
+
+void dnsd_use_tcp(bool on) { use_tcp = on; }
+bool dnsd_tcp(void) { return use_tcp; }
 static char last_name[DNS_NAME_MAX];
 
 static struct {
@@ -67,6 +103,18 @@ static void send_up(int us, int i) {
     uint32_t up = dns_upstream(&conf, pend[i].name, pend[i].tries);
     xSemaphoreGive(conf_lk);
     if (!up) return;
+    if (use_tcp && g_ls && g_ls[pend[i].via] >= 0) {
+        uint8_t a[PKT_MAX];
+        int k = dns_tcp_ask(up, pkt, pend[i].plen, a, sizeof a, 2500);
+        if (k >= 12) {
+            if (k == (int)sizeof a) a[2] |= 2;                          /* longer than fits in UDP: truncated */
+            a[0] = (uint8_t)(pend[i].cid >> 8); a[1] = (uint8_t)pend[i].cid;
+            sendto(g_ls[pend[i].via], a, (size_t)k, 0, (struct sockaddr *)&pend[i].client, sizeof pend[i].client);
+            pend[i].used = false;
+            cnt.tcp++;
+            return;
+        }
+    }
     struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = htonl(up) };
     sendto(us, pkt, pend[i].plen, 0, (struct sockaddr *)&to, sizeof to);
     pend[i].tries++;
@@ -125,7 +173,9 @@ static void on_upstream(const int *ls, int us) {
 
 static void dns_task(void *arg) {
     (void)arg;
-    int ls[LISTEN_N] = { -1, -1, -1 }, us = -1;
+    static int ls[LISTEN_N] = { -1, -1, -1 };
+    int us = -1;
+    g_ls = ls;
     for (;;) {
         bool any = false;
         for (int i = 0; i < LISTEN_N; i++) {
@@ -175,43 +225,49 @@ static void dns_task(void *arg) {
     }
 }
 
-/* ---- the downloaded file ---- */
-static char *fbuf; static size_t flen;
+/* ---- the downloaded file: read line by line straight into a new table (no copy of the file) ---- */
+static dns_conf_t *nc; static char fl[256]; static size_t fln; static int took; static size_t got;
+static void take_line(void) { if (fln < sizeof fl) { fl[fln] = 0; if (dns_conf_line(nc, fl, fln)) took++; } fln = 0; }
 static esp_err_t http_ev(esp_http_client_event_t *e) {
-    if (e->event_id == HTTP_EVENT_ON_DATA && fbuf && flen + (size_t)e->data_len < 16 * 1024) {
-        memcpy(fbuf + flen, e->data, (size_t)e->data_len);
-        flen += (size_t)e->data_len;
+    if (e->event_id != HTTP_EVENT_ON_DATA || !nc) return ESP_OK;
+    const char *d = e->data;
+    got += (size_t)e->data_len;
+    for (int i = 0; i < e->data_len; i++) {
+        if (d[i] == '\n') take_line();
+        else if (fln < sizeof fl) fl[fln++] = d[i];
+        else fln = sizeof fl;                                       /* too long: the line is skipped */
     }
     return ESP_OK;
 }
 
+static char fetch_err[64];
 static bool fetch_file(void) {
-    fbuf = malloc(16 * 1024 + 1); flen = 0;
-    if (!fbuf) return false;
+    nc = malloc(sizeof *nc);
+    if (!nc) { snprintf(fetch_err, sizeof fetch_err, "out of memory"); return false; }
+    dns_conf_defaults(nc); fln = 0; took = 0; got = 0;
     esp_http_client_config_t c = {
         .url = DNS_FILE_URL, .event_handler = http_ev, .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024,
     };
+    tls_lock();
     esp_http_client_handle_t h = esp_http_client_init(&c);
     bool ok = false;
-    if (h && esp_http_client_perform(h) == ESP_OK && esp_http_client_get_status_code(h) == 200 && flen) {
-        fbuf[flen] = 0;
-        dns_conf_t *nc = malloc(sizeof *nc);
-        if (nc) {
-            dns_conf_defaults(nc);
-            int took = dns_conf_text(nc, fbuf, flen);
-            xSemaphoreTake(conf_lk, portMAX_DELAY);
-            memcpy(&conf, nc, sizeof conf);
-            xSemaphoreGive(conf_lk);
-            char t[96];
-            int k = snprintf(t, sizeof t, "DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", nc->n_ovr, nc->n_up - 2, took);
-            log_add("esp32", t, (size_t)k);
-            free(nc);
-            ok = true;
-        }
-    }
+    esp_err_t er = h ? esp_http_client_perform(h) : ESP_ERR_NO_MEM;
+    int code = h && er == ESP_OK ? esp_http_client_get_status_code(h) : 0;
     if (h) esp_http_client_cleanup(h);
-    free(fbuf); fbuf = NULL;
+    tls_unlock();
+    if (er == ESP_OK && code == 200 && got) {
+        if (fln) take_line();
+        xSemaphoreTake(conf_lk, portMAX_DELAY);
+        memcpy(&conf, nc, sizeof conf);
+        xSemaphoreGive(conf_lk);
+        char t[96];
+        int k = snprintf(t, sizeof t, "DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", nc->n_ovr, nc->n_up - 2, took);
+        log_add("esp32", t, (size_t)k);
+        ok = true;
+    } else if (er != ESP_OK) snprintf(fetch_err, sizeof fetch_err, "%s", esp_err_to_name(er));
+    else snprintf(fetch_err, sizeof fetch_err, "HTTP %d", code);
+    free(nc); nc = NULL;
     return ok;
 }
 
@@ -222,7 +278,11 @@ static void fetch_task(void *arg) {
     for (;;) {
         if (fetch_file()) { warned = false; vTaskDelay(pdMS_TO_TICKS(6 * 3600 * 1000)); }
         else {
-            if (!warned) { const char *m = "DNS: could not fetch dreampi_dns.conf yet (no internet?); using the built-in servers, will retry"; log_add("esp32", m, strlen(m)); warned = true; }
+            if (!warned && inet_up()) {
+                char m[160];
+                int k = snprintf(m, sizeof m, "DNS: could not fetch dreampi_dns.conf (%s); using the built-in servers, will retry", fetch_err);
+                log_add("esp32", m, (size_t)k); warned = true;
+            }
             vTaskDelay(pdMS_TO_TICKS(30000));
         }
     }

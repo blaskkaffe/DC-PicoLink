@@ -321,3 +321,33 @@ Dreamcast-like clock without any scanning. The RP2040 stays for W5500 and SD.
 Lessons: check chip select in every clock wait; no flash writes while a core is held;
 `pdMS_TO_TICKS(2)` is 0 at a 10 ms tick.
 
+
+## ESP32 RAM, Quake 3 and DCNet (Nov 2026)
+
+- The ESP32-S3 SuperMini has no PSRAM. With the USB modem on, the heap fell to 5 KB minimum and
+  secure connections failed (`alloc(4437 bytes) failed`), so dreampi_dns.conf never loaded
+  ("0 overrides"). Static RAM 195 KB -> 157 KB: Wi-Fi fast paths out of IRAM (on the S3, IRAM
+  is heap), -Os, log text packed (17.5 -> 8.5 KB), serial monitor 8 -> 4.5 KB, DNS table of
+  pending questions 16 -> 8; the DNS file is parsed while it downloads (was a 16 KB copy);
+  one HTTPS connection at a time (tls_lock).
+- Quake 3's master list needs the revival DNS. The user's router answered OpenDNS itself
+  (113-byte reply, 0 answers): it intercepts UDP 53, so 46.101.91.123 was never reached.
+  pubip.c now repeats the question over TCP; when that works, dnsd forwards over TCP.
+- DCNet as in DreamPi's netlink.py/dcnet.rpi (firmware/dcnet_model.h, tests/test_dcnet.c checks
+  the '~' fix against a copy of flyinghead's loop).
+
+## Netlink, XBAND, Capcom, port forwarding, VPN data path (Nov 2026)
+
+- netlink.py (eaudunord/Netlink, Oct 2026) ported to esp32/main/netlink.c; the dial strings,
+  packet format (with gap recovery), STUN, ini and PPP delimiter fix are in
+  firmware/netlink_model.h with tests/test_netlink.c (checked against the Python logic).
+- DreamPi answers only PPP calls 8 s after the number; DCNet, Netlink and Capcom right away.
+  The USB modem now does the same.
+- lwIP's NAT port-map table defaults to 32 entries; DreamPi's list is 215 (2300-2400 TCP and
+  UDP), so IP_PORTMAP_MAX=232 is set for the whole build (esp32/CMakeLists.txt).
+- VPN: marking the tunnel netif as a NAT "inside" interface (napt = 1) makes lwIP skip NAT on
+  packets forwarded into it, so the Dreamcast keeps its tunnel address + 1 as on DreamPi. The
+  newest netif is searched first, so the call's PPP link wins over the tunnel subnet for that
+  address.
+- VPN profiles live in their own partition (vpnprof, 0x190000), so flashing a new merged
+  image keeps them.

@@ -39,18 +39,62 @@ void ppp_srv_start(void);
 void ser_from_dc(const uint8_t *p, size_t n);          /* serial bytes from the Dreamcast */
 void ppp_srv_set_enabled(bool on);                      /* off: serial bytes only go to the monitor */
 size_t net_info_json(char *out, size_t cap);            /* one JSON object for the web page */
+/* dcnet.c: a call passed to DCNet (flyinghead's access points) instead of our PPP server */
+typedef size_t (*dcnet_out_t)(const void *data, size_t len);
+typedef void (*dcnet_done_t)(void);
+void dcnet_start(void);
+int dcnet_mode(void);                                   /* DCNET_OFF / _PREFIX (*69) / _ALWAYS */
+void dcnet_set_mode(int m);
+bool dcnet_call(const char *number, dcnet_out_t out, dcnet_done_t done);
+void dcnet_from_dc(const uint8_t *p, size_t n);
+void dcnet_hangup(void);
+bool dcnet_active(void);
+size_t dcnet_info_json(char *out, size_t cap);
+bool ppp_srv_up(void);                                  /* a PPP call is up */
+/* a call through the USB modem uses the same PPP server */
+bool ppp_modem_call_start(bool capcom);
+void ppp_modem_bytes(const uint8_t *p, size_t n);
+void ppp_modem_call_end(void);
+/* usbmodem.c: a USB voice modem on this board's USB socket (the Dreamcast's own modem calls it) */
+void usbmodem_start(void);
+size_t usbmodem_write(const void *data, size_t len);
+void usbmodem_call_over(void);                          /* PPP ended: hang up */
+size_t usbmodem_info_json(char *out, size_t cap);
+/* the modem, for netlink.c (from the modem task only) */
+bool um_cmd(const char *c, int ms);
+bool um_connect(bool originate, int ms);                /* ATA / ATX1D, then the data goes to um_read */
+int  um_read(uint8_t *b, size_t cap, int ms);           /* 0 = nothing yet, -1 = the call is over */
+bool um_carrier(void);
+bool um_gone(void);
+void um_hangup(void);
+void um_stop_tone(void);
+/* netlink.c: Netlink tunnel (direct dial, game servers, XBAND), as DreamPi's netlink.py */
+struct nl_servers_s;
+void netlink_start(void);
+const void *netlink_servers_raw(void);
+#define netlink_servers() ((const nl_servers_t *)netlink_servers_raw())
+const char *netlink_mode_name(int mode);
+void netlink_run(const void *dial);                     /* a nl_dial_t from nl_classify */
+bool netlink_idle_poll(void);                           /* during the dial tone: true if it handled a call */
+size_t netlink_info_json(char *out, size_t cap);
 /* dc_eth.c: the cable's W5500 network as a second interface (E-4) */
 void dc_eth_start(void);
 void eth_from_dc(const uint8_t *p, size_t n);          /* one Ethernet frame from the Dreamcast */
 size_t eth_info_json(char *out, size_t cap);
 /* dnsd.c: the small DNS server for the Dreamcast */
+/* one secure (HTTPS) connection at a time: each needs about 30 KB while it runs */
+void tls_lock(void);
+void tls_unlock(void);
 void dnsd_start(void);
+int dns_tcp_ask(uint32_t server_host_order, const uint8_t *q, size_t qn, uint8_t *a, size_t cap, int ms);
+void dnsd_use_tcp(bool on);                             /* the router fakes UDP DNS answers: forward over TCP */
+bool dnsd_tcp(void);
 void dnsd_set_listen(int which, bool on, uint32_t ip_host_order);   /* 0 = PPP call, 1 = Ethernet side, 2 = wired port (BBA) */
 void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap);
 /* dcnow.c: DCNow! reports */
 void dcnow_start(void);
 void dcnow_note_domain(const char *domain);
-void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = Ethernet side, 2 = wired port (BBA); reports while any is on */
+void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = Ethernet side, 2 = wired port (BBA), 3 = Netlink game server; reports while any is on */
 void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
@@ -58,6 +102,18 @@ void dcnow_info(uint32_t *ok, uint32_t *fail);
 /* ---- VPN to Dreamcast Live (vpn.c, E-7) ---- */
 void vpn_start(void);
 void vpn_set_enabled(bool on);
+void vpn_auto_on(const char *why);
+int vpn_profiles_n(void);
+uint32_t vpn_dc_addr(void);                             /* the Dreamcast's address in the VPN (host order), 0 = no tunnel */
+bool vpn_profiles_write(const void *d, size_t n, bool first, bool last);
+uint32_t ppp_dc_ip(void);                               /* network order, 0 = no PPP call */
+uint32_t dc_eth_dc_ip(void);
+uint32_t wired_dc_ip(void);
+/* portfwd.c: game ports to the Dreamcast (NAT port maps) and from the router (UPnP), as DreamPi */
+void portfwd_start(void);
+void portfwd_set_enabled(bool on);
+bool portfwd_enabled(void);
+size_t portfwd_info_json(char *out, size_t cap);
 bool vpn_enabled(void);
 size_t vpn_info_json(char *out, size_t cap);
 

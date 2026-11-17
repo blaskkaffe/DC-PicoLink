@@ -22,6 +22,7 @@ typedef struct {
     bool verbose;     /* V1 (default): words; V0: numbers */
     bool quiet;       /* Q1: no result codes */
     uint32_t baud;    /* shown in "CONNECT <baud>" */
+    char number[32];  /* what the last ATD dialled: digits, * and # only ("" for ATA) */
 } hayes_t;
 
 typedef enum {
@@ -82,6 +83,11 @@ static inline hayes_ev_t hayes__run(hayes_t *h, char *out, size_t cap, size_t *o
         char c = hayes__up(s[i++]);
         if (c == ' ') continue;
         if (c == 'D' || c == 'A') {                   /* dial / answer: the rest of the line is the number */
+            size_t k = 0;
+            if (c == 'D')
+                for (; i < n && k + 1 < sizeof h->number; i++)
+                    if ((s[i] >= '0' && s[i] <= '9') || s[i] == '*' || s[i] == '#') h->number[k++] = s[i];
+            h->number[k] = 0;
             hayes__result(h, 1, out, cap, o);
             return HAYES_DIAL;
         }
