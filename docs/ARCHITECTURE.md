@@ -22,10 +22,10 @@ routes or bridges to its own network like any USB Ethernet adapter.
 use it; openMenu 1.7.1 is the main user (default settings, per-game folders with a VMU
 backup that is copied to the controller's VMU at launch and back afterwards).
 * Today: blocks come from a disk image on the host (`dcsd` daemon, USB vendor interface).
-* Planned: a physical SD slot on the board's own SPI pins, with the RP2040 emulating the
-  card protocol towards the Dreamcast and using the card as storage. No host software
-  needed; the card can be read in any PC, and the board shows it as a USB drive while
-  the Dreamcast is off.
+* Written (not on hardware yet): a physical SD slot on the board's own SPI pins, with the
+  RP2040 emulating the card protocol towards the Dreamcast and using the card as storage
+  (`sdcard_model.h`). No host software needed; the card can be read in any PC. Planned:
+  the board shows it as a USB drive while the Dreamcast is off.
 
 ## Mode selection
 

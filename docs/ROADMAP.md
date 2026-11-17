@@ -1,5 +1,7 @@
 # Roadmap
 
+> Under development: nothing on the zero-stack has been tested on hardware yet (docs/TESTING.md).
+
 ## 1. Validate the current firmware (v0.8)
 
 * Run `tools/dctest` (serial baud sweep, ramps, switching, W5500 net/soak) on hardware first;
@@ -13,33 +15,21 @@
 
 ## 1b. RP2040-Zero + ESP32-S3 SuperMini stack (hardware/ESP32.md)
 
-* Done in firmware, not on hardware yet: `-DDC_BOARD=zero-stack` (Dreamcast on GPIO9-14, the
-  W5500/SD PIO programs loaded moved there), the ESP32 link over SPI (cable master, ESP32
-  slave, HS/DR handshake, ~1.4 MB/s each way in the timing simulation), the USB bridge test
-  build. First hardware test: the bridge build (no Dreamcast needed), watch the link's
-  checksum counters at 15.6 MHz.
-* Next: the ESP32 takes over the computer side when it is present (all Dreamcast traffic
-  over the link; the ESP32's USB presents the cable's serial port, network and status
-  interfaces to DreamPi, plus a log port that is there in every mode); the RP2040 falls back
-  to its own USB only when the ESP32 is gone.
-* Done in the firmware, not on hardware yet: the physical W5500 on the ESP32 (pins 9-13) as uplink or
-  BBA port (esp32/main/wired.c), and the link self-test (link_test_model.h). Then: the SD
-  slot on the Zero's SPI1 (GP26-29), the USB modem on the Zero's USB-C (RP2040 as USB host)
-  with a line-voltage board, per-game connection choice from the game information openMenu
-  sends over serial.
+* Written, builds, host-tested, **not on hardware yet**: Dreamcast on GPIO9-14, SPI link with
+  self-test, W5500 emulation, SD slot on SPI1 (GP26-29), ESP32: Wi-Fi/wired uplink, web page,
+  serial PPP, W5500 network, BBA port, USB modem, DCNet, Netlink/XBAND/Capcom, VPN with built-in
+  profiles and pushed routes, UPnP port forwarding, shared-IPv4 check, DCNow! + port 1998.
+* Next: run docs/TESTING.md on hardware and fix what it finds.
+* Then: Netlink/XBAND over the serial cable; the ESP32 takes over the computer side of the
+  cable's USB (all Dreamcast traffic over the link, a log port in every mode); per-game
+  connection choice from the game information openMenu sends over serial.
 
 ## 2. SD card on a physical slot
 
-* Wire an SD/microSD slot to the RP2040's own SPI (SPI1): GPIO26/27/28 + CS GPIO9,
-  the same pins on Pro Micro RP2040, RP2040-Zero and Pico (hardware/SD-SLOT.md). On the
-  zero-stack layout GPIO9 is the Dreamcast's: CS on GPIO29 there.
-* Firmware: the SD emulation's block source becomes the card (it already handles a slow
-  source); remove the host image link (`dcsd`, USB vendor interface) and move the status
-  lines to a small second USB serial port.
-* USB mass storage (TinyUSB MSC) of the card while the Dreamcast is off; "no medium"
-  while it's on.
-* Fix openMenu 1.7.1 "no SD card" (it reads two sectors and stops: needs a debug log
-  of the openMenu boot).
+* Written (sdcard_model.h, not on hardware yet): a card on SPI1 (GP26/27/28, CS GP9, or GP29 on
+  the zero-stack) is the Dreamcast's SD card when the Pi's dcsd isn't connected.
+* Next: USB mass storage (TinyUSB MSC) of the card while the Dreamcast is off; multi-block
+  reads for speed; fix openMenu 1.7.1 "no SD card" (needs a debug log of the openMenu boot).
 
 ## 3. Hosts
 
@@ -47,11 +37,7 @@
 * macOS, Windows: network sharing instructions/scripts, serial port names.
 * Android: investigate.
 * A PPP server for serial games without DreamPi (like Netlink), per platform.
-* **ESP32-S3 instead of a computer** (`esp32/`, plan E-1 to E-11 in the project's
-  `07-esp32-link.md`): E-1 link, E-2 web page, E-3 Internet/DCNow! over serial PPP (Hayes stub, PPP server,
-  DNS to the revival servers, NAT, DCNow! reports) E-4 the same over the W5500 frames and E-7 an OpenVPN client for Dreamcast Live (connects, keeps the tunnel up;
-  no traffic through it yet) are written, not yet tried on hardware; next
-  NAT rewrites/UPnP/DreamPi's helpers (and traffic through the VPN), DCNET, power from the serial port, the modem.
+* **ESP32-S3 instead of a computer** (`esp32/`): see 1b; everything DreamPi does is written.
 * Own USB VID/PID (pid.codes for open-source hardware) instead of the TinyUSB test ID
   (`cafe:4dc5`).
 

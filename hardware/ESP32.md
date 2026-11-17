@@ -1,7 +1,10 @@
 # Wiring the ESP32-S3 (no DreamPi needed)
 
+> ⚠️ Under development, not tested on hardware yet; no guarantee that it works. Check the
+> wiring twice before powering up (3V3 pins must not be joined), test with ../docs/TESTING.md.
+
 The cable (RP2040) talks to an **ESP32-S3**, which gives the Dreamcast its internet
-connection over Wi-Fi (later also a W5500 on the ESP32). The same cable firmware still works
+connection over Wi-Fi or a W5500 Ethernet module on the ESP32. The same cable firmware still works
 with a Raspberry Pi or a PC over USB; see "Who gets the traffic" below. Two ways to connect
 the boards:
 

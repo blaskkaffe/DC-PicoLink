@@ -1,10 +1,13 @@
 # DC-PicoLink
 
-> **Work in progress.** The RP2040 cable with DreamPi works on hardware (see *Status*). The
-> ESP32-S3 side (Wi-Fi instead of a computer) and the small **RP2040-Zero + ESP32-S3 SuperMini
-> stack** (`-DDC_BOARD=zero-stack`, link over SPI) are written, host-tested and build, but
-> **have not been tried on hardware yet**. Expect bugs; check the first status line
-> (firmware version) in any log you report.
+> ⚠️ **Under development. No guarantee that anything here works.**
+> Use it at your own risk, on hardware you can afford to lose: wiring mistakes or firmware
+> bugs can damage a Dreamcast, a modem or the boards. Only the RP2040 cable with DreamPi has
+> been tried on hardware (see *Status*). Everything on the **RP2040-Zero + ESP32-S3 SuperMini
+> stack** (Wi-Fi, USB modem, SD slot, DCNet, Netlink, VPN, port forwarding, the BBA port) is
+> written, builds and passes the host tests, but **has not been tested on hardware yet**:
+> expect bugs. The checklist for that is [docs/TESTING.md](docs/TESTING.md). When you report
+> a problem, include the first status line (firmware version) and the log.
 
 An RP2040-based Dreamcast serial-port adapter: a full coder's cable (serial and serial
 PPP), W5500 Ethernet emulation over USB networking, and SD card emulation (used by
@@ -19,7 +22,7 @@ device with three functions. It works out by itself which one the Dreamcast is u
 |---|---|---|
 | a **coder's cable** (UART) | dc-tool-ser / dcload-serial, the KOS console, serial PPP games (e.g. AFO through DreamPi's Netlink) | a USB serial port (`/dev/dccable` on DreamPi) |
 | a **WIZnet W5500** Ethernet chip | KallistiOS homebrew and patched games with the W5500 driver | a USB network interface (`dcusb0`) the computer routes or bridges |
-| an **SD card** | openMenu (settings, per-game VMU backups), other SCIF-SPI SD programs | today: a disk image on the host; planned: a physical SD slot on the board |
+| an **SD card** | openMenu (settings, per-game VMU backups), other SCIF-SPI SD programs | a disk image on the host (DreamPi), or a microSD in the board's own slot (written, not tried on hardware) |
 
 ## Status
 
@@ -54,6 +57,31 @@ The ESP32 (no computer) applies the same rules itself; what is still missing is 
 
 Other hosts (Linux PC, macOS, Windows, Android) are planned: see [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## The stack: RP2040-Zero + ESP32-S3 SuperMini (no computer needed)
+
+Not tried on hardware yet. The two boards sit back to back; the RP2040 does everything towards
+the Dreamcast, the ESP32 the Internet side. Wiring: [hardware/ESP32.md](hardware/ESP32.md);
+ESP32 details: [esp32/README.md](esp32/README.md).
+
+| | What it does | Like DreamPi |
+|---|---|---|
+| Internet | home Wi-Fi, or a W5500 Ethernet module on the ESP32 as uplink | |
+| Setup | own Wi-Fi network `DC-PicoLink-XXXX`, web page with status, log, settings | |
+| Serial cable | modem emulation (`AT`, `ATD`), PPP server, NAT | serial PPP |
+| W5500 emulation | the Dreamcast's W5500 network: DHCP, DNS, NAT | `dcusb0` |
+| SD card | a microSD on the Zero's SPI1 is the Dreamcast's SD card | (dcsd image) |
+| USB modem | a USB voice modem on the ESP32: dial tone, number, answer, PPP | yes |
+| BBA | the Dreamcast's Broadband Adapter on the ESP32's W5500 module | |
+| DNS | DreamPi's DNS list from dreamcast.online, revival DNS; over TCP when the router intercepts DNS | yes |
+| DCNow! | reports, and `dreampi.local:1998` for dreamcast.online/now/configure | yes |
+| DCNet | `*69` before the number, or every call | yes |
+| Netlink | direct dial, matchmaking, game server codes, XBAND, Capcom matching (USB modem) | yes |
+| VPN | Dreamcast Live, profiles built in (okayed by Dreamcast Live); the Dreamcast gets its own VPN address | yes |
+| Port forwarding | DreamPi's game ports by UPnP and on to the Dreamcast; says when the provider shares your IPv4 (then the VPN is switched on) | yes (optional there) |
+| Game packet rules | TTL 64, PowerSmash double SYN, Planet Ring / Daytona public address | yes |
+
+Test before trusting it: [docs/TESTING.md](docs/TESTING.md).
+
 ## Quick start (DreamPi)
 
 1. **Wire it** to the Dreamcast serial port: [hardware/WIRING.md](hardware/WIRING.md)
@@ -83,7 +111,7 @@ boot a dcload-serial CDI, then `dc-tool-ser -t /dev/dccable -b 1500000 -x progra
 | [`esp32/`](esp32) | ESP32-S3 firmware: the cable's link to Wi-Fi without a computer (being built) |
 | [`hardware/`](hardware) | wiring and build notes, [SD slot](hardware/SD-SLOT.md), [ESP32](hardware/ESP32.md) |
 | [`docs/`](docs) | [architecture](docs/ARCHITECTURE.md), [technical reference](docs/REFERENCE.md), [roadmap](docs/ROADMAP.md), [testing](docs/TESTING.md), [development log](docs/DEVLOG.md) |
-| [`tools/`](tools) | test runner, DreamPi installer builder |
+| [`tools/`](tools) | test runner, DreamPi installer builder, `dreampi_vpn_extract.py` (VPN profiles out of a DreamPi image, plain Python, works in a-Shell on iOS) |
 
 ## Building
 
@@ -108,6 +136,8 @@ cd esp32
 idf.py set-target esp32s3 && idf.py build                                             # UART link (Pico wiring)
 idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig \
        -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build          # SPI link (stack)
+idf.py -B build-modem -D SDKCONFIG=build-modem/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack;sdkconfig.modem" build   # + USB modem port
 ```
 
 Tests (host, no hardware): `tools/run-tests.sh` runs the C model tests, including the SPI
@@ -121,6 +151,15 @@ Part of a family of `DC-` Dreamcast projects.
 `esp32/probe` is a test firmware for one question: can the ESP32-S3 do the RP2040's job too?
 Measured: no (Wi-Fi pauses the other core for ~40 ns). See [hardware/ESP32-ONLY.md](hardware/ESP32-ONLY.md).
 
-## License
+## Credits and licenses
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Built on the work of others:
+
+* [DreamPi](https://github.com/Kazade/dreampi) (Kazade and contributors, MIT): the reference for
+  everything the ESP32 does for a modem Dreamcast.
+* [Netlink](https://github.com/eaudunord/Netlink) (eaudunord): the Netlink tunnel ported to
+  `esp32/main/netlink.c`.
+* DCNet by flyinghead (`dcnet.rpi`, as used by DreamPi): the access-point protocol in `dcnet.c`.
+* Dreamcast Live (Shuouma): the VPN servers and the client profiles in `esp32/vpn/`, used here
+  with their okay.
+* Espressif `mdns` and `usb_host_cdc_acm` components (Apache-2.0), vendored in `esp32/components/`.
