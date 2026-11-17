@@ -277,6 +277,12 @@ static void upnp(uint32_t to, bool to_dc) {
     esp_netif_ip_info_t ii; esp_netif_t *en = esp_netif_get_default_netif();
     uint32_t gw = en && esp_netif_get_ip_info(en, &ii) == ESP_OK ? ii.gw.addr : 0;
     int nl = ssdp(locs, gw);
+    /* the gateway did not answer the search (some routers stop answering for a while): ask it
+       straight at miniupnpd's usual place, port 5000 */
+    bool gw_listed = false;
+    if (gw) { char g[16]; snprintf(g, sizeof g, "%s", inet_ntoa(*(struct in_addr *)&gw)); size_t gl = strlen(g);
+              for (int i = 0; i < nl; i++) if (!strncmp(locs[i] + 7, g, gl) && (locs[i][7 + gl] == ':' || locs[i][7 + gl] == '/')) gw_listed = true;
+              if (!gw_listed && nl < SSDP_MAX) { for (int j = nl; j > 0; j--) memcpy(locs[j], locs[j - 1], 160); snprintf(locs[0], 160, "http://%s:5000/rootDesc.xml", g); nl++; } }
     if (!nl) { snprintf(st.err, sizeof st.err, "no UPnP router answered"); say("port forwarding: no UPnP router answered (is UPnP on in the router?)"); return; }
     uint32_t rip = 0; uint16_t rport = 0;
     int use = -1;
