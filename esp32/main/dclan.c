@@ -47,6 +47,8 @@ static struct { uint32_t arp_answered, arp_seen, rewritten_out, rewritten_in, fr
 static volatile uint32_t first_out_ms;              /* when the Dreamcast first sent out this call (0 = not yet) */
 static bool said_nothing_back, said_first_in;
 static char why_none[96] = "waiting for the home network";
+static volatile uint16_t ah_port;                 /* local TCP port of the request, 0 = none */
+static volatile uint32_t ah_peer;                 /* the router (host order) */
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void say(const char *fmt, ...) {
@@ -100,11 +102,21 @@ static void note_dest(const uint8_t *h, size_t n, uint32_t dst) {
 int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
     struct netif *dcn = in_nif;
     uint32_t in = inside, lan = lan_dc;
-    if (!dcn || !in || !lan || !p || p->len < 20) return 0;
+    if (!lan || !p || p->len < 20) return 0;
     const uint8_t *h = (const uint8_t *)p->payload;
     if ((h[0] >> 4) != 4) return 0;
     uint32_t src = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
     uint32_t dst = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
+    uint16_t ap = ah_port;
+    if (ap && inp == up_nif && dst == lan && src == ah_peer && h[9] == 6) {       /* the router's answer to a UPnP request: to this box */
+        size_t hl = (size_t)(h[0] & 15) * 4;
+        if (p->tot_len >= hl + 4 && ((uint16_t)pbuf_get_at(p, (u16_t)(hl + 2)) << 8 | pbuf_get_at(p, (u16_t)(hl + 3))) == ap) {
+            dcl_pkt_t pk = { pg, pp, p, p->tot_len };
+            dcl_rewrite(&pk, DCL_DST, lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(inp))));
+            return 0;
+        }
+    }
+    if (!dcn || !in) return 0;
     if (inp == dcn && src == in) {
         note_dest(h, p->len, dst);
         if (!is_own_addr(dst)) { cnt.from_dc++; if (!first_out_ms) first_out_ms = (uint32_t)(esp_timer_get_time() / 1000) | 1; }
@@ -127,6 +139,32 @@ int dclan_ip4_input(struct pbuf *p, struct netif *inp) {
     return 0;
 }
 
+/* UPnP from the Dreamcast's address: routers in "secure mode" (miniupnpd's default, OpenWrt,
+   many others) only map ports to the address that asks. This box holds the Dreamcast's address
+   (it answers ARP for it), so portfwd.c's requests go out from it: one TCP connection at a time,
+   marked by its local port, rewritten on the way out (from this box's address to the home one)
+   and back in. */
+void dclan_as_home(uint16_t port, uint32_t peer_n) { ah_peer = lwip_ntohl(peer_n); ah_port = port; }
+void dclan_as_home_end(void) { ah_port = 0; }
+
+static netif_output_fn up_output_orig;
+static err_t up_output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst) {
+    uint16_t ap = ah_port; uint32_t lan = lan_dc;
+    if (ap && lan && n == up_nif && p && p->len >= 24) {
+        const uint8_t *h = (const uint8_t *)p->payload;
+        size_t hl = (size_t)(h[0] & 15) * 4;
+        uint32_t s = (uint32_t)h[12] << 24 | (uint32_t)h[13] << 16 | (uint32_t)h[14] << 8 | h[15];
+        uint32_t d = (uint32_t)h[16] << 24 | (uint32_t)h[17] << 16 | (uint32_t)h[18] << 8 | h[19];
+        if ((h[0] >> 4) == 4 && h[9] == 6 && p->tot_len >= hl + 20 && d == ah_peer &&
+            s == lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(n))) &&
+            ((uint16_t)pbuf_get_at(p, (u16_t)hl) << 8 | pbuf_get_at(p, (u16_t)(hl + 1))) == ap) {
+            dcl_pkt_t pk = { pg, pp, p, p->tot_len };
+            dcl_rewrite(&pk, DCL_SRC, lan);
+        }
+    }
+    return up_output_orig(n, p, dst);
+}
+
 /* proxy ARP: the uplink's frames pass here first (tcpip thread) */
 static err_t eth_in(struct pbuf *p, struct netif *inp) {
     uint32_t lan = lan_dc;
@@ -138,7 +176,8 @@ static err_t eth_in(struct pbuf *p, struct netif *inp) {
             if (dcl_arp_claims(a, 28, lan, inp->hwaddr)) {
                 if (!conflict) cnt.conflicts++;
                 conflict = true;
-            } else if (dcl_arp_asks_for(a, 28, lan, mac, &sip) && (cnt.arp_seen++, in_nif)) {
+            } else if (dcl_arp_asks_for(a, 28, lan, mac, &sip)) {      /* the address is this box's to answer for once picked */
+                cnt.arp_seen++;
                 struct pbuf *q = pbuf_alloc(PBUF_LINK, 28, PBUF_RAM);
                 if (q) {
                     dcl_arp_reply((uint8_t *)q->payload, inp->hwaddr, lan, mac, sip);
@@ -170,7 +209,11 @@ static void wrap(struct netif *n) {                /* core locked */
     for (int i = 0; i < 3; i++) if (wrapped[i] == n) return;
     if (!(n->flags & NETIF_FLAG_ETHARP)) return;
     if (n->input != tcpip_input) return;           /* not the usual esp_netif set-up: leave it */
-    for (int i = 0; i < 3; i++) if (!wrapped[i]) { wrapped[i] = n; n->input = wrapped_input; return; }
+    for (int i = 0; i < 3; i++) if (!wrapped[i]) {
+        wrapped[i] = n; n->input = wrapped_input;
+        if (!up_output_orig || n->output == up_output_orig) { up_output_orig = n->output; n->output = up_output; }   /* etharp_output for all of them */
+        return;
+    }
 }
 
 /* ---------- the pick ---------- */

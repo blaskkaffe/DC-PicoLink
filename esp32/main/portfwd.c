@@ -41,7 +41,7 @@ static const struct { uint16_t port; uint8_t proto; } OLD_OWN[] = { { 65432, 6 }
 static volatile bool enabled = true;
 static volatile bool kick;
 static uint32_t map_dc, map_me;                 /* what the NAT maps point at now (network order) */
-static struct { int upnp_ok, upnp_fail, maps; char router[48], err[64], dc[16], outside[16]; int shared; } st;   /* shared: 1 = provider's NAT, 2 = another NAT in front */
+static struct { int upnp_ok, upnp_fail, maps; char router[48], err[112], dc[16], outside[16]; int shared; } st;   /* shared: 1 = provider's NAT, 2 = another NAT in front */
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void say(const char *fmt, ...) {
@@ -93,9 +93,21 @@ static void nat_maps(uint32_t me, uint32_t dc) {
 }
 
 /* ---- UPnP (IGD) ---- */
+/* as_home: the request goes out from the Dreamcast's home address (dclan.c), for routers in
+   UPnP "secure mode" that only map ports to the address that asks */
+static bool as_home;
 static int http_req(uint32_t ip, uint16_t port, const char *req, size_t rn, char *ans, size_t cap) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return -1;
+    bool marked = false;
+    if (as_home) {
+        struct sockaddr_in me = { .sin_family = AF_INET, .sin_port = 0, .sin_addr.s_addr = INADDR_ANY };
+        socklen_t ml = sizeof me;
+        if (bind(s, (struct sockaddr *)&me, sizeof me) == 0 && getsockname(s, (struct sockaddr *)&me, &ml) == 0 && me.sin_port) {
+            dclan_as_home(ntohs(me.sin_port), ip);
+            marked = true;
+        }
+    }
     struct timeval tv = { .tv_sec = 4 };
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
@@ -107,6 +119,7 @@ static int http_req(uint32_t ip, uint16_t port, const char *req, size_t rn, char
         ans[got] = 0;
     }
     close(s);
+    if (marked) dclan_as_home_end();
     return got;
 }
 
@@ -316,19 +329,28 @@ static void upnp(uint32_t to, bool to_dc) {
         if (shared) { snprintf(st.err, sizeof st.err, shared == 1 ? "IPv4 shared by the provider" : "another NAT in front"); free(body); free(req); free(ans); body = req = ans = NULL; return; }
     }
     int first_err = 0;
-    for (size_t i = 0; i < sizeof OLD_OWN / sizeof OLD_OWN[0]; i++) del_map(rip, rport, ctl, svc, OLD_OWN[i].port, OLD_OWN[i].proto);
+    for (size_t i = 0; i < sizeof OLD_OWN / sizeof OLD_OWN[0]; i++) del_map(rip, rport, ctl, svc, OLD_OWN[i].port, OLD_OWN[i].proto);   /* (old ones were this box's: asked as this box) */
+    as_home = to_dc;                                    /* the game ports: asked as the Dreamcast's address */
     /* delete_all(), then forward_all(): the game list only, each port to the same port */
     for (size_t i = 0; i < sizeof PORTS / sizeof PORTS[0] && enabled; i++)
         for (uint32_t p = PORTS[i].lo; p <= PORTS[i].hi && enabled; p++) {
-            del_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto);
+            int dr = del_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto);
+            if (dr == -1 && as_home && !st.upnp_ok) {          /* nothing comes back to the home address: ask as this box */
+                as_home = false;
+                say("port forwarding: the router does not answer requests from the Dreamcast's address; asking as this box (a router in UPnP secure mode will refuse those)");
+                del_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto);
+            }
             int r = add_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto, to, PORTS[i].game);
             if (r == 0) st.upnp_ok++; else { st.upnp_fail++; if (!first_err) first_err = r; }
         }
+    as_home = false;
     free(body); free(req); free(ans); body = req = ans = NULL;
     if (first_err == -1 && !st.upnp_ok) snprintf(st.err, sizeof st.err, "no answer from the router (or out of memory)");
+    else if (first_err == 606 || first_err == 718 || first_err == 729)
+        snprintf(st.err, sizeof st.err, "router said %d: its UPnP lets a device open ports only for itself (secure mode)", first_err);
     else if (first_err) snprintf(st.err, sizeof st.err, "router said %d for some ports", first_err);
     char tos[16]; snprintf(tos, sizeof tos, "%s", inet_ntoa(*(struct in_addr *)&to));
-    say("port forwarding: router %s forwards %d game ports to %s %s%s%s", st.router, st.upnp_ok, to_dc ? "the Dreamcast's address" : "this box (NAT: no home address for the Dreamcast)", tos,
+    say("port forwarding: router %s forwards %d game ports to %s %s%s%s", st.router, st.upnp_ok, to_dc ? "the Dreamcast's address (asked from it)" : "this box (NAT: no home address for the Dreamcast)", tos,
         st.upnp_fail ? "; refused " : "", st.upnp_fail ? st.err : "");
 }
 
