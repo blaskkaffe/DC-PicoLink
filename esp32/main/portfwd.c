@@ -1,9 +1,11 @@
 /*
  * Port forwarding for peer-to-peer games, as DreamPi's port_forwarding.py:
- *   1. on the home router, by UPnP: DreamPi's game ports, plus the Netlink ports
- *      (TCP 65432/65433, UDP 20001/20002), to this box;
- *   2. here, in lwIP's NAT: the game ports on to the Dreamcast (PPP call, cable network or
- *      wired adapter, whichever is in use).
+ *   on the home router, by UPnP: first each mapping deleted (delete_all), then DreamPi's game
+ *   ports, each to the same port of the Dreamcast's own home address (dclan.c, usually .98;
+ *   forward_all). Nothing else is mapped: not this box, not the Netlink ports (DreamPi does not
+ *   map those either; mappings that earlier firmware made for them are removed).
+ *   Without a home address for the Dreamcast (dclan.c could not pick one) the ports go to this box
+ *   and lwIP's NAT passes them on to the Dreamcast, as before.
  * Switch on the page (on by default). The router needs UPnP switched on.
  */
 #include <string.h>
@@ -33,8 +35,8 @@ static const struct { uint16_t lo, hi; uint8_t proto; const char *game; } PORTS[
     { 37171, 37171, 17, "World Series Baseball 2K2" }, { 47624, 47624, 6, "PBA Bowling / Starlancer" },
     { 2300, 2400, 6, "PBA Bowling / Starlancer" }, { 2300, 2400, 17, "PBA Bowling / Starlancer" },
 };
-/* to this box itself (netlink.c) */
-static const struct { uint16_t port; uint8_t proto; } OWN[] = { { 65432, 6 }, { 65433, 6 }, { 20001, 17 }, { 20002, 17 } };
+/* earlier firmware also mapped these to this box (Netlink); DreamPi never does: they are only removed now */
+static const struct { uint16_t port; uint8_t proto; } OLD_OWN[] = { { 65432, 6 }, { 65433, 6 }, { 20001, 17 }, { 20002, 17 } };
 
 static volatile bool enabled = true;
 static volatile bool kick;
@@ -212,6 +214,21 @@ static int add_map(uint32_t rip, uint16_t rport, const char *ctl, const char *sv
     return e ? atoi(e + 11) : 500;
 }
 
+/* DeletePortMapping, as DreamPi's delete_all() does before forward_all() */
+static int del_map(uint32_t rip, uint16_t rport, const char *ctl, const char *svc, uint16_t port, uint8_t proto) {
+    if (!body || !req || !ans) return -1;
+    int bn = snprintf(body, 900,
+        "<?xml version=\"1.0\"?>\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+        "<s:Body><u:DeletePortMapping xmlns:u=\"%s\"><NewRemoteHost></NewRemoteHost><NewExternalPort>%u</NewExternalPort>"
+        "<NewProtocol>%s</NewProtocol></u:DeletePortMapping></s:Body></s:Envelope>\r\n", svc, (unsigned)port, proto == 6 ? "TCP" : "UDP");
+    struct in_addr ra = { .s_addr = rip };
+    int rn = snprintf(req, 1300, "POST %s HTTP/1.0\r\nHost: %s:%u\r\nContent-Type: text/xml; charset=\"utf-8\"\r\n"
+        "SOAPAction: \"%s#DeletePortMapping\"\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", ctl, inet_ntoa(ra), (unsigned)rport, svc, bn, body);
+    int n = http_req(rip, rport, req, (size_t)rn, ans, 700);
+    if (n <= 0) return -1;
+    return !strncmp(ans + 9, "200", 3) ? 0 : 1;         /* 1: there was none (714) or the router said no */
+}
+
 /* the router's own outside address (GetExternalIPAddress); "" when it has none (DS-Lite) */
 static bool router_outside(uint32_t rip, uint16_t rport, const char *ctl, const char *svc, char *out, size_t oc) {
     int bn = snprintf(body, 900,
@@ -237,7 +254,7 @@ static bool not_public(uint32_t h) {
         || (h & 0xFFF00000u) == 0xAC100000u || (h & 0xFFFF0000u) == 0xC0A80000u || (h & 0xFFFFFF00u) == 0xC0000000u /* 192.0.0/24: DS-Lite */;
 }
 
-static void upnp(uint32_t me) {
+static void upnp(uint32_t to, bool to_dc) {
     char loc[160], ctl[160], svc[64], path[160];
     st.upnp_ok = st.upnp_fail = 0; st.err[0] = 0;
     if (!ssdp(loc, sizeof loc)) { snprintf(st.err, sizeof st.err, "no UPnP router answered"); say("port forwarding: no UPnP router answered (is UPnP on in the router?)"); return; }
@@ -267,20 +284,20 @@ static void upnp(uint32_t me) {
         if (shared) { snprintf(st.err, sizeof st.err, shared == 1 ? "IPv4 shared by the provider" : "another NAT in front"); free(body); free(req); free(ans); body = req = ans = NULL; return; }
     }
     int first_err = 0;
-    for (size_t i = 0; i < sizeof OWN / sizeof OWN[0] && enabled; i++) {
-        int r = add_map(rip, rport, ctl, svc, OWN[i].port, OWN[i].proto, me, "Netlink");
-        if (r == 0) st.upnp_ok++; else { st.upnp_fail++; if (!first_err) first_err = r; }
-    }
+    for (size_t i = 0; i < sizeof OLD_OWN / sizeof OLD_OWN[0]; i++) del_map(rip, rport, ctl, svc, OLD_OWN[i].port, OLD_OWN[i].proto);
+    /* delete_all(), then forward_all(): the game list only, each port to the same port */
     for (size_t i = 0; i < sizeof PORTS / sizeof PORTS[0] && enabled; i++)
         for (uint32_t p = PORTS[i].lo; p <= PORTS[i].hi && enabled; p++) {
-            int r = add_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto, me, PORTS[i].game);
+            del_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto);
+            int r = add_map(rip, rport, ctl, svc, (uint16_t)p, PORTS[i].proto, to, PORTS[i].game);
             if (r == 0) st.upnp_ok++; else { st.upnp_fail++; if (!first_err) first_err = r; }
         }
     free(body); free(req); free(ans); body = req = ans = NULL;
     if (first_err == -1 && !st.upnp_ok) snprintf(st.err, sizeof st.err, "no answer from the router (or out of memory)");
     else if (first_err) snprintf(st.err, sizeof st.err, "router said %d for some ports", first_err);
-    say("port forwarding: router %s forwards %d ports to this box%s%s", st.router, st.upnp_ok, st.upnp_fail ? "; refused " : "",
-        st.upnp_fail ? st.err : "");
+    char tos[16]; snprintf(tos, sizeof tos, "%s", inet_ntoa(*(struct in_addr *)&to));
+    say("port forwarding: router %s forwards %d game ports to %s %s%s%s", st.router, st.upnp_ok, to_dc ? "the Dreamcast's address" : "this box (NAT: no home address for the Dreamcast)", tos,
+        st.upnp_fail ? "; refused " : "", st.upnp_fail ? st.err : "");
 }
 
 static void task(void *arg) {
@@ -288,13 +305,17 @@ static void task(void *arg) {
     uint32_t upnp_for = 0; int64_t upnp_at = 0;
     for (;;) {
         uint32_t me = inet_up() ? my_ip() : 0;
-        nat_maps(enabled ? me : 0, enabled ? dc_ip() : 0);
+        uint32_t home = me ? lwip_htonl(dclan_dc_ip()) : 0;  /* the Dreamcast's own address (DreamPi), 0 = none */
+        /* with a home address the router sends the ports straight to the Dreamcast; NAT maps only without */
+        nat_maps(enabled && !home ? me : 0, enabled && !home ? dc_ip() : 0);
+        uint32_t to = home ? home : me;
+        if (home && enabled) { char a[16]; snprintf(a, sizeof a, "%s", inet_ntoa(*(struct in_addr *)&home)); if (strcmp(a, st.dc)) snprintf(st.dc, sizeof st.dc, "%s", a); }
         int64_t now = esp_timer_get_time();
-        if (enabled && me && (me != upnp_for || now - upnp_at > 30LL * 60 * 1000000 || kick)) {   /* new address, every 30 min, switched on */
+        if (enabled && to && (to != upnp_for || now - upnp_at > 30LL * 60 * 1000000 || kick)) {   /* new target, every 30 min, switched on */
             kick = false;
             vTaskDelay(pdMS_TO_TICKS(3000));
-            upnp(me);
-            upnp_for = me; upnp_at = esp_timer_get_time();
+            upnp(to, home != 0);
+            upnp_for = to; upnp_at = esp_timer_get_time();
         }
         if (!enabled) { upnp_for = 0; kick = false; }
         vTaskDelay(pdMS_TO_TICKS(2000));

@@ -21,6 +21,7 @@
 #include "esp_mac.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "link_model.h"
 #include "ipfilter_model.h"
 #include "app.h"
@@ -66,6 +67,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
 
 static uint32_t lease_ip;
 uint32_t dc_eth_dc_ip(void) { return active ? lease_ip : 0; }
+struct netif *dc_eth_netif(void) { return eth_if ? (struct netif *)esp_netif_get_netif_impl(eth_if) : NULL; }
 
 static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base; (void)id;

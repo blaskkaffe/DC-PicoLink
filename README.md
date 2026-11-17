@@ -77,7 +77,8 @@ ESP32 details: [esp32/README.md](esp32/README.md).
 | DCNet | `*69` before the number, or every call | yes |
 | Netlink | direct dial, matchmaking, game server codes, XBAND, Capcom matching (USB modem) | yes |
 | VPN | Dreamcast Live, profiles built in (okayed by Dreamcast Live); the Dreamcast gets its own VPN address | yes |
-| Port forwarding | DreamPi's game ports by UPnP and on to the Dreamcast; says when the provider shares your IPv4 (then the VPN is switched on) | yes (optional there) |
+| Own home address | as DreamPi: the Dreamcast gets .98 on your network (this box .99, answers ARP for it, no NAT); 1:1 with the VPN up | yes |
+| Port forwarding | DreamPi's game ports by UPnP straight to the Dreamcast's .98, nothing else; says when the provider shares your IPv4 (then the VPN is switched on) | yes (optional there) |
 | Game packet rules | TTL 64, PowerSmash double SYN, Planet Ring / Daytona public address | yes |
 
 Test before trusting it: [docs/TESTING.md](docs/TESTING.md).

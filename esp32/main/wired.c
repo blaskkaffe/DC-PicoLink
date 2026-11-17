@@ -26,6 +26,7 @@
 #include "esp_eth_mac_spi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "ipfilter_model.h"
@@ -95,6 +96,7 @@ static void on_eth(void *arg, esp_event_base_t base, int32_t id, void *data) {
 
 static uint32_t lease_ip;
 uint32_t wired_dc_ip(void) { return role == R_BBA ? lease_ip : 0; }
+struct netif *wired_dc_netif(void) { return bba_if ? (struct netif *)esp_netif_get_netif_impl(bba_if) : NULL; }
 
 static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base; (void)id;
@@ -298,6 +300,7 @@ void wired_start(void) {
 #else
 bool wired_uplink_up(void) { return false; }
 uint32_t wired_dc_ip(void) { return 0; }
+struct netif *wired_dc_netif(void) { return NULL; }
 size_t wired_info_json(char *out, size_t cap) { return (size_t)snprintf(out, cap, "{\"present\":false}"); }
 void wired_start(void) { }
 #endif

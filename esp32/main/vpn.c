@@ -123,6 +123,7 @@ static err_t vif_init(struct netif *nif) {
 /* DreamPi: while the tunnel is up the Dreamcast's PPP address is the tunnel address + 1, so
    other VPN users reach it directly; its Internet traffic still goes out through Wi-Fi. */
 uint32_t vpn_dc_addr(void) { return tun_ip ? tun_ip + 1 : 0; }
+struct netif *vpn_netif(void) { return tun_ip && vif_added ? &vif : NULL; }
 
 /* DreamPi's INPUT rules for tun0: to our own tunnel address only ICMP, TCP 65432/65433 and
    UDP 20001/20002 (Netlink), and replies to what we sent. Everything else passes on. */
@@ -168,7 +169,8 @@ static void vif_up(const ovpn_info_t *in) {
         vif_added = true;
     }
 #if IP_NAPT
-    vif.napt = 1;                    /* the Dreamcast's packets go into the tunnel unchanged (no NAT) */
+    vif.napt = 0;                    /* what comes out of the tunnel for the Dreamcast reaches it unchanged (DreamPi: no NAT on tun0;
+                                        with napt set, lwIP rewrote every peer's address to this box's) */
 #endif
     tun_ip = in->ip;
     int k = 0;

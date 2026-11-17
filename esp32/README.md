@@ -45,8 +45,8 @@ profile upload.
 
 | Path | How |
 |---|---|
-| serial cable | modem emulation (`../firmware/hayes_model.h`), lwIP's PPP server, NAT. Dreamcast 10.64.0.2 (or its VPN address), DNS and gateway 10.64.0.1 |
-| the cable's W5500 emulation | second interface 192.168.99.1/24, DHCP, DNS, NAT (`dc_eth.c`) |
+| serial cable | modem emulation (`../firmware/hayes_model.h`), lwIP's PPP server. As on DreamPi: the Dreamcast gets its own home address (usually .98, this box .99 = its DNS and gateway), this box answers ARP for it, no NAT (`dclan.c`); tun+1 with the VPN up, mapped 1:1 to the home address. Without a free home address: 10.64.0.2 behind NAT |
+| the cable's W5500 emulation | second interface 192.168.99.1/24, DHCP, DNS (`dc_eth.c`); mapped 1:1 to the Dreamcast's home address (NAT only without one) |
 | USB modem | a USB voice modem on this board's USB socket; the Dreamcast's own modem calls it over a phone cord (`usbmodem.c`) |
 | BBA | a W5500 module on GPIO9-13 (`wired.c`): with a cable from the Dreamcast's BBA it serves 192.168.98.x; with a cable to a router it is the uplink instead |
 
@@ -62,7 +62,7 @@ profile upload.
 | DCNet (`*69`, `dcnet.rpi`) | `dcnet.c`: closest access point, TCP 7654/7656, the `~` fix. Also over the serial cable |
 | Netlink (eaudunord/Netlink): direct dial, matchmaking, game server codes, XBAND, Capcom | `netlink.c` (USB modem only); no SIP ring on XBAND calls |
 | OpenVPN to Dreamcast Live, Dreamcast on tunnel address + 1, input rules on tun0 | `ovpn.c`, `vpn.c`; routes pushed by the server go into the tunnel (`../hooks/dcl_lwip_hooks.h`) |
-| UPnP port forwarding (optional) | `portfwd.c`: DreamPi's port list plus the Netlink ports, and the box's NAT on to the Dreamcast; on by default |
+| UPnP port forwarding (optional) | `portfwd.c`: as DreamPi's port_forwarding.py, each mapping deleted, then DreamPi's game ports straight to the Dreamcast's home address; nothing else (not the Netlink ports); on by default |
 
 ### VPN
 
@@ -91,7 +91,8 @@ waiting need the VPN on such a connection.
 | `main/usbmodem.c` | USB host, CDC-ACM modem, dial tone and answering |
 | `main/dcnet.c`, `main/netlink.c` | DCNet; Netlink, game servers, XBAND |
 | `main/vpn.c`, `main/ovpn.c` | VPN task, profiles, the tunnel interface; the OpenVPN client |
-| `main/portfwd.c` | UPnP, NAT port maps, shared-IPv4 check |
+| `main/portfwd.c` | UPnP, NAT port maps (only without a home address), shared-IPv4 check |
+| `main/dclan.c` | the Dreamcast's own home address as on DreamPi: the .99/.98 pick, proxy ARP, routing, the VPN's 1:1 mapping (`../firmware/dclan_model.h`) |
 | `main/dnsd.c`, `main/dcnow.c`, `main/pubip.c` | DNS server, DCNow! + port 1998 service, public address |
 | `main/main.c` | status-line ring, serial monitor ring, start-up |
 | `hooks/dcl_lwip_hooks.h` | lwIP route hook (VPN routes) |

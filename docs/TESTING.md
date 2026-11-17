@@ -26,7 +26,9 @@ that fails.
 - [ ] VPN: `up to <server> for N s, tunnel address ..., N ms to the gateway`; `VPN: switched on
       by itself` if the IPv4 is shared; switching it off on the page sticks after a restart.
 - [ ] Netlink: `N game server dial codes from netlink_config.ini`.
-- [ ] Port forwarding line: `router ... forwards N ports` (public IPv4) or the shared-IPv4 text.
+- [ ] `home network: the Dreamcast gets 192.168.x.98, this box is .99 ...` once Wi-Fi is up (as a DreamPi picks them).
+- [ ] Port forwarding line: `router ... forwards 216 game ports to the Dreamcast's address 192.168.x.98` (public IPv4) or the shared-IPv4 text. The router's UPnP list shows .98, no Netlink ports, nothing for this box.
+- [ ] If the router refuses mappings for another device's address (UPnP "secure mode"), the line says `refused`; DreamPi has the same limit.
 - [ ] `http://dreampi.local:1998` shows `mac_address` / `is_enabled`; dreamcast.online/now/configure
       finds the box and the name can be set.
 - [ ] Wired uplink (W5500 module on the ESP32, cable to the router): wired line shows `uplink`
@@ -36,7 +38,9 @@ that fails.
 
 - [ ] Dreamcast on: CABLE box `link.mode serial`.
 - [ ] A game or browser set to "modem" dials: `Dreamcast dialled <number>; starting PPP`,
-      `PPP is up: Dreamcast 10.64.0.2` (or `... (in the VPN)` with the VPN up).
+      `PPP is up: Dreamcast 192.168.x.98, DNS and gateway 192.168.x.99` (or the tun+1 address with the VPN up), then
+      `home network: the Dreamcast is 192.168.x.98 there; this box answers for it (proxy ARP), no NAT`.
+- [ ] The router's device list shows .98 (with this box's MAC); from a computer at home, `ping 192.168.x.98` answers while the Dreamcast is online (if the game answers pings).
 - [ ] Web browser loads pages; DNS line counts questions.
 - [ ] Phantasy Star Online connects; Quake III master list loads.
 - [ ] DCNow!: the box shows up as online while the game is connected.
@@ -79,5 +83,5 @@ that fails.
       `192.168.98.x` to the Dreamcast.
 - [ ] BBA games (PSO, Quake III, browser with BBA): Internet through Wi-Fi.
 - [ ] DCNow! session with BBA traffic.
-- [ ] Port forwarding goes on to the BBA's address (port forwarding line: `game ports on to 192.168.98.x`).
+- [ ] `home network: the Dreamcast (192.168.98.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
 - [ ] Swap the cable to the router: the role changes to `uplink` without a restart.

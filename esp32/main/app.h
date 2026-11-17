@@ -109,6 +109,17 @@ bool vpn_profiles_write(const void *d, size_t n, bool first, bool last);
 uint32_t ppp_dc_ip(void);                               /* network order, 0 = no PPP call */
 uint32_t dc_eth_dc_ip(void);
 uint32_t wired_dc_ip(void);
+struct netif;
+struct netif *ppp_dc_netif(void);                        /* the PPP call's interface */
+bool ppp_dc_lanmode(void);                               /* this call gives the Dreamcast its home address (dclan.c) */
+struct netif *dc_eth_netif(void);
+struct netif *wired_dc_netif(void);
+struct netif *vpn_netif(void);                           /* the tunnel, NULL when down */
+/* dclan.c: the Dreamcast's own address on the home network, as on a DreamPi */
+void dclan_start(void);
+bool dclan_addrs(uint32_t *this_ip, uint32_t *dc_ip);    /* host order; false = none (NAT as before) */
+uint32_t dclan_dc_ip(void);                              /* host order, 0 = none */
+size_t dclan_info_json(char *o, size_t cap);
 /* portfwd.c: game ports to the Dreamcast (NAT port maps) and from the router (UPnP), as DreamPi */
 void portfwd_start(void);
 void portfwd_set_enabled(bool on);

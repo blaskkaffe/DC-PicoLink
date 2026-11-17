@@ -81,6 +81,8 @@ static size_t ser_out(const void *data, size_t len) {
     return done;
 }
 
+static volatile bool call_lan;               /* this call: the Dreamcast has its home address, no NAT (dclan.c) */
+
 static u32_t out_cb(ppp_pcb *p, const void *data, u32_t len, void *ctx) {
     (void)p; (void)ctx;
     return (u32_t)ser_out(data, len);
@@ -89,7 +91,7 @@ static u32_t out_cb(ppp_pcb *p, const void *data, u32_t len, void *ctx) {
 static void status_cb(ppp_pcb *p, int err, void *ctx) {
     (void)p;
     ctl_t c = { .what = err == PPPERR_NONE ? C_UP : C_DOWN, .session = (uint32_t)(uintptr_t)ctx, .err = err };
-    if (err == PPPERR_NONE) ip_napt_enable_no(pppif.num, 1);      /* NAT for what comes in from the Dreamcast */
+    if (err == PPPERR_NONE && !call_lan) ip_napt_enable_no(pppif.num, 1);   /* no home address for the Dreamcast: NAT as before */
     xQueueSend(ctl_q, &c, 0);
 }
 
@@ -128,6 +130,8 @@ static void dcnet_done(void) { ctl_t c = { .what = C_DCNET_DONE, .session = sess
 
 static uint32_t dc_addr, our_addr;           /* this call's addresses (network order) */
 uint32_t ppp_dc_ip(void) { return up ? dc_addr : 0; }
+struct netif *ppp_dc_netif(void) { return &pppif; }
+bool ppp_dc_lanmode(void) { return call_lan; }
 static bool fast_echo;                      /* Capcom matching: LCP echo every second, 4 missed = gone (netlink.py capcom) */
 
 static bool start_ppp(int who) {
@@ -143,8 +147,11 @@ static bool start_ppp(int who) {
     ip4_addr_t our, his;
     IP4_ADDR(&our, 10, 64, 0, 1);
     IP4_ADDR(&his, 10, 64, 0, 2);
-    uint32_t vip = vpn_dc_addr();                 /* VPN up: the Dreamcast gets its address in the VPN, as on DreamPi */
+    /* as DreamPi's autoconfigure_ppp: the VPN's tun+1/tun+2, else the home network's .98/.99 */
+    uint32_t vip = vpn_dc_addr(), lthis, ldc;
+    call_lan = dclan_addrs(&lthis, &ldc);
     if (vip) { his.addr = lwip_htonl(vip); our.addr = lwip_htonl(vip + 1); }
+    else if (call_lan) { his.addr = lwip_htonl(ldc); our.addr = lwip_htonl(lthis); }
     dc_addr = his.addr; our_addr = our.addr;
     ppp_set_ipcp_ouraddr(pcb, &our);
     ppp_set_ipcp_hisaddr(pcb, &his);

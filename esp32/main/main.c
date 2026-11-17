@@ -142,6 +142,7 @@ void app_main(void) {
     vpn_start();
     pubip_start();
     netlink_start();
+    dclan_start();
     portfwd_start();
     web_start();
 }
