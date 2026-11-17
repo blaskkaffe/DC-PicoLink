@@ -6,7 +6,7 @@
  * on the page, and tests the tunnel by pinging the server's gateway through it. Sending the
  * Dreamcast's traffic through it (NAT out of the tunnel, ports in) comes with E-5.
  *
- * The profiles are built into the firmware from esp32/vpn/ (git-ignored, see vpn/README.md).
+ * The profiles are built into the firmware from esp32/vpn/ (committed, see vpn/README.md).
  * Off by default: switch it on on the page. Servers are tried in the order of server.list;
  * the one that worked last time goes first.
  */
@@ -200,7 +200,7 @@ static void vif_down(void) {
 }
 
 /* ---------- profiles ----------
-   Built in (esp32/vpn/, git-ignored) or uploaded on the page into the "vpnprof" partition:
+   Built in (esp32/vpn/) or uploaded on the page into the "vpnprof" partition:
    "DCLVPN1\0", length (4 bytes), then the same text as the built-in file, NUL-terminated. */
 #define PROF_MAGIC "DCLVPN1"
 static const char *src_name = "none";

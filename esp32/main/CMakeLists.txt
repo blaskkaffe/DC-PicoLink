@@ -1,4 +1,4 @@
-# VPN profiles (E-7): esp32/vpn/*.conf and server.list are built in when present (git-ignored files)
+# VPN profiles (E-7): esp32/vpn/*.conf and server.list are built in when present (committed in the repo)
 file(GLOB VPN_CONFS "${CMAKE_CURRENT_LIST_DIR}/../vpn/*.conf")
 list(SORT VPN_CONFS)
 set(VPN_LIST "${CMAKE_CURRENT_LIST_DIR}/../vpn/server.list")
