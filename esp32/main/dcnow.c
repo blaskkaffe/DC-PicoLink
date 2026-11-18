@@ -68,8 +68,38 @@ void dcnow_set_enabled(bool on) {
 
 void dcnow_info(uint32_t *ok, uint32_t *fail) { *ok = ok_n; *fail = fail_n; }
 
-/* the box's ID at DCNow!: SHA-256 of the Wi-Fi MAC as text */
+/* the ID can be set to another device's (a DreamPi's), so dreamcast.online counts both as one:
+   64 hex characters, from that DreamPi's MAC address or its log line "MAC address: <id>" */
+static char shared_id[65];
+static bool is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+/* "" = this box's own; a MAC (any separators) or a 64-hex ID. false if it is neither. */
+bool dcnow_set_id(const char *in) {
+    char id[65] = "";
+    char hx[65]; size_t n = 0;
+    for (const char *p = in; *p && n < 64; p++) if (is_hex(*p)) hx[n++] = (char)(*p >= 'a' && *p <= 'f' ? *p - 32 : *p);
+    for (const char *p = in; *p; p++) if (!is_hex(*p) && *p != ':' && *p != '-' && *p != '.' && *p != ' ') return false;
+    hx[n] = 0;
+    if (n == 12) {                                   /* a MAC: hashed as DreamPi does ("B8:27:EB:..") */
+        char macs[18];
+        snprintf(macs, sizeof macs, "%.2s:%.2s:%.2s:%.2s:%.2s:%.2s", hx, hx + 2, hx + 4, hx + 6, hx + 8, hx + 10);
+        sha_hex(macs, id);
+    } else if (n == 64) {
+        for (int i = 0; i < 64; i++) id[i] = (char)(hx[i] >= 'A' && hx[i] <= 'F' ? hx[i] + 32 : hx[i]);
+        id[64] = 0;
+    } else if (n) return false;
+    if (!strcmp(id, shared_id)) return true;
+    memcpy(shared_id, id, sizeof shared_id);
+    nvs_handle_t h;
+    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_str(h, "dcnow_id", shared_id); nvs_commit(h); nvs_close(h); }
+    char m[140]; int k = snprintf(m, sizeof m, shared_id[0] ? "DCNow!: reporting as %.12s... (shared with another device)" : "DCNow!: reporting with this box's own ID%s", shared_id);
+    log_add("esp32", m, (size_t)k);
+    return true;
+}
+const char *dcnow_shared_id(void) { return shared_id; }
+
+/* the box's ID at DCNow!: SHA-256 of the Wi-Fi MAC as text (or the shared one) */
 static void my_id(char *id) {
+    if (shared_id[0]) { memcpy(id, shared_id, 65); return; }
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char macs[24];
@@ -186,7 +216,9 @@ void dcnow_start(void) {
     nvs_handle_t h; uint8_t v = 1;
     if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "dcnow", &v); nvs_close(h); }
     enabled = v != 0;
-    xTaskCreate(dcnow_task, "dcnow", 8192, NULL, 4, NULL);
+    { nvs_handle_t n; size_t l = sizeof shared_id;
+      if (nvs_open("dcl", NVS_READONLY, &n) == ESP_OK) { if (nvs_get_str(n, "dcnow_id", shared_id, &l) != ESP_OK) shared_id[0] = 0; nvs_close(n); } }
+    xTaskCreate(dcnow_task, "dcnow", 6144, NULL, 4, NULL);
     cfg_start();
     ESP_LOGI(TAG, "DCNow! reports %s", enabled ? "on" : "off");
 }

@@ -1044,11 +1044,12 @@ int ovpn_send_ip(ovpn_t *o, const uint8_t *ip, size_t n, uint32_t now)
 void ovpn_stop(ovpn_t *o, uint32_t now)
 {
     o->now = now;
-    if (o->state == OVPN_UP && o->cf.explicit_exit && o->cur >= 0 && o->slot[o->cur]) {
-        static const char ex[] = "EXIT";
-        ks_t *k = o->slot[o->cur];
-        tls_put(k, ex, sizeof ex);
-        tls_pump(k);
+    /* explicit-exit-notify on UDP is an OCC "exit" message in the data channel (occ.c), sent a few
+       times; the "EXIT" control message is only for clients that announce IV_PROTO's cc-exit bit */
+    if (o->state == OVPN_UP && o->cf.explicit_exit) {
+        static const uint8_t occ_exit[17] = { 0x28, 0x7f, 0x34, 0x6b, 0xd4, 0xef, 0x7a, 0x81,
+                                              0x2d, 0x56, 0xb8, 0xd3, 0xaf, 0xc5, 0x45, 0x9c, 6 };
+        for (int i = 0; i < 2; i++) send_data(o, occ_exit, sizeof occ_exit);
     }
     if (o->state != OVPN_FAILED) { o->state = OVPN_FAILED; snprintf(o->err, sizeof o->err, "stopped"); }
 }

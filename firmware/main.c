@@ -1274,6 +1274,10 @@ static void request_baud(uint32_t b, uint32_t queued_bytes) {
 }
 
 static link_test_t link_test;        /* runs by itself whenever the link comes up */
+static uint32_t link_up_at;
+static bool link_test_due;           /* starts 3 s after the link comes up: the ESP32 is still booting
+                                        at first, and lost test packets are never resent (a FAIL with
+                                        a link that then works fine) */
 static char test_msg[160];
 static bool test_msg_pending;
 
@@ -1330,8 +1334,7 @@ static bool link_on_packet(uint32_t now) {
     if (!link_up) {
         link_up = true;
         link_tx_rd = link_tx_wr;      /* drop anything queued before (nothing should be) */
-        link_test_start(&link_test, now);
-        status("esp32 link self-test: started (%u packets)", (unsigned)LINK_TEST_N);
+        link_up_at = now; link_test_due = true;
     }
     return link_deliver();
 }
@@ -1461,6 +1464,11 @@ static void link_task(void) {
     }
 done:
 #endif
+    if (link_up && link_test_due && now - link_up_at > 3000000u) {
+        link_test_due = false;
+        link_test_start(&link_test, now);
+        status("esp32 link self-test: started (%u packets)", (unsigned)LINK_TEST_N);
+    }
     /* the self-test: a few packets per pass, never more than its window on their way */
     if (link_up && link_test.state == LINK_TEST_RUN) {
         static uint8_t tb[LINK_MAX_PAYLOAD];
@@ -1487,7 +1495,7 @@ done:
     }
     if (link_up && now - link_last_rx > 3000000u) {
         link_up = false;
-        link_test.state = LINK_TEST_IDLE;
+        link_test.state = LINK_TEST_IDLE; link_test_due = false;
         link_tx_rd = link_tx_wr;
         ser_in_rd = ser_in_wr;                /* serial goes back to USB */
         status("esp32 link: down (nothing heard for 3 s); %lu good packets, %lu bad checksums, %lu lost",

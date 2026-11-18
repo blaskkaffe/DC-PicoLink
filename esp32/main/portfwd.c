@@ -187,13 +187,13 @@ static int ssdp(char loc[][160], uint32_t gw) {
     bool have_gw = false;
     for (int round = 0; round < 3 && !have_gw; round++) {          /* again while the gateway itself has not answered */
         for (int i = 0; i < (int)(sizeof ST / sizeof ST[0]); i++) {
-            char q[220];
+            static char q[220];                    /* static: the port forwarding task only */
             int n = snprintf(q, sizeof q, "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: %s\r\n\r\n", ST[i]);
             sendto(s, q, (size_t)n, 0, (struct sockaddr *)&to, sizeof to);
         }
         int64_t t0 = esp_timer_get_time();
         while (esp_timer_get_time() - t0 < 3000000 && got < SSDP_MAX) {
-            char b[700];
+            static char b[700];
             int n = recv(s, b, sizeof b - 1, 0);
             if (n <= 0) continue;
             b[n] = 0;
@@ -313,7 +313,7 @@ static bool maps_still_there(uint32_t to) {
 
 static void upnp(uint32_t to, bool to_dc) {
     static char locs[SSDP_MAX][160];
-    char ctl[160], svc[64], path[160];
+    static char ctl[160], svc[64], path[160];
     st.upnp_ok = st.upnp_fail = 0; st.err[0] = 0;
     esp_netif_ip_info_t ii; esp_netif_t *en = esp_netif_get_default_netif();
     uint32_t gw = en && esp_netif_get_ip_info(en, &ii) == ESP_OK ? ii.gw.addr : 0;

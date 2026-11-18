@@ -138,6 +138,6 @@ void dc_eth_start(void) {
 
     esp_netif_napt_enable(eth_if);                        /* NAT out through the Wi-Fi */
     dnsd_set_listen(1, true, ETH_IP);
-    xTaskCreate(watch_task, "dc_eth", 3072, NULL, 4, NULL);
+    xTaskCreate(watch_task, "dc_eth", 2048, NULL, 4, NULL);
     ESP_LOGI(TAG, "Ethernet side up: 192.168.99.1/24, DHCP, NAT");
 }

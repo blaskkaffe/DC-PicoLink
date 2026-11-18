@@ -40,3 +40,7 @@ CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
 CONFIG_ESP_WIFI_RX_BA_WIN=4
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# lwIP core locking: makes LOCK_TCPIP_CORE() in dclan.c, portfwd.c and vpn.c real (without it they
+# compiled to nothing and those tasks raced lwIP's thread on ARP, NAT tables and interfaces)
+CONFIG_LWIP_TCPIP_CORE_LOCKING=y

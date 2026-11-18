@@ -129,16 +129,21 @@ size_t ser_mon_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
 static void mem_report(void *arg) {
     (void)arg;
     static const char *const names[] = { "vpn", "dcnow", "dnsd", "ppp_ctl", "link_rx", "link_hello", "portfwd", "pubip",
-                                         "dclan", "dc_eth", "usbmodem", "usb_lib", "wired", "dcnet", "tiT", "mdns", "httpd" };
-    char m[360];
-    int k = snprintf(m, sizeof m, "memory: free %u, largest block %u, lowest ever %u; unused stack:",
+                                         "dclan", "dc_eth", "usbmodem", "usb_lib", "wired", "dcnet", "tiT", "mdns", "httpd",
+                                         "esp_timer", "sys_evt", "wifi" };
+    char m[LOG_LEN];
+    int k = snprintf(m, sizeof m, "memory: free %u, largest block %u, lowest ever %u",
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-    for (size_t i = 0; i < sizeof names / sizeof names[0] && k < (int)sizeof m - 24; i++) {
+    log_add("esp32", m, (size_t)k);
+    k = snprintf(m, sizeof m, "unused stack (bytes):");
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         TaskHandle_t t = xTaskGetHandle(names[i]);
-        if (t) k += snprintf(m + k, sizeof m - (size_t)k, " %s %u", names[i], (unsigned)uxTaskGetStackHighWaterMark(t));
+        if (!t) continue;
+        if (k > (int)sizeof m - 24) { log_add("esp32", m, (size_t)k); k = snprintf(m, sizeof m, "unused stack, more:"); }
+        k += snprintf(m + k, sizeof m - (size_t)k, " %s %u", names[i], (unsigned)uxTaskGetStackHighWaterMark(t));
     }
-    log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1));
+    log_add("esp32", m, (size_t)k);
 }
 
 void app_main(void) {

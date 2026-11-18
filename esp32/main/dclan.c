@@ -266,7 +266,7 @@ static int ask_dns(uint32_t server, bool as_lan) {
         static const uint8_t q[] = { 0x44, 0x43, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0,                 /* id "DC", RD, 1 question */
                                      13, 'd', 'r', 'e', 'a', 'm', 'c', 'a', 's', 't', 'l', 'i', 'v', 'e', 3, 'n', 'e', 't', 0, 0, 1, 0, 1 };
         struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = lwip_htonl(server) };
-        uint8_t b[512];
+        static uint8_t b[512];                                   /* the dclan task only */
         for (int tries = 0; tries < 2 && got < 0; tries++) {
             sendto(s, q, sizeof q, 0, (struct sockaddr *)&to, sizeof to);
             int k = recv(s, b, sizeof b, 0);

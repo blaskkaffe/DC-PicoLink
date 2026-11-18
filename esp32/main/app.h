@@ -99,6 +99,8 @@ void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = 
 void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
+bool dcnow_set_id(const char *mac_or_id);              /* "" = own; a DreamPi's MAC or ID: one DCNow! entry for both */
+const char *dcnow_shared_id(void);
 
 /* ---- VPN to Dreamcast Live (vpn.c, E-7) ---- */
 void vpn_start(void);

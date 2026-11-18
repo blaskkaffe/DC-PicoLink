@@ -27,6 +27,8 @@
 #include "lwip/tcpip.h"
 #include "lwip/ip4.h"
 #include "lwip/pbuf.h"
+#include "lwip/udp.h"
+#include "lwip/priv/tcpip_priv.h"
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
@@ -78,7 +80,45 @@ static void fmt_ip(char *d, size_t n, uint32_t a) {
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 /* ---------- ovpn ops ---------- */
-static int op_send(void *c, const uint8_t *d, size_t n) { (void)c; return vsock < 0 ? -1 : (int)send(vsock, d, n, 0); }
+/* Sending. A socket call made from lwIP's own thread waits for that thread (without core locking)
+   or for the core lock it already holds (with it): either way forever. Packets the
+   Dreamcast sends into the tunnel are encrypted in lwIP's thread (vif_out), so those go out
+   through a raw lwIP UDP handle on the socket's own local port (unconnected, so the socket still
+   receives everything); the VPN task keeps using the socket. */
+static struct udp_pcb *rawpcb;
+static TaskHandle_t lwip_task;
+static int op_send(void *c, const uint8_t *d, size_t n) {
+    (void)c;
+    if (vsock < 0) return -1;
+    if (!lwip_task) lwip_task = xTaskGetHandle("tiT");               /* lwIP's thread (TCPIP_THREAD_NAME) */
+    if (xTaskGetCurrentTaskHandle() != lwip_task) return (int)send(vsock, d, n, 0);
+    if (!rawpcb) return -1;
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)n, PBUF_RAM);
+    if (!p) return -1;
+    memcpy(p->payload, d, n);
+    ip_addr_t to = IPADDR4_INIT(vdst.sin_addr.s_addr);
+    err_t e = udp_sendto(rawpcb, p, &to, lwip_ntohs(vdst.sin_port));
+    pbuf_free(p);
+    return e == ERR_OK ? (int)n : -1;
+}
+
+/* run fn in lwIP's thread and wait for it (the safe way without core locking) */
+typedef struct { struct tcpip_api_call_data base; void (*fn)(void *); void *arg; } in_lwip_t;
+static err_t in_lwip_cb(struct tcpip_api_call_data *c) {
+    in_lwip_t *x = (in_lwip_t *)c;
+    x->fn(x->arg);
+    return ERR_OK;
+}
+static void in_lwip(void (*fn)(void *), void *arg) { in_lwip_t x = { .fn = fn, .arg = arg }; tcpip_api_call(in_lwip_cb, &x.base); }
+
+static void raw_open(void *arg) {
+    uint16_t port = (uint16_t)(uintptr_t)arg;
+    rawpcb = udp_new();
+    if (!rawpcb) return;
+    ip_set_option(rawpcb, SOF_REUSEADDR);
+    if (udp_bind(rawpcb, IP_ADDR_ANY, port) != ERR_OK) { udp_remove(rawpcb); rawpcb = NULL; }
+}
+static void raw_close(void *arg) { (void)arg; if (rawpcb) { udp_remove(rawpcb); rawpcb = NULL; } }
 static void op_log(void *c, const char *m) { (void)c; ESP_LOGI(TAG, "%s", m); }
 static int op_rand(void *c, uint8_t *b, size_t n) { (void)c; esp_fill_random(b, n); return 0; }
 
@@ -91,6 +131,8 @@ static uint16_t csum(const uint8_t *p, size_t n) {
 }
 
 static volatile int64_t ping_sent_us;
+static volatile uint32_t dc_bytes_in, dc_bytes_out;     /* game traffic through the tunnel (the page shows it) */
+static char routes_txt[120];
 #define PING_ID 0xD1C1
 
 static void op_ip(void *c, const uint8_t *ip, size_t n) {
@@ -106,6 +148,7 @@ static void op_ip(void *c, const uint8_t *ip, size_t n) {
     }
     if (!vif_added) return;
     if (!vpn_in_allowed(ip, n)) { st.blocked++; return; }
+    dc_bytes_in += (uint32_t)n;
     struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)n, PBUF_RAM);
     if (!p) return;
     memcpy(p->payload, ip, n);
@@ -115,12 +158,12 @@ static void op_ip(void *c, const uint8_t *ip, size_t n) {
 /* ---------- lwIP interface ---------- */
 static err_t vif_out(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
     (void)nif; (void)dst;
-    uint8_t buf[1500];
+    static uint8_t buf[1500];               /* lwIP's own thread only: not on its 3 KB stack */
     if (p->tot_len > sizeof buf) return ERR_BUF;
     pbuf_copy_partial(p, buf, p->tot_len, 0);
     err_t r = ERR_RTE;
     if (xSemaphoreTake(lk, pdMS_TO_TICKS(50))) {
-        if (vo && ovpn_send_ip(vo, buf, p->tot_len, now_ms()) == 0) r = ERR_OK;
+        if (vo && ovpn_send_ip(vo, buf, p->tot_len, now_ms()) == 0) { r = ERR_OK; dc_bytes_out += p->tot_len; }
         xSemaphoreGive(lk);
     }
     return r;
@@ -171,12 +214,12 @@ struct netif *vpn_route(const ip4_addr_t *dest) {
     return NULL;
 }
 
-static void vif_up(const ovpn_info_t *in) {
+static void vif_up_lwip(void *arg) {
+    const ovpn_info_t *in = arg;
     ip4_addr_t ip, mask, gw;
     ip.addr = lwip_htonl(in->ip);
     mask.addr = lwip_htonl(in->mask);
     gw.addr = lwip_htonl(in->gateway ? in->gateway : in->peer);
-    LOCK_TCPIP_CORE();
     if (!vif_added) {
         netif_add(&vif, &ip, &mask, &gw, NULL, vif_init, tcpip_input);
         vif_added = true;
@@ -194,6 +237,12 @@ static void vif_up(const ovpn_info_t *in) {
         ESP_LOGI(TAG, "pushed route %s/%s into the tunnel", a, b);
     }
     nroutes = k;
+    routes_txt[0] = 0;
+    for (int i = 0; i < k; i++) {
+        uint32_t a = routes[i].net, m = routes[i].mask; int bits = 0; while (m & 0x80000000u) { bits++; m <<= 1; }
+        size_t l = strlen(routes_txt);
+        snprintf(routes_txt + l, sizeof routes_txt - l, "%s%u.%u.%u.%u/%d", i ? " " : "", (unsigned)(a >> 24), (unsigned)(a >> 16 & 255), (unsigned)(a >> 8 & 255), (unsigned)(a & 255), bits);
+    }
     if (k || in->redirect_gateway) {
         char t[300];
         int n = snprintf(t, sizeof t, "VPN: %d route%s from the server go into the tunnel:", k, k == 1 ? "" : "s");
@@ -208,19 +257,19 @@ static void vif_up(const ovpn_info_t *in) {
     }
     netif_set_up(&vif);
     netif_set_link_up(&vif);
-    UNLOCK_TCPIP_CORE();
 }
+static void vif_up(const ovpn_info_t *in) { in_lwip(vif_up_lwip, (void *)in); }
 
-static void vif_down(void) {
+static void vif_down_lwip(void *arg) {
+    (void)arg;
     tun_ip = 0;
     nroutes = 0;
     if (!vif_added) return;
-    LOCK_TCPIP_CORE();
     netif_set_down(&vif);
     netif_remove(&vif);
-    UNLOCK_TCPIP_CORE();
     vif_added = false;
 }
+static void vif_down(void) { in_lwip(vif_down_lwip, NULL); }
 
 /* ---------- profiles ----------
    Built in (esp32/vpn/) or uploaded on the page into the "vpnprof" partition:
@@ -339,6 +388,7 @@ static void teardown(void) {
     xSemaphoreGive(lk);
     vif_down();
     if (o) { ovpn_stop(o, now_ms()); ovpn_free(o); }
+    in_lwip(raw_close, NULL);
     if (vsock >= 0) { close(vsock); vsock = -1; }
     up_since_us = 0;
     st.ip[0] = st.gw[0] = 0;
@@ -354,7 +404,12 @@ static bool open_socket(const prof_t *pr) {
     freeaddrinfo(res);
     vsock = socket(AF_INET, SOCK_DGRAM, 0);
     if (vsock < 0) { snprintf(st.err, sizeof st.err, "no socket"); return false; }
+    int one = 1;
+    setsockopt(vsock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);   /* the raw handle shares its port (op_send) */
     if (connect(vsock, (struct sockaddr *)&vdst, sizeof vdst) != 0) { snprintf(st.err, sizeof st.err, "connect failed"); close(vsock); vsock = -1; return false; }
+    struct sockaddr_in me; socklen_t ml = sizeof me;
+    if (getsockname(vsock, (struct sockaddr *)&me, &ml) == 0) in_lwip(raw_open, (void *)(uintptr_t)ntohs(me.sin_port));
+    if (!rawpcb) ESP_LOGW(TAG, "no raw UDP handle: the Dreamcast's packets cannot go into the tunnel");
     return true;
 }
 
@@ -532,10 +587,10 @@ size_t vpn_info_json(char *out, size_t cap) {
     if (vpn_dc_addr()) fmt_ip(dcip, sizeof dcip, vpn_dc_addr());
     return (size_t)snprintf(out, cap,
         "{\"profiles\":%d,\"source\":\"%s\",\"dc_ip\":\"%s\",\"blocked\":%lu,\"on\":%s,\"up\":%s,\"server\":\"%s\",\"ip\":\"%s\",\"gateway\":\"%s\",\"ping_ms\":%d,"
-        "\"connects\":%lu,\"fails\":%lu,\"error\":\"%s\",\"up_s\":%lu,\"pick\":\"%s\",\"hosts\":\"%s\"}",
+        "\"connects\":%lu,\"fails\":%lu,\"error\":\"%s\",\"up_s\":%lu,\"pick\":\"%s\",\"hosts\":\"%s\",\"dc_in\":%lu,\"dc_out\":%lu,\"routes\":\"%s\"}",
         nprof, src_name, dcip, (unsigned long)st.blocked, enabled ? "true" : "false", up ? "true" : "false", st.server, st.ip, st.gw, st.ping_ms,
         (unsigned long)st.connects, (unsigned long)st.fails, st.err,
-        up ? (unsigned long)((esp_timer_get_time() - up_since_us) / 1000000) : 0UL, pick_host[0] ? pick_host : "auto", hosts_csv);
+        up ? (unsigned long)((esp_timer_get_time() - up_since_us) / 1000000) : 0UL, pick_host[0] ? pick_host : "auto", hosts_csv, (unsigned long)dc_bytes_in, (unsigned long)dc_bytes_out, routes_txt);
 }
 
 void vpn_start(void) {
@@ -555,5 +610,5 @@ void vpn_start(void) {
     enabled = nprof && v != 0;                           /* on by default when there are profiles, as on DreamPi 2.1 */
     if (nprof && v == 2) { const char *m = "VPN: on (the default with profiles; switch it off on the page if you do not want it)"; log_add("esp32", m, strlen(m)); }
     ESP_LOGI(TAG, "%d VPN profile(s) in this firmware, VPN %s", nprof, enabled ? "on" : "off");
-    if (nprof) xTaskCreate(vpn_task, "vpn", 12288, NULL, 5, NULL);   /* 12 KB of stack only when there is a VPN */
+    if (nprof) xTaskCreate(vpn_task, "vpn", 9216, NULL, 5, NULL);   /* 9 KB of stack (5.5 KB of 12 were never used) only when there is a VPN */
 }

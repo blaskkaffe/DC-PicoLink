@@ -282,7 +282,7 @@ static void ctl_task(void *arg) {
             up = true;
             uint32_t d = lwip_ntohl(dc_addr), o = lwip_ntohl(our_addr);
             say("PPP is up: Dreamcast %u.%u.%u.%u, DNS and gateway %u.%u.%u.%u%s", (unsigned)(d >> 24), (unsigned)(d >> 16 & 255), (unsigned)(d >> 8 & 255), (unsigned)(d & 255),
-                (unsigned)(o >> 24), (unsigned)(o >> 16 & 255), (unsigned)(o >> 8 & 255), (unsigned)(o & 255), vpn_dc_addr() ? " (in the VPN)" : "");
+                (unsigned)(o >> 24), (unsigned)(o >> 16 & 255), (unsigned)(o >> 8 & 255), (unsigned)(o & 255), vpn_dc_addr() ? " (VPN addresses, as on DreamPi: only the VPN's game networks go through the tunnel, everything else goes out as the home address)" : "");
             dnsd_set_listen(0, true, o);
             dcnow_set_online(0, true);
         } else {
@@ -314,13 +314,13 @@ size_t net_info_json(char *out, size_t cap) {
         "{\"on\":%s,\"mode\":\"%s\",\"via\":\"%s\",\"up\":%s,\"calls\":%lu,\"dials\":%lu,\"stray_at\":%lu,"
         "\"frames\":%lu,\"ttl_fixed\":%lu,\"syn_dropped\":%lu,\"fcs_bad\":%lu,\"lwip_drop\":%lu,"
         "\"dns\":{\"tcp\":%s,\"queries\":%lu,\"forwarded\":%lu,\"overridden\":%lu,\"refused\":%lu,\"overrides\":%d,\"servers\":%d,\"last\":\"%s\"},"
-        "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu}}",
+        "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu,\"id\":\"%s\"}}",
         enabled ? "true" : "false", st == ST_PPP ? "ppp" : st == ST_DCNET ? "dcnet" : "command", carrier == 1 ? "USB modem" : "serial cable", up ? "true" : "false",
         (unsigned long)cnt.sessions, (unsigned long)cnt.dials, (unsigned long)cnt.stray,
         (unsigned long)flt.frames, (unsigned long)flt.ipf.ttl_fixed, (unsigned long)flt.ipf.syn_dropped,
         (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop,
         dnsd_tcp() ? "true" : "false", (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
-        dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail);
+        dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail, dcnow_shared_id());
 }
 
 void ppp_srv_start(void) {

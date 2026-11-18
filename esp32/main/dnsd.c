@@ -100,7 +100,7 @@ void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_o
 }
 
 static void send_up(int us, int i) {
-    uint8_t pkt[PKT_MAX];
+    static uint8_t pkt[PKT_MAX];                 /* static: the DNS task only (its 4 KB stack had 108 bytes to spare) */
     memcpy(pkt, pend[i].pkt, pend[i].plen);
     pkt[0] = (uint8_t)(pend[i].uid >> 8); pkt[1] = (uint8_t)pend[i].uid;
     xSemaphoreTake(conf_lk, portMAX_DELAY);
@@ -108,7 +108,7 @@ static void send_up(int us, int i) {
     xSemaphoreGive(conf_lk);
     if (!up) return;
     if (use_tcp && g_ls && g_ls[pend[i].via] >= 0) {
-        uint8_t a[PKT_MAX];
+        static uint8_t a[PKT_MAX];
         int k = dns_tcp_ask(up, pkt, pend[i].plen, a, sizeof a, 2500);
         if (k >= 12) {
             if (k == (int)sizeof a) a[2] |= 2;                          /* longer than fits in UDP: truncated */
@@ -126,7 +126,7 @@ static void send_up(int us, int i) {
 }
 
 static void on_client(int via, int ls, int us) {
-    uint8_t buf[PKT_MAX], out[PKT_MAX];
+    static uint8_t buf[PKT_MAX], out[PKT_MAX];
     struct sockaddr_in from; socklen_t fl = sizeof from;
     int n = recvfrom(ls, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
     dns_q_t q;
@@ -160,7 +160,7 @@ static void on_client(int via, int ls, int us) {
 }
 
 static void on_upstream(const int *ls, int us) {
-    uint8_t buf[PKT_MAX];
+    static uint8_t buf[PKT_MAX];
     struct sockaddr_in from; socklen_t fl = sizeof from;
     int n = recvfrom(us, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
     if (n < 12 || ntohs(from.sin_port) != 53) return;

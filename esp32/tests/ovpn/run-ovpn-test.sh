@@ -110,4 +110,9 @@ set +e
 "$work/ovpn-harness" client.conf $port "$mode"
 rc=$?
 if [ $rc -ne 0 ]; then echo "--- server log"; tail -30 server.log; fi
+# explicit-exit-notify: the server must see the client leave (OCC exit in the data channel)
+if [ $rc -eq 0 ]; then
+    for i in $(seq 10); do grep -q "remote-exit" server.log && break; sleep 0.2; done
+    if grep -q "remote-exit" server.log; then echo "exit notice: the server saw the client leave"; else echo "exit notice: NOT seen by the server"; rc=1; fi
+fi
 exit $rc

@@ -185,8 +185,10 @@ static void exchange(bool waiting, uint32_t peer, uint16_t peer_port) {
     for (;;) {
         if (now_ms() - last_ping > 1000) { sendto(udp, "PING_SHIRO", 10, 0, (struct sockaddr *)&to, sizeof to); last_ping = ping_sent = now_ms(); }
         while (wait_in(udp, 0)) {
-            int n = recv(udp, in, incap, 0);
+            struct sockaddr_in fr; socklen_t fl = sizeof fr;
+            int n = recvfrom(udp, in, incap, 0, (struct sockaddr *)&fr, &fl);
             if (n <= 0) break;
+            if (fr.sin_addr.s_addr != peer) continue;      /* only the other player (its port may change behind NAT): anything else sent to this port would go straight into the Dreamcast's modem */
             if (n == 10 && !memcmp(in, "PING_SHIRO", 10)) { sendto(udp, "PONG_SHIRO", 10, 0, (struct sockaddr *)&to, sizeof to); continue; }
             if (n == 10 && !memcmp(in, "PONG_SHIRO", 10)) {
                 if (!established) { established = true; say("Netlink: connection established"); }

@@ -58,7 +58,7 @@ profile upload.
 | pppd, no login | lwIP PPP server (`ppp_srv.c`) |
 | dnsmasq with `dreampi_dns.conf`, revival DNS 46.101.91.123 / 209.50.50.129 | `dnsd.c`; the file is read while it downloads; if the router intercepts DNS, questions go over TCP |
 | TTL 64, PowerSmash double-SYN drop, Planet Ring / Daytona public address | `../firmware/hdlc_model.h`, `ipfilter_model.h`, `pubip.c` |
-| `dcnow.py`, `config_server.py` (port 1998) | `dcnow.c`; also announced as `dreampi.local` for dreamcast.online/now/configure |
+| `dcnow.py`, `config_server.py` (port 1998) | `dcnow.c`; also announced as `dreampi.local` for dreamcast.online/now/configure. DCNow! knows a device by the SHA-256 of its MAC address; the page can set a DreamPi's MAC (or the ID it logs as "MAC address: ...") so both count as one |
 | DCNet (`*69`, `dcnet.rpi`) | `dcnet.c`: closest access point, TCP 7654/7656, the `~` fix. Also over the serial cable |
 | Netlink (eaudunord/Netlink): direct dial, matchmaking, game server codes, XBAND, Capcom | `netlink.c` (USB modem only); no SIP ring on XBAND calls |
 | OpenVPN to Dreamcast Live, Dreamcast on tunnel address + 1, input rules on tun0 | `ovpn.c`, `vpn.c`; routes pushed by the server go into the tunnel (`../hooks/dcl_lwip_hooks.h`) |
