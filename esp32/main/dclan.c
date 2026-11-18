@@ -70,6 +70,8 @@ bool dclan_addrs(uint32_t *this_ip, uint32_t *dc_ip) {
     return true;
 }
 uint32_t dclan_dc_ip(void) { return lan_dc; }
+/* has the pick for the current home network been made (an address, or a reason for none)? */
+bool dclan_decided(void) { return (lan_dc && lan_this) || (why_none[0] && strcmp(why_none, "waiting for the home network")); }
 
 /* ---------- lwIP hooks (tcpip thread, core locked) ---------- */
 struct netif *dclan_route(const ip4_addr_t *dest) {

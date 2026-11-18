@@ -169,8 +169,12 @@ static bool post_once(void) {
     if (have) {
         char hx[65]; sha_hex(dom, hx);
         snprintf(body, sizeof body, "dns_query=%s", hx);
-        char t[DCNOW_NAME + 40]; int k = snprintf(t, sizeof t, "DCNow!: domain sent: %s", dom);
-        log_add("esp32", t, (size_t)k);
+        static char said[DCNOW_NAME];                /* each new game's domain once, not every 15 s */
+        if (strcmp(said, dom)) {
+            snprintf(said, sizeof said, "%s", dom);
+            char t[DCNOW_NAME + 40]; int k = snprintf(t, sizeof t, "DCNow!: domain sent: %s", dom);
+            log_add("esp32", t, (size_t)k);
+        }
     }
     char url[160];
     snprintf(url, sizeof url, "https://" DCNOW_HOST DCNOW_PATH, id);
@@ -196,7 +200,7 @@ static bool post_once(void) {
 static void dcnow_task(void *arg) {
     (void)arg;
     for (;;) {
-        if (online && enabled) {
+        if (online && enabled && inet_up()) {
             bool ok = post_once();
             if (ok) ok_n++; else fail_n++;
             if (!ok && !last_failed) { char m[140]; int k = snprintf(m, sizeof m, "DCNow!: report failed (%s); will keep trying", why); log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1)); }

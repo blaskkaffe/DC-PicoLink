@@ -121,7 +121,8 @@ struct netif *vpn_netif(void);                           /* the tunnel, NULL whe
 /* dclan.c: the Dreamcast's own address on the home network, as on a DreamPi */
 void dclan_start(void);
 bool dclan_addrs(uint32_t *this_ip, uint32_t *dc_ip);    /* host order; false = none (NAT as before) */
-uint32_t dclan_dc_ip(void);                              /* host order, 0 = none */
+uint32_t dclan_dc_ip(void);
+bool dclan_decided(void);                               /* the home-address pick is done (either way) */                              /* host order, 0 = none */
 size_t dclan_info_json(char *o, size_t cap);
 void dclan_as_home(uint16_t port, uint32_t peer_n);      /* next TCP connection from local port `port` to peer goes out as the home address */
 void dclan_as_home_end(void);
@@ -141,6 +142,7 @@ bool wifi_sta_up(void);
 
 /* pubip.c: our public Internet address (0 = not known yet) */
 uint32_t pubip_get(void);
+void pubip_hint(uint32_t host_order);                  /* the router's public outside address (UPnP), a fallback */
 void pubip_start(void);
 void wifi_start(void);
 void wifi_set_sta(const char *ssid, const char *pass);

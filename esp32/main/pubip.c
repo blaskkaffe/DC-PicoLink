@@ -17,6 +17,11 @@ static volatile uint32_t pub;
 
 uint32_t pubip_get(void) { return pub; }
 
+/* the router's own outside address from UPnP (portfwd.c), when it is a public one: used when
+   the OpenDNS lookup is blocked (DNS filters on the router answer it empty) */
+static volatile uint32_t hint;
+void pubip_hint(uint32_t a) { hint = a; }
+
 static const char *why = "";
 static volatile bool udp_faked_seen;
 static char whybuf[200];
@@ -144,10 +149,20 @@ static void task(void *arg) {
             log_add("esp32", m, (size_t)k);
         }
         if (a) pub = a;
-        else if (!pub) {
-            char m[256];
-            int k = snprintf(m, sizeof m, "public address not found: %s; Planet Ring voice and Daytona need it", why);
+        else if (!pub && hint) {
+            pub = hint;
+            char m[160];
+            int k = snprintf(m, sizeof m, "public address %u.%u.%u.%u (from the router: the OpenDNS lookup is blocked on this network)",
+                             (unsigned)(hint >> 24), (unsigned)(hint >> 16 & 255), (unsigned)(hint >> 8 & 255), (unsigned)(hint & 255));
             log_add("esp32", m, (size_t)k);
+        } else if (!pub) {
+            static char said[200];                       /* once per reason, not every minute */
+            if (strncmp(said, why, sizeof said - 1)) {
+                snprintf(said, sizeof said, "%s", why);
+                char m[256];
+                int k = snprintf(m, sizeof m, "public address not found: %s; Planet Ring voice and Daytona need it", why);
+                log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1));
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(a ? 30 * 60 * 1000 : 60 * 1000));
     }

@@ -353,6 +353,7 @@ static void upnp(uint32_t to, bool to_dc) {
             else if (st.shared) say("your router now has a public IPv4 address (%s): port forwarding works again", out);
         }
         st.shared = shared;
+        if (!shared && oh && !not_public(oh)) pubip_hint(oh);
         if (shared) vpn_auto_on(shared == 1 ? "your IPv4 is shared by your provider" : "another NAT in front of the router");
         if (shared) { snprintf(st.err, sizeof st.err, shared == 1 ? "IPv4 shared by the provider" : "another NAT in front"); free(body); free(req); free(ans); body = req = ans = NULL; return; }
     }
@@ -395,6 +396,9 @@ static void task(void *arg) {
         uint32_t to = home ? home : me;
         if (home && enabled) { char a[16]; snprintf(a, sizeof a, "%s", inet_ntoa(*(struct in_addr *)&home)); if (strcmp(a, st.dc)) snprintf(st.dc, sizeof st.dc, "%s", a); }
         int64_t now = esp_timer_get_time();
+        static int64_t up_at;                         /* wait for the home-address pick (max 60 s): mapping to this box first, then all again to .98, was 864 requests */
+        if (!me) up_at = 0; else if (!up_at) up_at = now;
+        if (me && !home && !dclan_decided() && now - up_at < 60LL * 1000000) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
         if (enabled && to && (to != upnp_for || now - upnp_at > 30LL * 60 * 1000000 || kick)) {   /* new target, every 30 min, switched on */
             bool periodic = to == upnp_for && !kick;
             kick = false;
