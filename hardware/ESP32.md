@@ -44,18 +44,22 @@ the USB end may differ slightly).
 
 | Pos | Zero left ↔ SuperMini | Use | Zero right ↔ SuperMini | Use |
 |---|---|---|---|---|
-| 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | **solder**, strength only (both inputs) |
-| 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | **solder**, strength only (both inputs) |
-| 3 | 3V3 ↔ 3V3 | **not connected** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR, ESP32 has data |
-| 4 | GP29 ↔ GPIO13 | not joined: SD CS / W5500 MISO | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
-| 5 | GP28 ↔ GPIO12 | not joined: SD MISO / W5500 SCK | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
-| 6 | GP27 ↔ GPIO11 | not joined: SD MOSI / W5500 MOSI | GP5 ↔ GPIO4 | **solder**: SPI CS |
-| 7 | GP26 ↔ GPIO10 | not joined: SD SCK / W5500 CS | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | **solder**, strength only (GPIO9 is the W5500 module's INT; the Zero keeps GP15 a plain input without pulls) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX; the Zero keeps GP0 a plain input) |
+| 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX; the Zero keeps GP1 a plain input) |
+| 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR, ESP32 has data |
+| 4 | GP29 ↔ GPIO13 | **never**: SD CS (out) / W5500 MISO (in) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
+| 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
+| 6 | GP27 ↔ GPIO11 | **never**: SD MOSI (out) / W5500 MOSI (out): two drivers | GP5 ↔ GPIO4 | **solder**: SPI CS |
+| 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 CS (out): two drivers | GP6 ↔ GPIO5 | **solder**: SPI clock |
+| 8 | GP15 ↔ GPIO9 | the strength pin (opposite corner to 5V): safe, GPIO9 is the W5500 module's INT and the Zero keeps GP15 a plain input without pulls | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
 
+Minimum: 5V, GND, the six link pins (right, 3-8), plus GP15 ↔ GPIO9 for strength. With a pin
+header through both boards, **every position that has a header pin is joined**: fit pins only
+where the table says solder (or pull/clip the others), never at 3-7 on the left.
 Corners: 5V/GND top left, GP0/GP1 top right, GP15 bottom left, the SPI pins bottom right.
-GP0/GP1 sit over GPIO43/44 but aren't used as signals: GPIO43 prints the ESP32's ROM boot
-messages and GPIO44 has a pull-up during its boot. Not joined pins are wired from the outside:
+None of the soldered ESP32 pins is a strapping pin except GPIO3 (JTAG source), which only
+matters with a burned eFuse (not on these boards); the Zero's pull-up on GP4 keeps it high.
+Not joined pins are wired from the outside:
 the Zero's castellated edge pads, the SuperMini's holes from its outer face.
 
 The Zero's bottom edge, the Dreamcast ([WIRING.md](WIRING.md), the same signals as GPIO2-7
