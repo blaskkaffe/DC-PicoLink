@@ -30,7 +30,12 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START && sta_ssid[0]) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (sta_up) note("Wi-Fi: lost %s, trying again", sta_ssid);
+        if (sta_up) {
+            const wifi_event_sta_disconnected_t *d = (const wifi_event_sta_disconnected_t *)data;
+            char t[160];
+            int k = snprintf(t, sizeof t, "Wi-Fi: lost %s (reason %d, signal %d dBm), trying again", sta_ssid, d ? d->reason : -1, d ? d->rssi : 0);
+            log_add("esp32", t, (size_t)k);
+        }
         sta_up = false;
         if (sta_ssid[0]) esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -118,6 +123,7 @@ void wifi_start(void) {
     strlcpy(sta_ssid, ssid, sizeof sta_ssid);
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sc));
     ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_ps(WIFI_PS_NONE);                          /* no modem sleep: it adds 100-300 ms spikes to game traffic */
     note("Wi-Fi: setup network %s, page at http://192.168.4.1", ap_name);
     if (!ssid[0]) note("Wi-Fi: no home network saved yet%s", " (Settings on the page)");
 }

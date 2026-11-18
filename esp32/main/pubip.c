@@ -125,12 +125,10 @@ static void check_dns_path(void) {
         k = snprintf(m, sizeof m, "DNS: your network answers DNS itself (UDP) and TCP port 53 to the Dreamcast DNS gets no answer: game servers such as Quake III's master may resolve wrongly (%u.%u.%u.%u). Turn off the router's DNS redirect or let 46.101.91.123 through",
                      IPS(udp));
     } else if (udp || tcp) {
-        k = snprintf(m, sizeof m, "DNS: the Dreamcast DNS answers the same over UDP and TCP (%s = %u.%u.%u.%u)", NAME, IPS(udp ? udp : tcp));
-    } else {
-        k = snprintf(m, sizeof m, "DNS: no answer from the Dreamcast DNS 46.101.91.123 (UDP or TCP) yet");
+        k = snprintf(m, sizeof m, "DNS: no router interception seen (%s = %u.%u.%u.%u)", NAME, IPS(udp ? udp : tcp));
     }
     #undef IPS
-    log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1));
+    if (k > 0) log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1));
 }
 
 static void task(void *arg) {
