@@ -10,6 +10,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "esp_heap_caps.h"
+#include "freertos/task.h"
 #include "app.h"
 
 /* ---- JSON helper ---- */
@@ -122,6 +124,23 @@ size_t ser_mon_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
     return o;
 }
 
+/* memory report: 5 minutes after start, then every 30: how much RAM is left and how much of each
+   task's stack was never used (what each stack can safely be cut to) */
+static void mem_report(void *arg) {
+    (void)arg;
+    static const char *const names[] = { "vpn", "dcnow", "dnsd", "ppp_ctl", "link_rx", "link_hello", "portfwd", "pubip",
+                                         "dclan", "dc_eth", "usbmodem", "usb_lib", "wired", "dcnet", "tiT", "mdns", "httpd" };
+    char m[360];
+    int k = snprintf(m, sizeof m, "memory: free %u, largest block %u, lowest ever %u; unused stack:",
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    for (size_t i = 0; i < sizeof names / sizeof names[0] && k < (int)sizeof m - 24; i++) {
+        TaskHandle_t t = xTaskGetHandle(names[i]);
+        if (t) k += snprintf(m + k, sizeof m - (size_t)k, " %s %u", names[i], (unsigned)uxTaskGetStackHighWaterMark(t));
+    }
+    log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1));
+}
+
 void app_main(void) {
     log_lock = xSemaphoreCreateMutex();
     tls_mx = xSemaphoreCreateMutex();
@@ -145,4 +164,10 @@ void app_main(void) {
     dclan_start();
     portfwd_start();
     web_start();
+    static esp_timer_handle_t mt;
+    const esp_timer_create_args_t ma = { .callback = mem_report, .name = "memrep" };
+    if (esp_timer_create(&ma, &mt) == ESP_OK) esp_timer_start_periodic(mt, 30ULL * 60 * 1000000);
+    static esp_timer_handle_t m1;
+    const esp_timer_create_args_t m1a = { .callback = mem_report, .name = "memrep1" };
+    if (esp_timer_create(&m1a, &m1) == ESP_OK) esp_timer_start_once(m1, 5ULL * 60 * 1000000);
 }

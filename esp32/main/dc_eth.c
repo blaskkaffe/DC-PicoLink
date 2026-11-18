@@ -60,7 +60,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     memcpy(c, p, n);
     ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
     if (!ipf_ether(&ipf, c, n, (uint32_t)(esp_timer_get_time() / 1000))) { free(c); return; }
-    last_dc_us = esp_timer_get_time();
+    if (!link_eth_is_computer()) last_dc_us = esp_timer_get_time();   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
     cnt.rx++;
     esp_netif_receive(eth_if, c, n, c);       /* lwIP frees it through free_cb */
 }

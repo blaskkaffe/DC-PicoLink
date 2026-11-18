@@ -108,7 +108,7 @@ static void teardown_locked(void) {
     for (int i = 0; i < 80 && !freed; i++) {
         if (pppapi_free(pcb) == ERR_OK) freed = true; else vTaskDelay(pdMS_TO_TICKS(25));
     }
-    if (!freed) { ESP_LOGE(TAG, "call did not end"); say("PPP: the call would not end, restart the box if it hangs"); return; }
+    if (!freed) { ESP_LOGW(TAG, "call still closing (LCP); freed when lwIP reports it down"); return; }   /* normal after a lost carrier: the C_DOWN path frees it */
     pcb = NULL;
     session++;
     if (up) { up = false; dnsd_set_listen(0, false, 0); dcnow_set_online(0, false); }
@@ -136,7 +136,7 @@ static bool fast_echo;                      /* Capcom matching: LCP echo every s
 
 static bool start_ppp(int who) {
     teardown_locked();
-    if (pcb) return false;
+    if (pcb) { say("PPP: the last call has not ended yet; restart the box if this repeats"); return false; }
     carrier = who;
     memset(&pppif, 0, sizeof pppif);
     hdlc_init(&flt, emit_to_lwip, NULL);

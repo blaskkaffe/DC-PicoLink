@@ -20,6 +20,7 @@ void link_get_stats(link_stats_t *s);
 void link_note_ser_out(size_t n);                     /* bytes sent to the DC (counter) */
 
 /* What the cable said in its last answer to "get hello" / "get link.*" (text, one key per line) */
+bool link_eth_is_computer(void);                       /* cable says: network frames are from a computer on its USB */
 size_t link_cable_info(char *out, size_t cap);
 /* Send a dc1 message to the cable; the answer appears in link_last_answer() */
 bool link_dc1(const char *msg, size_t n);
@@ -128,9 +129,9 @@ void dnsd_fetch_poll(void);                              /* dnsd.c: the DNS list
 /* portfwd.c: game ports to the Dreamcast (NAT port maps) and from the router (UPnP), as DreamPi */
 void portfwd_start(void);
 void portfwd_set_enabled(bool on);
-bool portfwd_enabled(void);
 size_t portfwd_info_json(char *out, size_t cap);
 bool vpn_enabled(void);
+void vpn_set_pick(const char *host);                    /* "auto" or a server from the profiles */
 size_t vpn_info_json(char *out, size_t cap);
 
 /* ---- Wi-Fi (wifi.c) ---- */

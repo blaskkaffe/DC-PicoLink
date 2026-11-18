@@ -92,6 +92,18 @@ static bool is_own_addr(uint32_t h) {
 #define SEEN_N 8
 static struct { uint32_t ip; uint16_t port; uint8_t proto; } seen[SEEN_N];
 static volatile int seen_n, seen_logged;
+/* how many different outside addresses the Dreamcast tried this call (one dead server is no proof
+   that the network drops answers: the Quake master behind a filtered DNS looked exactly like that) */
+static int outside_dests(void) {
+    int k = 0;
+    for (int i = 0; i < seen_n; i++) {
+        uint32_t a = seen[i].ip; bool dup = false;
+        if (a == lan_this || is_own_addr(a)) continue;
+        for (int j = 0; j < i; j++) if (seen[j].ip == a) dup = true;
+        if (!dup) k++;
+    }
+    return k;
+}
 static void note_dest(const uint8_t *h, size_t n, uint32_t dst) {
     if (seen_n >= SEEN_N || n < 20) return;
     size_t hl = (size_t)(h[0] & 15) * 4;
@@ -375,10 +387,10 @@ static void task(void *arg) {
             static uint32_t home0; if (!first_out_ms) home0 = cnt.to_home;
             char a[16];
             if (!said_first_in && cnt.to_home != home0 && first_out_ms) { said_first_in = true; say("home network: answers for %s arrive (the router delivers to it)", ips(lan_dc, a)); }
-            else if (!said_first_in && !said_nothing_back && first_out_ms && (uint32_t)(esp_timer_get_time() / 1000) - first_out_ms > 10000 && cnt.from_dc >= 2) {
+            else if (!said_first_in && !said_nothing_back && first_out_ms && (uint32_t)(esp_timer_get_time() / 1000) - first_out_ms > 15000 && cnt.from_dc >= 3 && outside_dests() >= 2) {
                 said_nothing_back = true;
-                say("home network: nothing has come back for %s in 10 s (%lu sent out; the router asked for it %lu times): this network does not deliver to a second address on this box. Switching this call to NAT, and this network stays on NAT",
-                    ips(lan_dc, a), (unsigned long)cnt.from_dc, (unsigned long)cnt.arp_seen);
+                say("home network: nothing has come back for %s in 15 s from %d servers (%lu sent out; the router asked for it %lu times): this network does not deliver to a second address on this box. Switching this call to NAT, and this network stays on NAT",
+                    ips(lan_dc, a), outside_dests(), (unsigned long)cnt.from_dc, (unsigned long)cnt.arp_seen);
                 bad_ip = ip; bad_gw = gw;
                 struct netif *pn = ppp_dc_ip() ? ppp_dc_netif() : NULL;
                 LOCK_TCPIP_CORE(); lan_this = lan_dc = 0; UNLOCK_TCPIP_CORE();

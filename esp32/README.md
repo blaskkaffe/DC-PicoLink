@@ -71,6 +71,12 @@ okay); the VPN is on by default. Newer profiles can be uploaded on the page with
 the `.conf` files and `server.list` from a DreamPi's `/etc/openvpn/client/`, or the
 `dreampi-vpn.txt` that `../tools/dreampi_vpn_extract.py` makes from a DreamPi image.
 
+Like DreamPi, the tunnel stays up the whole time the box is on, not only during calls. Which
+server: "auto" on the page tries them in `server.list` order (shumania first), starts from the
+top again after a lost tunnel, and on a fallback server goes back to the first one every 15
+minutes while no Dreamcast is online. DreamPi pings every server once at start and takes the
+fastest; the page can also pin one server.
+
 ### Shared IPv4 (carrier-grade NAT)
 
 The box asks the router for its outside address. If the provider shares the IPv4 address

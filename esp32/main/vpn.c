@@ -53,6 +53,16 @@ static ovpn_t *vo;
 static int vsock = -1;
 static struct sockaddr_in vdst;
 static int cur_prof = -1;
+static volatile bool pick_changed;
+/* which server: "" = auto (server.list order: shumania first, back to it when no Dreamcast is
+   online), or one host chosen on the page */
+static char pick_host[64];
+static int pick_index(void) {
+    if (!pick_host[0]) return -1;
+    for (int i = 0; i < nprof; i++) if (!strcmp(prof[i].host, pick_host)) return i;
+    return -1;
+}
+static bool dc_online(void) { return ppp_dc_ip() || dc_eth_dc_ip() || wired_dc_ip(); }
 static struct netif vif;
 static bool vif_added;
 static volatile int64_t up_since_us;
@@ -348,16 +358,6 @@ static bool open_socket(const prof_t *pr) {
     return true;
 }
 
-static int load_last(void) {
-    nvs_handle_t h; uint8_t v = 0;
-    if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "vpn_last", &v); nvs_close(h); }
-    return v;
-}
-static void save_last(int v) {
-    nvs_handle_t h;
-    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "vpn_last", (uint8_t)v); nvs_commit(h); nvs_close(h); }
-}
-
 /* one connection attempt to profile i; returns when the tunnel is gone or switched off */
 /* the full profile i, parsed now (freed with ovpn_conf_free after the session) */
 static bool load_conf(int i, ovpn_conf_t *cf) {
@@ -416,11 +416,16 @@ static void session_conf(int i, ovpn_conf_t *cf) {
     }
     note("VPN: connecting to %s", pr->host);
     bool announced = false, pinged = false;
-    uint32_t last_ping = 0;
+    uint32_t last_ping = 0, up_at = 0;
     for (;;) {
-        if (!enabled) break;
+        if (!enabled || pick_changed) break;
+        /* auto: on a fallback server, go back to the first (shumania) every 15 min while no Dreamcast is online */
+        if (announced && i != 0 && !pick_host[0] && now_ms() - up_at > 15u * 60 * 1000 && !dc_online()) {
+            note("VPN: trying %s again (first in the list)", prof[0].host);
+            break;
+        }
         fd_set rs; FD_ZERO(&rs); FD_SET(vsock, &rs);
-        struct timeval tv = { 0, 50000 };
+        struct timeval tv = { 0, 250000 };   /* data wakes select at once; this is only for the timers */
         int r = select(vsock + 1, &rs, NULL, NULL, &tv);
         xSemaphoreTake(lk, portMAX_DELAY);
         if (r > 0 && FD_ISSET(vsock, &rs)) {
@@ -443,8 +448,7 @@ static void session_conf(int i, ovpn_conf_t *cf) {
             vif_up(in);
             st.connects++;
             up_since_us = esp_timer_get_time();
-            save_last(i);
-            announced = true;
+            announced = true; up_at = now_ms();
             note("VPN: connected to %s, tunnel address %s", pr->host, st.ip);
         }
         if (announced && !pinged && (now_ms() - last_ping) > 1000) {
@@ -473,14 +477,17 @@ static void vpn_task(void *arg) {
     int fail_round = 0;
     for (;;) {
         if (!enabled || !nprof || !inet_up()) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
-        int start = load_last();
-        if (start >= nprof) start = 0;
-        for (int k = 0; k < nprof && enabled; k++) {
-            session((start + k) % nprof);
-            if (!enabled) break;
+        pick_changed = false;
+        int only = pick_index();
+        /* as DreamPi's server.list order, shumania first; a chosen server is the only one tried */
+        for (int k = 0; k < (only >= 0 ? 1 : nprof) && enabled && !pick_changed; k++) {
+            uint32_t c0 = st.connects;
+            session(only >= 0 ? only : k);
+            if (st.connects != c0) { fail_round = 0; break; }   /* was up, then lost: start again from the first */
+            if (!enabled || pick_changed) break;
             vTaskDelay(pdMS_TO_TICKS(2000));
         }
-        if (enabled) {                         /* every server failed: wait longer, then start over */
+        if (enabled && !pick_changed) {
             fail_round++;
             vTaskDelay(pdMS_TO_TICKS(fail_round < 3 ? 10000 : 60000));
         }
@@ -505,23 +512,43 @@ void vpn_set_enabled(bool on) {
     if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "vpn", on); nvs_commit(h); nvs_close(h); }
 }
 bool vpn_enabled(void) { return enabled; }
+void vpn_set_pick(const char *host) {
+    char h[64]; snprintf(h, sizeof h, "%s", host ? host : "");
+    if (!strcmp(h, "auto")) h[0] = 0;
+    if (!strcmp(h, pick_host)) return;
+    snprintf(pick_host, sizeof pick_host, "%s", h);
+    nvs_handle_t n;
+    if (nvs_open("dcl", NVS_READWRITE, &n) == ESP_OK) { nvs_set_str(n, "vpn_host", pick_host); nvs_commit(n); nvs_close(n); }
+    char m[112]; int k = snprintf(m, sizeof m, "VPN: server %s", pick_host[0] ? pick_host : "auto (shumania first, as DreamPi's list)");
+    log_add("esp32", m, (size_t)k);
+    pick_changed = true;
+}
 int vpn_profiles_n(void) { return nprof; }
 
+static char hosts_csv[MAX_PROF * 32];
 size_t vpn_info_json(char *out, size_t cap) {
     bool up = up_since_us != 0;
     char dcip[16] = "";
     if (vpn_dc_addr()) fmt_ip(dcip, sizeof dcip, vpn_dc_addr());
     return (size_t)snprintf(out, cap,
         "{\"profiles\":%d,\"source\":\"%s\",\"dc_ip\":\"%s\",\"blocked\":%lu,\"on\":%s,\"up\":%s,\"server\":\"%s\",\"ip\":\"%s\",\"gateway\":\"%s\",\"ping_ms\":%d,"
-        "\"connects\":%lu,\"fails\":%lu,\"error\":\"%s\",\"up_s\":%lu}",
+        "\"connects\":%lu,\"fails\":%lu,\"error\":\"%s\",\"up_s\":%lu,\"pick\":\"%s\",\"hosts\":\"%s\"}",
         nprof, src_name, dcip, (unsigned long)st.blocked, enabled ? "true" : "false", up ? "true" : "false", st.server, st.ip, st.gw, st.ping_ms,
         (unsigned long)st.connects, (unsigned long)st.fails, st.err,
-        up ? (unsigned long)((esp_timer_get_time() - up_since_us) / 1000000) : 0UL);
+        up ? (unsigned long)((esp_timer_get_time() - up_since_us) / 1000000) : 0UL, pick_host[0] ? pick_host : "auto", hosts_csv);
 }
 
 void vpn_start(void) {
     lk = xSemaphoreCreateMutex();
     load_profiles();
+    for (int i = 0; i < nprof; i++) {
+        size_t l = strlen(hosts_csv), hn = strlen(prof[i].host);
+        if (l + hn + 2 > sizeof hosts_csv) break;
+        if (i) hosts_csv[l++] = ',';
+        memcpy(hosts_csv + l, prof[i].host, hn + 1);
+    }
+    { nvs_handle_t n; size_t hl = sizeof pick_host;
+      if (nvs_open("dcl", NVS_READONLY, &n) == ESP_OK) { if (nvs_get_str(n, "vpn_host", pick_host, &hl) != ESP_OK) pick_host[0] = 0; nvs_close(n); } }
     nvs_handle_t h; uint8_t v = 2;                       /* 2 = never chosen on the page */
     if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "vpn", &v); nvs_close(h); }
     chosen_off = v == 0;

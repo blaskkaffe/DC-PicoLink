@@ -27,7 +27,10 @@ static const char *TAG = "dnsd";
 #define PKT_MAX 512
 #define Q_MAX   288                              /* a waiting question (the Dreamcast's are < 100 bytes) */
 
-static dns_conf_t conf;
+/* the downloaded dreampi_dns.conf (8 KB table), only while there is one: DreamPi's emergency
+   backup, which has been absent (404) for years. Without it: the two DreamPi DNS servers. */
+static dns_conf_t *conf;
+static uint32_t def_up[2];
 static SemaphoreHandle_t conf_lk;
 #define LISTEN_N 3                              /* 0: the PPP call, 1: the Ethernet side (E-4), 2: the wired port (BBA) */
 static volatile bool online[LISTEN_N];
@@ -91,7 +94,7 @@ void dnsd_set_listen(int which, bool on, uint32_t ip) { if (which < 0 || which >
 void dnsd_info(uint32_t *q, uint32_t *fwd, uint32_t *ovr, uint32_t *nx, int *n_ovr, int *n_up, char *last, size_t cap) {
     xSemaphoreTake(conf_lk, portMAX_DELAY);
     *q = cnt.q; *fwd = cnt.fwd; *ovr = cnt.ovr; *nx = cnt.nx;
-    *n_ovr = conf.n_ovr; *n_up = conf.n_up;
+    *n_ovr = conf ? conf->n_ovr : 0; *n_up = conf ? conf->n_up : 2;
     strlcpy(last, last_name, cap);
     xSemaphoreGive(conf_lk);
 }
@@ -101,7 +104,7 @@ static void send_up(int us, int i) {
     memcpy(pkt, pend[i].pkt, pend[i].plen);
     pkt[0] = (uint8_t)(pend[i].uid >> 8); pkt[1] = (uint8_t)pend[i].uid;
     xSemaphoreTake(conf_lk, portMAX_DELAY);
-    uint32_t up = dns_upstream(&conf, pend[i].name, pend[i].tries);
+    uint32_t up = conf ? dns_upstream(conf, pend[i].name, pend[i].tries) : def_up[pend[i].tries & 1];
     xSemaphoreGive(conf_lk);
     if (!up) return;
     if (use_tcp && g_ls && g_ls[pend[i].via] >= 0) {
@@ -133,7 +136,7 @@ static void on_client(int via, int ls, int us) {
     cnt.q++;
     if (q.qtype == DNS_A) { strlcpy(last_name, q.name, sizeof last_name); }
     uint32_t ip = 0;
-    bool ovr = (q.qtype == DNS_A || q.qtype == DNS_AAAA) && dns_override(&conf, q.name, &ip);
+    bool ovr = conf && (q.qtype == DNS_A || q.qtype == DNS_AAAA) && dns_override(conf, q.name, &ip);
     bool local = !ovr && dns_local_only(&q);
     if (ovr) cnt.ovr++; else if (local) cnt.nx++; else cnt.fwd++;
     xSemaphoreGive(conf_lk);
@@ -260,15 +263,17 @@ static bool fetch_file(void) {
     if (er == ESP_OK && code == 200 && got) {
         if (fln) take_line();
         xSemaphoreTake(conf_lk, portMAX_DELAY);
-        memcpy(&conf, nc, sizeof conf);
+        dns_conf_t *old = conf; conf = nc;                     /* the new table stays (no second 8 KB copy) */
         xSemaphoreGive(conf_lk);
+        free(old);
         char t[96];
-        int k = snprintf(t, sizeof t, "DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", nc->n_ovr, nc->n_up - 2, took);
+        int k = snprintf(t, sizeof t, "DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", conf->n_ovr, conf->n_up - 2, took);
         log_add("esp32", t, (size_t)k);
         ok = true;
     } else if (er != ESP_OK) snprintf(fetch_err, sizeof fetch_err, "%s", esp_err_to_name(er));
     else snprintf(fetch_err, sizeof fetch_err, "HTTP %d", code);
-    free(nc); nc = NULL;
+    if (!ok) free(nc);
+    nc = NULL;
     return ok;
 }
 
@@ -295,6 +300,7 @@ void dnsd_fetch_poll(void) {
 
 void dnsd_start(void) {
     conf_lk = xSemaphoreCreateMutex();
-    dns_conf_defaults(&conf);
+    dns_ip(DNS_REVIVAL_1, strlen(DNS_REVIVAL_1), &def_up[0]);
+    dns_ip(DNS_REVIVAL_2, strlen(DNS_REVIVAL_2), &def_up[1]);
     xTaskCreate(dns_task, "dnsd", 4096, NULL, 5, NULL);
 }

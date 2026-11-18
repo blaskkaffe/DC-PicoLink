@@ -53,7 +53,6 @@ static void say(const char *fmt, ...) {
     log_add("esp32", t, (size_t)k);
 }
 
-bool portfwd_enabled(void) { return enabled; }
 void portfwd_set_enabled(bool on) {
     enabled = on; kick = true;
     nvs_handle_t h;
@@ -258,6 +257,24 @@ static int del_map(uint32_t rip, uint16_t rport, const char *ctl, const char *sv
     return !strncmp(ans + 9, "200", 3) ? 0 : 1;         /* 1: there was none (714) or the router said no */
 }
 
+/* is the first game port still mapped to `to`? (GetSpecificPortMappingEntry): a cheap check
+   instead of deleting and adding all 216 again; DreamPi maps once at start, permanently */
+static bool still_mapped(uint32_t rip, uint16_t rport, const char *ctl, const char *svc, uint32_t to) {
+    if (!body || !req || !ans) return false;
+    int bn = snprintf(body, 900,
+        "<?xml version=\"1.0\"?>\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+        "<s:Body><u:GetSpecificPortMappingEntry xmlns:u=\"%s\"><NewRemoteHost></NewRemoteHost><NewExternalPort>%u</NewExternalPort>"
+        "<NewProtocol>%s</NewProtocol></u:GetSpecificPortMappingEntry></s:Body></s:Envelope>\r\n", svc, (unsigned)PORTS[0].lo, PORTS[0].proto == 6 ? "TCP" : "UDP");
+    struct in_addr ra = { .s_addr = rip };
+    int rn = snprintf(req, 1300, "POST %s HTTP/1.0\r\nHost: %s:%u\r\nContent-Type: text/xml; charset=\"utf-8\"\r\n"
+        "SOAPAction: \"%s#GetSpecificPortMappingEntry\"\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", ctl, inet_ntoa(ra), (unsigned)rport, svc, bn, body);
+    int n = http_req(rip, rport, req, (size_t)rn, ans, 700);
+    if (n <= 0 || strncmp(ans + 9, "200", 3)) return false;
+    char want[16]; snprintf(want, sizeof want, "%s", inet_ntoa(*(struct in_addr *)&to));
+    const char *c = strstr(ans, "<NewInternalClient>");
+    return c && !strncmp(c + 19, want, strlen(want)) && c[19 + strlen(want)] == '<';
+}
+
 /* the router's own outside address (GetExternalIPAddress); "" when it has none (DS-Lite) */
 static bool router_outside(uint32_t rip, uint16_t rport, const char *ctl, const char *svc, char *out, size_t oc) {
     int bn = snprintf(body, 900,
@@ -281,6 +298,17 @@ static bool router_outside(uint32_t rip, uint16_t rport, const char *ctl, const 
 static bool not_public(uint32_t h) {
     return !h || (h >> 24) == 10 || (h >> 24) == 127 || (h & 0xFFC00000u) == 0x64400000u /* 100.64/10 */
         || (h & 0xFFF00000u) == 0xAC100000u || (h & 0xFFFF0000u) == 0xC0A80000u || (h & 0xFFFFFF00u) == 0xC0000000u /* 192.0.0/24: DS-Lite */;
+}
+
+static struct { uint32_t rip, to; uint16_t rport; char ctl[160], svc[64]; } known;   /* the router of the last good run */
+
+/* every 30 minutes: still there? (a router restart forgets them) */
+static bool maps_still_there(uint32_t to) {
+    if (!known.rip || known.to != to) return false;
+    body = malloc(900); req = malloc(1300); ans = malloc(700);
+    bool ok = still_mapped(known.rip, known.rport, known.ctl, known.svc, to);
+    free(body); free(req); free(ans); body = req = ans = NULL;
+    return ok;
 }
 
 static void upnp(uint32_t to, bool to_dc) {
@@ -345,6 +373,8 @@ static void upnp(uint32_t to, bool to_dc) {
         }
     as_home = false;
     free(body); free(req); free(ans); body = req = ans = NULL;
+    known.rip = 0;
+    if (st.upnp_ok) { known.rip = rip; known.rport = rport; known.to = to; snprintf(known.ctl, sizeof known.ctl, "%s", ctl); snprintf(known.svc, sizeof known.svc, "%s", svc); }
     if (first_err == -1 && !st.upnp_ok) snprintf(st.err, sizeof st.err, "no answer from the router (or out of memory)");
     else if (first_err == 606 || first_err == 718 || first_err == 729)
         snprintf(st.err, sizeof st.err, "router said %d: its UPnP lets a device open ports only for itself (secure mode)", first_err);
@@ -366,9 +396,10 @@ static void task(void *arg) {
         if (home && enabled) { char a[16]; snprintf(a, sizeof a, "%s", inet_ntoa(*(struct in_addr *)&home)); if (strcmp(a, st.dc)) snprintf(st.dc, sizeof st.dc, "%s", a); }
         int64_t now = esp_timer_get_time();
         if (enabled && to && (to != upnp_for || now - upnp_at > 30LL * 60 * 1000000 || kick)) {   /* new target, every 30 min, switched on */
+            bool periodic = to == upnp_for && !kick;
             kick = false;
             vTaskDelay(pdMS_TO_TICKS(3000));
-            upnp(to, home != 0);
+            if (!(periodic && maps_still_there(to))) upnp(to, home != 0);
             upnp_for = to; upnp_at = esp_timer_get_time();
         }
         if (!enabled) { upnp_for = 0; kick = false; }

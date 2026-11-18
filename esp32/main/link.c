@@ -136,6 +136,14 @@ void link_get_stats(link_stats_t *s) {
     s->broken = rx.cobs_bad + rx.too_long + rx.bad_hdr;
 }
 
+/* the cable's network frames come from a computer on its USB (no Dreamcast): not a Dreamcast session */
+bool link_eth_is_computer(void) {
+    xSemaphoreTake(info_lock, portMAX_DELAY);
+    bool c = strstr(cable_info, "network=usb<->esp32") != NULL;
+    xSemaphoreGive(info_lock);
+    return c;
+}
+
 size_t link_cable_info(char *out, size_t cap) {
     xSemaphoreTake(info_lock, portMAX_DELAY);
     size_t n = strlen(cable_info);

@@ -50,7 +50,7 @@ static esp_err_t http_ev(esp_http_client_event_t *e) {
 static void swap_in(ipf_dnat_t *d) { cur = (int)(d - sets); }
 
 /* the earlier copy from flash (before the first download, or without Internet) */
-void dnat_load(void) {
+static void dnat_load(void) {
     nvs_handle_t h; size_t n = sizeof keep - 1;
     if (nvs_open("dcl", NVS_READONLY, &h) != ESP_OK) return;
     if (nvs_get_blob(h, "dnat", keep, &n) == ESP_OK && n) {
