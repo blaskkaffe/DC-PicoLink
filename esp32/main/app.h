@@ -122,6 +122,8 @@ uint32_t dclan_dc_ip(void);                              /* host order, 0 = none
 size_t dclan_info_json(char *o, size_t cap);
 void dclan_as_home(uint16_t port, uint32_t peer_n);      /* next TCP connection from local port `port` to peer goes out as the home address */
 void dclan_as_home_end(void);
+const void *dnat_rules(void);                         /* dnat.c: the address swaps now in force (an ipf_dnat_t *), or NULL */
+void dnat_fetch_poll(void);                             /* dnat.c: DreamPi's dnat.txt address swaps, run from dcnow.c's task */
 void dnsd_fetch_poll(void);                              /* dnsd.c: the DNS list download, run from dcnow.c's task */
 /* portfwd.c: game ports to the Dreamcast (NAT port maps) and from the router (UPnP), as DreamPi */
 void portfwd_start(void);

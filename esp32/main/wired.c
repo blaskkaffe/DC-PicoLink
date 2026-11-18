@@ -66,7 +66,7 @@ static esp_err_t eth_in(esp_eth_handle_t h, uint8_t *buf, uint32_t len, void *pr
     if (!to || len < 14 || len > 1514) { free(buf); cnt.rx_drop++; return ESP_OK; }
     if (to == bba_if) {
         if (is_dhcp_server_frame(buf, len)) { foreign_dhcp = true; cnt.foreign++; free(buf); return ESP_OK; }
-        ipf.public_ip = pubip_get();
+        ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
         if (!ipf_ether(&ipf, buf, len, (uint32_t)(esp_timer_get_time() / 1000))) { free(buf); return ESP_OK; }
         last_dc_us = esp_timer_get_time();
     }
@@ -77,7 +77,7 @@ static esp_err_t eth_in(esp_eth_handle_t h, uint8_t *buf, uint32_t len, void *pr
 static esp_err_t tx_cb(void *h, void *buf, size_t len) {
     if (h == bba_if) {
         if (role != R_BBA) { cnt.tx_drop++; return ESP_OK; }
-        ipf_in.public_ip = pubip_get();
+        ipf_in.public_ip = pubip_get(); ipf_in.dnat = dnat_rules();
         ipf_ether_to_dc(&ipf_in, buf, len);
     }
     if (esp_eth_transmit(eth, buf, (uint32_t)len) != ESP_OK) { cnt.tx_drop++; return ESP_OK; }

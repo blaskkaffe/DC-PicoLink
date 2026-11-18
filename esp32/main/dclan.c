@@ -33,6 +33,7 @@
 #include "lwip/etharp.h"
 #include "lwip/tcpip.h"
 #include "lwip/sockets.h"
+#include "lwip/lwip_napt.h"
 #include "lwip/prot/ethernet.h"
 #include "netif/ethernet.h"
 #include "dclan_model.h"
@@ -47,6 +48,7 @@ static volatile bool conflict;                    /* another device answered for
 static struct { uint32_t arp_answered, arp_seen, rewritten_out, rewritten_in, from_dc, to_home, picks, conflicts; } cnt;
 static volatile uint32_t first_out_ms;              /* when the Dreamcast first sent out this call (0 = not yet) */
 static bool said_nothing_back, said_first_in;
+static uint32_t bad_ip, bad_gw;                  /* a network that took the home address but delivered nothing back: NAT there (until the network changes) */
 static char why_none[96] = "waiting for the home network";
 static volatile uint16_t ah_port;                 /* local TCP port of the request, 0 = none */
 static volatile uint32_t ah_peer;                 /* the router (host order) */
@@ -284,6 +286,11 @@ static void pick(struct netif *n, uint32_t ip, uint32_t gw, uint32_t mask) {
         lan_this = lan_dc = 0;
         return;
     }
+    if (bad_ip == ip && bad_gw == gw) {              /* this network already failed in a real call */
+        snprintf(why_none, sizeof why_none, "this network did not deliver answers to the home address");
+        lan_this = lan_dc = 0;
+        return;
+    }
     /* does the network deliver to a second address on this box? (phone hotspots, guest and mesh
        Wi-Fi often do not: then NAT, as before) */
     LOCK_TCPIP_CORE(); wrap(n); up_nif = n; lan_dc = d; UNLOCK_TCPIP_CORE();     /* answer ARP for it during the check */
@@ -368,10 +375,15 @@ static void task(void *arg) {
             static uint32_t home0; if (!first_out_ms) home0 = cnt.to_home;
             char a[16];
             if (!said_first_in && cnt.to_home != home0 && first_out_ms) { said_first_in = true; say("home network: answers for %s arrive (the router delivers to it)", ips(lan_dc, a)); }
-            else if (!said_first_in && !said_nothing_back && first_out_ms && (uint32_t)(esp_timer_get_time() / 1000) - first_out_ms > 10000) {
+            else if (!said_first_in && !said_nothing_back && first_out_ms && (uint32_t)(esp_timer_get_time() / 1000) - first_out_ms > 10000 && cnt.from_dc >= 2) {
                 said_nothing_back = true;
-                say("home network: nothing has come back for %s in 10 s (%lu sent out; the router asked for it %lu times): the router or Wi-Fi may not deliver to a second address on this box",
+                say("home network: nothing has come back for %s in 10 s (%lu sent out; the router asked for it %lu times): this network does not deliver to a second address on this box. Switching this call to NAT, and this network stays on NAT",
                     ips(lan_dc, a), (unsigned long)cnt.from_dc, (unsigned long)cnt.arp_seen);
+                bad_ip = ip; bad_gw = gw;
+                struct netif *pn = ppp_dc_ip() ? ppp_dc_netif() : NULL;
+                LOCK_TCPIP_CORE(); lan_this = lan_dc = 0; UNLOCK_TCPIP_CORE();
+                if (pn) ip_napt_enable_no(pn->num, 1);            /* a PPP call in LAN mode had no NAT: on, as for a call without a home address */
+                snprintf(why_none, sizeof why_none, "this network did not deliver answers to the home address");
             }
         }
         while (seen_logged < seen_n) {                /* where the Dreamcast goes (first few per call) */

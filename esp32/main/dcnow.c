@@ -172,9 +172,9 @@ static void dcnow_task(void *arg) {
             if (!ok && !last_failed) { char m[140]; int k = snprintf(m, sizeof m, "DCNow!: report failed (%s); will keep trying", why); log_add("esp32", m, (size_t)(k < (int)sizeof m ? k : (int)sizeof m - 1)); }
             if (ok && last_failed) { const char *m = "DCNow!: reports work again"; log_add("esp32", m, strlen(m)); }
             last_failed = !ok;
-            for (int i = 0; i < DCNOW_EVERY_MS / 250 && online; i++) { dnsd_fetch_poll(); vTaskDelay(pdMS_TO_TICKS(250)); }
+            for (int i = 0; i < DCNOW_EVERY_MS / 250 && online; i++) { dnsd_fetch_poll(); dnat_fetch_poll(); vTaskDelay(pdMS_TO_TICKS(250)); }
         } else {
-            dnsd_fetch_poll();
+            dnsd_fetch_poll(); dnat_fetch_poll();
             vTaskDelay(pdMS_TO_TICKS(250));
         }
     }
