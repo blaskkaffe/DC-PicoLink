@@ -20,4 +20,4 @@ message(STATUS "VPN profiles built in: ${_n}")
 idf_component_register(SRCS "main.c" "link.c" "wifi.c" "web.c" "ppp_srv.c" "dnsd.c" "dcnow.c" "dc_eth.c" "vpn.c" "ovpn.c" "pubip.c" "wired.c" "usbmodem.c" "dcnet.c" "netlink.c" "portfwd.c" "dclan.c" "dnat.c"
                        INCLUDE_DIRS "." "../../firmware"
                        EMBED_TXTFILES "${VPN_OUT}"
-                       REQUIRES mdns usb usb_host_cdc_acm esp_eth esp_driver_uart esp_driver_spi esp_driver_gpio esp_timer esp_wifi esp_netif esp_event nvs_flash esp_http_server esp_http_client esp-tls mbedtls lwip)
+                       REQUIRES mdns usb usb_host_cdc_acm esp_eth esp_driver_uart esp_driver_spi esp_driver_gpio esp_timer esp_wifi esp_netif esp_event nvs_flash esp_http_server esp_http_client esp-tls mbedtls lwip app_update)

@@ -20,6 +20,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "link_model.h"
+#include "esp_ota_ops.h"
 #include "app.h"
 
 static const char PAGE[] =
@@ -44,7 +45,7 @@ static const char PAGE[] =
 "<form id=sf><input id=sv placeholder='text to the Dreamcast, e.g. AT' style='flex:1'><button>Send</button></form></div>"
 "<div class=c><h2>dc1 to the cable</h2><form id=df><input id=dv value='get link.*' style='flex:1'><button>Send</button></form><pre id=ans class=m></pre></div>"
 "<div class=c><h2>Internet for the Dreamcast</h2><pre id=net class=m></pre><form id=nf>"
-"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label>DCNow! as your DreamPi (its MAC address or ID; empty = this box) <input id=ndi size=20></label><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>VPN server <select id=nvp><option value=auto>auto (shumania first)</select></label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><details class=m><summary>VPN profiles: the DreamPi ones are built in. Tap here only to replace them</summary>Files: dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client: <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></details></div>"
+"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label>DCNow! as your DreamPi (its MAC address or ID; empty = this box) <input id=ndi size=20></label><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>VPN server <select id=nvp><option value=auto>auto (shumania first)</select></label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><details class=m><summary>VPN profiles: the DreamPi ones are built in. Tap here only to replace them</summary>Files: dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client: <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></details><details class=m><summary>Firmware update</summary>ESP32: <input type=file id=uf accept=.bin> <button type=button id=ub>Update</button> <span id=us></span><br>Zero (cable): <button type=button id=zb>Restart into USB update mode</button> then copy the .uf2 to the RPI-RP2 drive on a computer</details></div>"
 "<div class=c><h2>Wi-Fi</h2><pre id=wf class=m></pre><form id=wfm><input id=ws placeholder='home network name'>"
 "<input id=wp type=password placeholder=password><button>Save</button></form></div>"
 "</main><script>"
@@ -66,7 +67,7 @@ static const char PAGE[] =
 "}catch(e){$('lkt').textContent='page lost the ESP32'}setTimeout(tick,1000)}"
 "$('sf').onsubmit=e=>{e.preventDefault();fetch('/api/serial',{method:'POST',body:$('sv').value+'\\r'})};"
 "$('df').onsubmit=e=>{e.preventDefault();fetch('/api/dc1',{method:'POST',body:'dc1\\n'+$('dv').value.replace(/;\\s*/g,'\\n')+'\\n'})};"
-"$('nf').onchange=()=>{nfx=true};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\\n'+t+'\\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\\n'+sv+'\\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,dcnowid:$('ndi').value,vpn:$('nv').checked?1:0,vpnpick:$('nvp').value,dcnet:$('nc').value,pf:$('npf').checked?1:0})})};"
+"$('nf').onchange=()=>{nfx=true};$('ub').onclick=async()=>{const f=$('uf').files[0];if(!f){$('us').textContent='choose the .bin first';return}$('us').textContent='uploading '+(f.size>>10)+' KB...';try{const r=await fetch('/api/update',{method:'POST',body:f});$('us').textContent=await r.text()}catch(e){$('us').textContent='upload failed'}};$('zb').onclick=()=>{if(confirm('Restart the Zero into its USB update mode? The Dreamcast link stops until it is flashed and restarts.'))fetch('/api/dc1',{method:'POST',body:'dc1\\ncall link.update\\n'})};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\\n'+t+'\\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\\n'+sv+'\\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,dcnowid:$('ndi').value,vpn:$('nv').checked?1:0,vpnpick:$('nvp').value,dcnet:$('nc').value,pf:$('npf').checked?1:0})})};"
 "$('wfm').onsubmit=e=>{e.preventDefault();fetch('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ws').value,pass:$('wp').value})})};"
 "tick();</script></body></html>";
 
@@ -206,8 +207,49 @@ static esp_err_t post_net(httpd_req_t *r) {
     return httpd_resp_sendstr(r, "ok");
 }
 
-/* VPN profiles from the page: written to flash as they arrive, then the box restarts */
 static void restart_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
+
+/* Firmware update for the ESP32: the app image (dc_picolink_esp32.bin) or the merged image
+   (...-merged.bin, the app part is taken from 0x20000) goes into the other app slot; the box
+   restarts into it, and the bootloader goes back to this one if the new one does not come up
+   (main.c marks it good). */
+static esp_err_t post_update(httpd_req_t *r) {
+    const esp_partition_t *to = esp_ota_get_next_update_partition(NULL);
+    if (!to) return httpd_resp_sendstr(r, "this flash layout has no second app slot: flash the merged image over USB once");
+    static uint8_t b[2048];
+    size_t total = r->content_len, got = 0, skip = 0;
+    esp_ota_handle_t h = 0; bool begun = false; const char *err = NULL;
+    while (got < total) {
+        int k = httpd_req_recv(r, (char *)b, total - got < sizeof b ? total - got : sizeof b);
+        if (k <= 0) { err = "upload interrupted"; break; }
+        size_t off = got; got += (size_t)k;
+        if (off == 0) {                                   /* app image: its description (magic ABCD5432) at byte 32 */
+            uint32_t m = k >= 36 ? (uint32_t)b[32] | b[33] << 8 | b[34] << 16 | (uint32_t)b[35] << 24 : 0;
+            if (b[0] != 0xE9) { err = "not an ESP32 image"; break; }
+            skip = m == 0xABCD5432u ? 0 : 0x20000;        /* else: the merged image, app at 0x20000 (ota_0) */
+        }
+        if (off + (size_t)k <= skip) continue;
+        size_t from = off < skip ? skip - off : 0;
+        if (!begun) {
+            if (b[from] != 0xE9) { err = "no app in this file"; break; }
+            if (esp_ota_begin(to, OTA_WITH_SEQUENTIAL_WRITES, &h) != ESP_OK) { err = "could not start writing"; break; }
+            begun = true;
+        }
+        if (esp_ota_write(h, b + from, (size_t)k - from) != ESP_OK) { err = "write failed (file too big?)"; break; }
+    }
+    if (!err && !begun) err = "no app in this file";
+    if (begun && err) esp_ota_abort(h);
+    if (!err && esp_ota_end(h) != ESP_OK) err = "the image did not check out (damaged or not for this board)";
+    if (!err && esp_ota_set_boot_partition(to) != ESP_OK) err = "could not switch to it";
+    char m[140];
+    int n = snprintf(m, sizeof m, err ? "ESP32 update: %s; still on the old firmware" : "ESP32 update: written to %s; restarting into it", err ? err : to->label);
+    log_add("esp32", m, (size_t)n);
+    httpd_resp_sendstr(r, m);
+    if (!err) xTaskCreate(restart_soon, "restart", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+/* VPN profiles from the page: written to flash as they arrive, then the box restarts */
 static esp_err_t post_vpnprof(httpd_req_t *r) {
     if (r->content_len > 120 * 1024) return httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, "too big for the profile space (120 KB)");
     char b[1024];
@@ -233,6 +275,7 @@ void web_start(void) {
     c.stack_size = 8192;
     c.max_open_sockets = 4;                 /* browsers keep connections open: at most 4, the oldest closed first */
     c.lru_purge_enable = true;
+    c.max_uri_handlers = 10;
     if (httpd_start(&h, &c) != ESP_OK) return;
     static const httpd_uri_t u[] = {
         { .uri = "/", .method = HTTP_GET, .handler = page },
@@ -242,6 +285,7 @@ void web_start(void) {
         { .uri = "/api/serial", .method = HTTP_POST, .handler = post_serial },
         { .uri = "/api/net", .method = HTTP_POST, .handler = post_net },
         { .uri = "/api/vpnprof", .method = HTTP_POST, .handler = post_vpnprof },
+        { .uri = "/api/update", .method = HTTP_POST, .handler = post_update },
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
 }

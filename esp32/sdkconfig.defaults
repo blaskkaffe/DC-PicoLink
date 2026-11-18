@@ -44,3 +44,7 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # lwIP core locking: makes LOCK_TCPIP_CORE() in dclan.c, portfwd.c and vpn.c real (without it they
 # compiled to nothing and those tasks raced lwIP's thread on ARP, NAT tables and interfaces)
 CONFIG_LWIP_TCPIP_CORE_LOCKING=y
+
+# updates from the web page: a new image that does not come up healthy is rolled back by the
+# bootloader (main.c marks it valid once Wi-Fi or the cable link has worked)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

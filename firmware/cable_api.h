@@ -29,6 +29,8 @@ typedef struct {
     /* written by the handler (the caller applies them) */
     uint32_t set_baud;     /* 0 = no change asked */
     uint8_t set_force;     /* 0xFF = no change asked */
+    bool call_update;      /* "call link.update": restart into the USB bootloader (UF2 drive), for
+                              an update without reaching the BOOTSEL button */
 } cable_api_t;
 
 static const char *const cable_force_names[] = { "auto", "serial", "spi", "w5500", "sd" };
@@ -97,7 +99,7 @@ static inline void cable_set(cable_api_t *s, cable_out_t *o, const char *a, size
 static inline size_t cable_api_handle(cable_api_t *s, const char *msg, size_t n, char *out, size_t cap) {
     cable_out_t o = { out, cap, 0 };
     const char *p = msg, *end = msg + n, *line; size_t len;
-    s->set_baud = 0; s->set_force = 0xFF;
+    s->set_baud = 0; s->set_force = 0xFF; s->call_update = false;
     if (!link_next_line(&p, end, &line, &len) || !(len == 3 && memcmp(line, "dc1", 3) == 0)) return 0;
     cable_put(&o, "dc1\n");
     while (link_next_line(&p, end, &line, &len)) {
@@ -109,7 +111,8 @@ static inline size_t cable_api_handle(cable_api_t *s, const char *msg, size_t n,
         else if (link_word(line, len, "call", &rest)) {
             const char *sp = memchr(rest, ' ', len - (size_t)(rest - line));
             size_t kl = sp ? (size_t)(sp - rest) : len - (size_t)(rest - line);
-            cable_put(&o, "err %.*s unknown\n", (int)kl, rest);
+            if (kl == 11 && memcmp(rest, "link.update", 11) == 0) { s->call_update = true; cable_put(&o, "ok link.update\n"); }
+            else cable_put(&o, "err %.*s unknown\n", (int)kl, rest);
         }
         /* other line types (ok/err/ev from a peer, later additions): ignored */
     }

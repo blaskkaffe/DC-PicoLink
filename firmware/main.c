@@ -1215,6 +1215,9 @@ static void link_init(void) {
     gpio_set_dir(PIN_LSPI_DR, GPIO_IN);
     gpio_pull_down(PIN_LSPI_DR);
     for (uint p = 0; p <= 1; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
+    /* GP15 sits over the ESP32's GPIO9, the W5500 module's interrupt line: soldered for strength,
+       so no pull-down of ours may load it */
+    gpio_init(15); gpio_set_dir(15, GPIO_IN); gpio_disable_pulls(15);
     lspi_dma_tx = (int)dma_claim_unused_channel(true);
     lspi_dma_rx = (int)dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config((uint)lspi_dma_tx);
@@ -1273,6 +1276,7 @@ static void request_baud(uint32_t b, uint32_t queued_bytes) {
     pending_baud = b;
 }
 
+static uint32_t update_at;           /* != 0: restart into the USB bootloader then (call link.update) */
 static link_test_t link_test;        /* runs by itself whenever the link comes up */
 static uint32_t link_up_at;
 static bool link_test_due;           /* starts 3 s after the link comes up: the ESP32 is still booting
@@ -1296,6 +1300,7 @@ static bool link_deliver(void) {
         if (s.set_baud) request_baud(s.set_baud, ser_in_wr - ser_in_rd);
         if (s.set_force != 0xFF) force_req = s.set_force;
         if (k) link_send(LINK_CH_API, out, k);
+        if (s.call_update) update_at = time_us_32() + 300000u;   /* after the answer has gone out */
         return true;
     }
     case LINK_CH_SER:
@@ -1441,6 +1446,11 @@ static void ser_bridge_task(void) {
 
 static void link_task(void) {
     uint32_t now = time_us_32();
+    if (update_at && (int32_t)(now - update_at) >= 0) {
+        status("restarting into the USB bootloader for a firmware update (copy the .uf2 to the RPI-RP2 drive)");
+        busy_wait_ms(100);
+        reset_usb_boot(0, 0);
+    }
 #if DC_LINK_SPI
     if (link_pending) {
         if (link_deliver()) link_pending = false;

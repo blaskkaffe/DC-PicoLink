@@ -114,7 +114,13 @@ int main(void) {
         n = cable_api_handle(&s, q, strlen(q), out, sizeof out); out[n] = 0;
         CHECK(strcmp(out, "dc1\nok link.mode serial\nok link.serial.baud 115200\nok link.serial.wire 57600\nok link.force w5500\n"
                           "ok link.route serial=esp32 network=usb\n") == 0);
-        CHECK(s.set_baud == 0 && s.set_force == 0xFF);
+        CHECK(s.set_baud == 0 && s.set_force == 0xFF && !s.call_update);
+        q = "dc1\ncall link.update";
+        n = cable_api_handle(&s, q, strlen(q), out, sizeof out); out[n] = 0;
+        CHECK(strcmp(out, "dc1\nok link.update\n") == 0 && s.call_update);
+        q = "dc1\nget hello";
+        cable_api_handle(&s, q, strlen(q), out, sizeof out);
+        CHECK(!s.call_update);
         q = "hello\nget hello";
         CHECK(cable_api_handle(&s, q, strlen(q), out, sizeof out) == 0);
         /* tiny output buffer: truncated, never overrun */

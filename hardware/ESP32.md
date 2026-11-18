@@ -51,7 +51,7 @@ the USB end may differ slightly).
 | 5 | GP28 ↔ GPIO12 | not joined: SD MISO / W5500 SCK | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
 | 6 | GP27 ↔ GPIO11 | not joined: SD MOSI / W5500 MOSI | GP5 ↔ GPIO4 | **solder**: SPI CS |
 | 7 | GP26 ↔ GPIO10 | not joined: SD SCK / W5500 CS | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | **solder**, strength only (spare) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 8 | GP15 ↔ GPIO9 | **solder**, strength only (GPIO9 is the W5500 module's INT; the Zero keeps GP15 a plain input without pulls) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
 
 Corners: 5V/GND top left, GP0/GP1 top right, GP15 bottom left, the SPI pins bottom right.
 GP0/GP1 sit over GPIO43/44 but aren't used as signals: GPIO43 prints the ESP32's ROM boot
@@ -233,7 +233,23 @@ as with a DreamPi; the USB modem plugs into the ESP32's USB-C socket through an 
   PPP server, DNS, DCNow! and packet rules as for the serial cable. The page shows a
   "USB modem:" line, and the modem's answers appear in the serial monitor.
 - The USB socket is no longer the ESP32's console in this build (console: UART0, GPIO43/44).
-  The page's log is unchanged. To flash again, hold BOOT while plugging into the computer.
+  The page's log is unchanged. Updates go through the page (below); over USB: hold BOOT while
+  plugging into the computer.
+
+## Updating a finished (soldered, closed) stack
+
+On the page, *Firmware update*:
+- **ESP32**: choose `dc-picolink-esp32-...-merged.bin` (or the app-only `dc_picolink_esp32.bin`)
+  and *Update*. It is written to the other app slot and the box restarts into it. The new image
+  is kept once Wi-Fi or the cable link has worked for 30 s; if it crashes or restarts before
+  that, the bootloader goes back to the old one by itself.
+- **Zero**: *Restart into USB update mode*, then plug the Zero's USB into a computer and copy the
+  `.uf2` to the `RPI-RP2` drive (no BOOTSEL button needed). Any API client can do the same with
+  `dc1` / `call link.update`.
+
+The first image with this flash layout (two app slots, from commit 2026-11-19) has to go over
+USB once, as the merged image; settings saved on the box survive it, uploaded VPN profiles do
+not (the built-in ones are used).
 
 ## DCNet
 

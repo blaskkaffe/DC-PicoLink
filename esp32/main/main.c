@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h"
 #include "freertos/task.h"
 #include "app.h"
 
@@ -146,6 +147,23 @@ static void mem_report(void *arg) {
     log_add("esp32", m, (size_t)k);
 }
 
+/* after an update from the page: the new image counts as good once Wi-Fi or the cable link has
+   worked for 30 s; until then a crash or restart makes the bootloader go back to the old one */
+static esp_timer_handle_t ota_t;
+static void ota_check(void *arg) {
+    (void)arg;
+    static int ok_for;
+    esp_timer_handle_t t = ota_t;
+    esp_ota_img_states_t stt;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &stt) != ESP_OK || stt != ESP_OTA_IMG_PENDING_VERIFY) { esp_timer_stop(t); return; }
+    ok_for = (wifi_sta_up() || link_is_up()) ? ok_for + 5 : 0;
+    if (ok_for < 30) return;
+    esp_ota_mark_app_valid_cancel_rollback();
+    const char *m = "ESP32 update: the new firmware works; kept";
+    log_add("esp32", m, strlen(m));
+    esp_timer_stop(t);
+}
+
 void app_main(void) {
     log_lock = xSemaphoreCreateMutex();
     tls_mx = xSemaphoreCreateMutex();
@@ -169,6 +187,8 @@ void app_main(void) {
     dclan_start();
     portfwd_start();
     web_start();
+    const esp_timer_create_args_t oa = { .callback = ota_check, .name = "otachk" };
+    if (esp_timer_create(&oa, &ota_t) == ESP_OK) esp_timer_start_periodic(ota_t, 5ULL * 1000000);
     static esp_timer_handle_t mt;
     const esp_timer_create_args_t ma = { .callback = mem_report, .name = "memrep" };
     if (esp_timer_create(&ma, &mt) == ESP_OK) esp_timer_start_periodic(mt, 30ULL * 60 * 1000000);
