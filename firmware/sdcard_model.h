@@ -22,6 +22,7 @@
 
 typedef struct {
     bool present, sdhc, busy;
+    uint32_t busy_since;        /* when the last write started programming */
     uint32_t blocks;            /* 512-byte blocks */
     uint32_t reads, writes, errors;
     uint8_t  last_r1;
@@ -147,19 +148,23 @@ static inline bool sdl_write(sdl_card_t *c, uint32_t lba, const uint8_t *data) {
     if ((resp & 0x1F) != 0x05) { sdl_deselect(); c->errors++; c->last_r1 = resp; return false; }
     sdl_deselect();                                   /* the card stays busy by itself */
     c->busy = true;
+    c->busy_since = SDL_NOW_US();
     c->writes++;
     return true;
 }
 
-/* true while the card is still programming the last written block (one look, no wait) */
-static inline bool sdl_write_busy(sdl_card_t *c) {
+/* true while the card is still programming the last written block (one look, no wait).
+   A card busy for over 1 s (spec: 250 ms for SDXC) is stuck: c->errors goes up and *stuck is set. */
+static inline bool sdl_write_busy_t(sdl_card_t *c, bool *stuck) {
     if (!c->busy) return false;
+    if ((uint32_t)(SDL_NOW_US() - c->busy_since) > 1000000u) { c->busy = false; c->errors++; if (stuck) *stuck = true; return false; }
     SDL_CS(true);
     bool b = SDL_XFER(0xFF) != 0xFF;
     sdl_deselect();
     if (!b) c->busy = false;
     return b;
 }
+static inline bool sdl_write_busy(sdl_card_t *c) { return sdl_write_busy_t(c, 0); }
 
 /* ---- as the block source of sd_model.h (sd_shared_t sd) ----
    The same contract as sdh_poll(): fill sd.slot[] for the current read stream at most
@@ -187,15 +192,18 @@ static inline void sdl_src_attach(sdl_src_t *s, sdl_card_t *c) {
 static inline bool sdl_src_poll(sdl_src_t *s, sdl_card_t *c, int max_blocks) {
     /* a written block first: the Dreamcast waits (busy) until it is acknowledged */
     if (s->wr_out) {
-        if (sdl_write_busy(c)) return true;
+        bool stuck = false;
+        if (sdl_write_busy_t(c, &stuck)) return true;
         s->wr_out = false;
         sd.wr_ack = s->wr_sent;
+        if (stuck) return false;                      /* never finished: treat the card as gone (the Dreamcast is not left waiting) */
     }
     if (sd.wr_seq != s->wr_sent) {
         uint32_t seq = sd.wr_seq;
         __sync_synchronize();
         s->wr_sent = seq;
-        if (sd.wr_lba >= sd.blocks || !sdl_write(c, sd.wr_lba, sd.wr_buf)) { sd.wr_ack = seq; return sd.wr_lba >= sd.blocks; }
+        /* one retry: a single refused write would otherwise drop the card (and the block) */
+        if (sd.wr_lba >= sd.blocks || (!sdl_write(c, sd.wr_lba, sd.wr_buf) && !(sdl_ready(250), sdl_write(c, sd.wr_lba, sd.wr_buf)))) { sd.wr_ack = seq; return sd.wr_lba >= sd.blocks; }
         s->wr_out = true;
         return true;
     }
@@ -211,7 +219,7 @@ static inline bool sdl_src_poll(sdl_src_t *s, sdl_card_t *c, int max_blocks) {
         uint32_t lba = s->start + s->ready;
         if (s->ready >= lim || lba >= sd.blocks) break;
         uint8_t *slot = &sd.slot[s->ready % SD_SLOTS][SD_SLOT_HDR];
-        if (!sdl_read(c, lba, slot)) return false;
+        if (!sdl_read(c, lba, slot) && !sdl_read(c, lba, slot)) return false;   /* one retry before the card counts as gone */
         if (sd.rd_gen != g) return true;               /* the Dreamcast moved on meanwhile */
         s->ready++;
         __sync_synchronize();

@@ -31,6 +31,7 @@ static struct {
     int wr_state, wr_n; uint32_t wr_lba; uint8_t wr[512];
     int busy;                  /* bytes of busy after a write (kept across deselect) */
     int latency;               /* 0xFF bytes before a data token */
+    int fail_reads;            /* the next N block reads answer an error */
     uint32_t cmds;
 } card;
 static uint32_t clock_us;
@@ -68,6 +69,7 @@ static void exec(void) {
     if (c == 17) {
         uint32_t b = addr_blk(a);
         if (b >= PBLK) { out_push(0x40); return; }
+        if (card.fail_reads) { card.fail_reads--; out_push(0x08); return; }      /* CRC/communication error */
         out_push(0x00); out_ffs(card.latency); out_push(0xFE);
         for (int i = 0; i < 512; i++) out_push(pimg[b][i]);
         uint16_t crc = sd_crc16(pimg[b], 512);
@@ -174,6 +176,25 @@ int main(void) {
     memset(sd.wr_buf, 0xC3, 512); sd.wr_lba = 9; sd.wr_seq++;
     int n = 0; while (sd.wr_ack != sd.wr_seq && n < 10000) { sdl_src_poll(&s, &c, 2); n++; }
     CHECK(sd.wr_ack == sd.wr_seq && pimg[9][0] == 0xC3 && pimg[9][511] == 0xC3);
+    /* one failed read is retried, the card stays */
+    card.fail_reads = 1;
+    sd_start_stream(60, 1);
+    for (int it = 0; it < 10; it++) CHECK(sdl_src_poll(&s, &c, 2));
+    CHECK((sd.rd_ready & 0xFFFF) == 1 && !memcmp(sd.slot[0] + 3, pimg[60], 512));
+    /* two in a row: gone */
+    card.fail_reads = 2;
+    sd_start_stream(61, 1);
+    CHECK(!sdl_src_poll(&s, &c, 2));
+    sdl_src_attach(&s, &c);
+    /* a card stuck busy after a write: after 1 s the write is acknowledged (the DC is not left
+       waiting) and the card counts as gone */
+    memset(sd.wr_buf, 0x5A, 512); sd.wr_lba = 11; sd.wr_seq++;
+    CHECK(sdl_src_poll(&s, &c, 2));                      /* the write starts */
+    card.busy = 1 << 30;
+    bool gone = false; n = 0;
+    while (!gone && n < 100000) { gone = !sdl_src_poll(&s, &c, 2); n++; clock_us += 100; }
+    CHECK(gone && sd.wr_ack == sd.wr_seq);
+    card.busy = 0;
     /* card pulled: the next read fails, the source reports it, detach keeps the DC from hanging */
     sd_start_stream(50, 0xFFFFFFFFu);
     card.inserted = false;
@@ -182,6 +203,6 @@ int main(void) {
     sdl_src_detach(&s);
     CHECK(!sd.present && sd.wr_ack == sd.wr_seq);
 
-    printf(fails ? "sdcard: %d FAILED\n" : "sdcard: all ok (SDHC, SDSC, none, reads, writes, block source)\n", fails);
+    printf(fails ? "sdcard: %d FAILED\n" : "sdcard: all ok (SDHC, SDSC, none, reads, writes, block source, read retry, stuck write)\n", fails);
     return fails != 0;
 }

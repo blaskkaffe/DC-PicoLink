@@ -47,6 +47,18 @@ static volatile int role = R_OFF;
 static volatile int64_t last_dc_us = -QUIET_US * 2;
 static ipf_t ipf, ipf_in;
 static struct { uint32_t rx, tx, rx_drop, tx_drop, leases, to_bba, foreign; char ip[16]; } cnt;
+/* devices seen on the cable while finding the role: a Dreamcast's BBA is one device; a home
+   network shows several (router, others), and must never get our DHCP server */
+#define SEEN_MACS 4
+static uint8_t seen_mac[SEEN_MACS][6];
+static volatile int seen_macs;
+static uint8_t own_mac[6];
+static void note_mac(const uint8_t *src) {
+    if (src[0] & 1 || !memcmp(src, own_mac, 6)) return;           /* multicast source: invalid; our own */
+    int n = seen_macs;
+    for (int i = 0; i < n; i++) if (!memcmp(seen_mac[i], src, 6)) return;
+    if (n < SEEN_MACS) { memcpy(seen_mac[n], src, 6); seen_macs = n + 1; }
+}
 
 static void say(const char *m) { log_add("esp32", m, strlen(m)); }
 
@@ -64,6 +76,7 @@ static esp_err_t eth_in(esp_eth_handle_t h, uint8_t *buf, uint32_t len, void *pr
     (void)h; (void)priv;
     esp_netif_t *to = cur;
     if (!to || len < 14 || len > 1514) { free(buf); cnt.rx_drop++; return ESP_OK; }
+    if (role == R_DETECT) note_mac(buf + 6);
     if (to == bba_if) {
         if (is_dhcp_server_frame(buf, len)) { foreign_dhcp = true; cnt.foreign++; free(buf); return ESP_OK; }
         ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
@@ -162,6 +175,7 @@ static void manager(void *arg) {
         esp_netif_ip_info_t ip = { 0 };
         switch (role) {
         case R_OFF:
+            seen_macs = 0;
             up_on(); role = R_DETECT; t_role = t;
             say("wired port: cable plugged in, asking for an address");
             break;
@@ -173,6 +187,9 @@ static void manager(void *arg) {
                 char m[120];
                 int k = snprintf(m, sizeof m, "wired port: uplink, address %s; the wired network is now the way out", cnt.ip);
                 log_add("esp32", m, (size_t)k);
+            } else if (t - t_role > DETECT_US && t > hold_until && seen_macs >= 2) {
+                static int64_t said;
+                if (t - said > 60000000LL) { said = t; say("wired port: several devices on this cable but no DHCP answer yet: a network, not a Dreamcast; still asking for an address"); }
             } else if (t - t_role > DETECT_US && t > hold_until) {
                 up_off(); bba_on(); role = R_BBA; cnt.to_bba++;
                 strlcpy(cnt.ip, "192.168.98.1", sizeof cnt.ip);
@@ -186,6 +203,7 @@ static void manager(void *arg) {
         case R_BBA:
             if (foreign_dhcp) {
                 bba_off(); dc_active = false;
+                seen_macs = 0;
                 up_on(); role = R_DETECT; t_role = t; hold_until = t + HOLD_US; cnt.ip[0] = 0;
                 say("wired port: another DHCP server is on this cable, so it is a network, not a Dreamcast: back to uplink");
                 break;
@@ -284,6 +302,7 @@ void wired_start(void) {
     addr[0] |= 0x02;                                /* locally administered: not the cable network's address */
     addr[5] ^= 0x55;
     esp_eth_ioctl(eth, ETH_CMD_S_MAC_ADDR, addr);
+    memcpy(own_mac, addr, 6);
     up_if = make_netif(false, addr);
     bba_if = make_netif(true, addr);
     if (!up_if || !bba_if) { say("wired port: no memory for the interfaces"); return; }

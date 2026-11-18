@@ -156,17 +156,38 @@ static void op_ip(void *c, const uint8_t *ip, size_t n) {
 }
 
 /* ---------- lwIP interface ---------- */
+/* Into the tunnel (lwIP's thread). When the VPN task has the session right now, the packet waits
+   in a short queue that the task sends as soon as it lets go, instead of lwIP's thread waiting
+   (which stalled all networking up to 50 ms and then dropped the packet). */
+static QueueHandle_t outq;                  /* struct pbuf * (own copies) */
 static err_t vif_out(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
     (void)nif; (void)dst;
     static uint8_t buf[1500];               /* lwIP's own thread only: not on its 3 KB stack */
     if (p->tot_len > sizeof buf) return ERR_BUF;
-    pbuf_copy_partial(p, buf, p->tot_len, 0);
-    err_t r = ERR_RTE;
-    if (xSemaphoreTake(lk, pdMS_TO_TICKS(50))) {
+    if (xSemaphoreTake(lk, 0)) {
+        pbuf_copy_partial(p, buf, p->tot_len, 0);
+        err_t r = ERR_RTE;
         if (vo && ovpn_send_ip(vo, buf, p->tot_len, now_ms()) == 0) { r = ERR_OK; dc_bytes_out += p->tot_len; }
         xSemaphoreGive(lk);
+        return r;
     }
-    return r;
+    struct pbuf *c = outq ? pbuf_clone(PBUF_RAW, PBUF_RAM, p) : NULL;
+    if (!c) return ERR_MEM;
+    if (xQueueSend(outq, &c, 0) != pdTRUE) { pbuf_free(c); return ERR_MEM; }
+    return ERR_OK;
+}
+/* the VPN task: send what waited (after each time it held the session) */
+static void drain_out(void) {
+    struct pbuf *c;
+    static uint8_t b2[1500];                 /* the VPN task only */
+    while (outq && xQueueReceive(outq, &c, 0) == pdTRUE) {
+        uint16_t n = c->tot_len;
+        pbuf_copy_partial(c, b2, n, 0);
+        pbuf_free(c);
+        xSemaphoreTake(lk, portMAX_DELAY);
+        if (vo && ovpn_send_ip(vo, b2, n, now_ms()) == 0) dc_bytes_out += n;
+        xSemaphoreGive(lk);
+    }
 }
 static err_t vif_init(struct netif *nif) {
     nif->name[0] = 'v'; nif->name[1] = 'p';
@@ -387,6 +408,7 @@ static void teardown(void) {
     vo = NULL;
     xSemaphoreGive(lk);
     vif_down();
+    { struct pbuf *c; while (outq && xQueueReceive(outq, &c, 0) == pdTRUE) pbuf_free(c); }
     if (o) { ovpn_stop(o, now_ms()); ovpn_free(o); }
     in_lwip(raw_close, NULL);
     if (vsock >= 0) { close(vsock); vsock = -1; }
@@ -474,6 +496,7 @@ static void session_conf(int i, ovpn_conf_t *cf) {
     uint32_t last_ping = 0, up_at = 0;
     for (;;) {
         if (!enabled || pick_changed) break;
+        drain_out();                              /* anything that queued while the session was held (the ping below) */
         /* auto: on a fallback server, go back to the first (shumania) every 15 min while no Dreamcast is online */
         if (announced && i != 0 && !pick_host[0] && now_ms() - up_at > 15u * 60 * 1000 && !dc_online()) {
             note("VPN: trying %s again (first in the list)", prof[0].host);
@@ -494,6 +517,7 @@ static void session_conf(int i, ovpn_conf_t *cf) {
         ovpn_tick(vo, now_ms());
         ovpn_state_t s = ovpn_state(vo);
         xSemaphoreGive(lk);
+        drain_out();
         if (locked && (s >= OVPN_KEYS || s == OVPN_FAILED || now_ms() - lock_t > 15000)) { tls_unlock(); locked = false; }
         if (s == OVPN_FAILED) { snprintf(st.err, sizeof st.err, "%s", ovpn_error(vo)); st.fails++; note("VPN: %s", st.err); break; }
         if (s == OVPN_UP && !announced) {
@@ -595,6 +619,7 @@ size_t vpn_info_json(char *out, size_t cap) {
 
 void vpn_start(void) {
     lk = xSemaphoreCreateMutex();
+    outq = xQueueCreate(16, sizeof(struct pbuf *));
     load_profiles();
     for (int i = 0; i < nprof; i++) {
         size_t l = strlen(hosts_csv), hn = strlen(prof[i].host);
