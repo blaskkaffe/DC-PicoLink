@@ -46,6 +46,10 @@ static const char PAGE[] =
 "<div class=c><h2>dc1 to the cable</h2><form id=df><input id=dv value='get link.*' style='flex:1'><button>Send</button></form><pre id=ans class=m></pre></div>"
 "<div class=c><h2>Internet for the Dreamcast</h2><pre id=net class=m></pre><form id=nf>"
 "<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label>DCNow! ID <select id=nds><option value=0>this box<option value=1>other device<option value=2>other device, only while it is away</select></label><label>Clone a DreamPi on this network (its address, or empty to find dreampi.local) <input id=nci size=14> <button type=button id=ncb>Clone DreamPi</button></label><pre id=ncm class=m></pre><label>Type a DreamPi's MAC address or ID (only possible before the first Wi-Fi connection) <input id=ndi size=20></label><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>VPN server <select id=nvp><option value=auto>auto (shumania first)</select></label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><details class=m><summary>VPN profiles: the DreamPi ones are built in. Tap here only to replace them</summary>Files: dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client: <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></details><details class=m><summary>Firmware update</summary>ESP32: <input type=file id=uf accept=.bin> <button type=button id=ub>Update</button> <span id=us></span><br>Zero (cable): <button type=button id=zb>Restart into USB update mode</button> then copy the .uf2 to the RPI-RP2 drive on a computer</details></div>"
+"<div class=c><h2>SD card (saves to and from this computer)</h2><pre id=sds class=m>...</pre>"
+"<form><button type=button id=sdt>Take the card</button><button type=button id=sdg style=display:none>Give it back to the Dreamcast</button></form>"
+"<div id=sdb style=display:none><pre id=sdp class=m></pre><div id=sdl></div>"
+"<form id=sdu><input type=file id=sdfile multiple><button>Upload here</button><input id=sdn placeholder='new folder'><button type=button id=sdm>Make folder</button></form></div><pre id=sdr class=m></pre></div>"
 "<div class=c><h2>Wi-Fi</h2><pre id=wf class=m></pre><form id=wfm><input id=ws placeholder='home network name'>"
 "<input id=wp type=password placeholder=password><button>Save</button></form></div>"
 "</main><script>"
@@ -69,7 +73,21 @@ static const char PAGE[] =
 "$('df').onsubmit=e=>{e.preventDefault();fetch('/api/dc1',{method:'POST',body:'dc1\\n'+$('dv').value.replace(/;\\s*/g,'\\n')+'\\n'})};"
 "$('nf').onchange=e=>{nfx=true;if(e.target.id=='nds')nds=true};$('ncb').onclick=()=>fetch('/api/net',{method:'POST',body:new URLSearchParams({dcnowclone:$('nci').value.trim()||'auto'})});$('ub').onclick=async()=>{const f=$('uf').files[0];if(!f){$('us').textContent='choose the .bin first';return}$('us').textContent='uploading '+(f.size>>10)+' KB...';try{const r=await fetch('/api/update',{method:'POST',body:f});$('us').textContent=await r.text()}catch(e){$('us').textContent='upload failed'}};$('zb').onclick=()=>{if(confirm('Restart the Zero into its USB update mode? The Dreamcast link stops until it is flashed and restarts.'))fetch('/api/dc1',{method:'POST',body:'dc1\\ncall link.update\\n'})};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\\n'+t+'\\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\\n'+sv+'\\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,...($('ndi').value.trim()?{dcnowid:$('ndi').value}:{}),...(nds?{dcnowuse:$('nds').value}:{}),vpn:$('nv').checked?1:0,vpnpick:$('nvp').value,dcnet:$('nc').value,pf:$('npf').checked?1:0})});nds=false;$('ndi').value=''};"
 "$('wfm').onsubmit=e=>{e.preventDefault();fetch('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ws').value,pass:$('wp').value})})};"
-"tick();</script></body></html>";
+"let sdp='/',sdon=false;"
+"async function sdpost(o,b){try{const r=await fetch('/api/sd?'+new URLSearchParams(o),{method:'POST',body:b||''});const j=await r.json();$('sdr').textContent=j.ok?'':j.err;return j}catch(e){$('sdr').textContent='the ESP32 did not answer';return{ok:false}}}"
+"async function sdls(){let j;try{j=await (await fetch('/api/sd?op=ls&p='+encodeURIComponent(sdp))).json()}catch(e){return}$('sdp').textContent='folder: '+sdp;const L=$('sdl');L.innerHTML='';if(!j.ok){$('sdr').textContent=j.err;return}"
+"if(sdp!='/'){const a=document.createElement('a');a.href='#';a.textContent='.. (up)';a.onclick=e=>{e.preventDefault();sdp=sdp.replace(/[^\\/]+\\/$/,'');sdls()};const d=document.createElement('div');d.appendChild(a);L.appendChild(d)}"
+"j.e.sort((a,b)=>b.d-a.d||a.n.localeCompare(b.n));for(const f of j.e){const r=document.createElement('div'),a=document.createElement('a');a.textContent=f.n+(f.d?'/':'');"
+"if(f.d){a.href='#';a.onclick=e=>{e.preventDefault();sdp+=f.n+'/';sdls()}}else{a.href='/api/sd?op=get&p='+encodeURIComponent(sdp+f.n);a.download=f.n}"
+"r.appendChild(a);r.append(f.d?'  ':'  '+f.s+' bytes  ');const x=document.createElement('button');x.textContent='delete';x.onclick=async()=>{if(!confirm('Delete '+f.n+'?'))return;await sdpost({op:'rm',p:sdp+f.n});sdls()};r.appendChild(x);L.appendChild(r)}}"
+"async function sdst(){try{const j=await (await fetch('/api/sd?op=state')).json();"
+"$('sds').textContent=!j.cable?'the cable does not answer about the SD card (cable firmware too old?)':j.pi?'the Pi (dcsd) serves the Dreamcast SD card; the slot is not in use':!j.card?'no card in the slot':j.mounted?`the page has the card (${j.mb} MB); the Dreamcast sees no card until you give it back`:`card in the slot (${j.mb} MB); the Dreamcast has it`+(j.dc_busy?' and is using it right now':'')+(j.why?' - '+j.why:'');"
+"$('sdb').style.display=j.mounted?'':'none';$('sdt').style.display=j.mounted?'none':'';$('sdg').style.display=j.mounted?'':'none';if(j.mounted&&!sdon)sdls();sdon=j.mounted}catch(e){}setTimeout(sdst,5000)}"
+"$('sdt').onclick=async()=>{$('sdr').textContent='taking the card...';const j=await sdpost({op:'take',on:1});if(j.ok){sdp='/';sdon=false}sdst()};"
+"$('sdg').onclick=async()=>{await sdpost({op:'take',on:0});sdst()};"
+"$('sdu').onsubmit=async e=>{e.preventDefault();for(const f of $('sdfile').files){$('sdr').textContent='uploading '+f.name+'...';const j=await sdpost({op:'put',p:sdp+f.name},f);if(!j.ok)break}if($('sdr').textContent.startsWith('uploading'))$('sdr').textContent='uploaded';sdls()};"
+"$('sdm').onclick=async()=>{const n=$('sdn').value.trim();if(!n)return;await sdpost({op:'mkdir',p:sdp+n});$('sdn').value='';sdls()};"
+"tick();sdst();</script></body></html>";
 
 static esp_err_t page(httpd_req_t *r) {
     httpd_resp_set_type(r, "text/html");
@@ -278,13 +296,16 @@ static esp_err_t post_vpnprof(httpd_req_t *r) {
     return ESP_OK;
 }
 
+esp_err_t sdfs_get(httpd_req_t *r);
+esp_err_t sdfs_post(httpd_req_t *r);
+
 void web_start(void) {
     httpd_handle_t h = NULL;
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
     c.stack_size = 8192;
     c.max_open_sockets = 4;                 /* browsers keep connections open: at most 4, the oldest closed first */
     c.lru_purge_enable = true;
-    c.max_uri_handlers = 10;
+    c.max_uri_handlers = 12;
     if (httpd_start(&h, &c) != ESP_OK) return;
     static const httpd_uri_t u[] = {
         { .uri = "/", .method = HTTP_GET, .handler = page },
@@ -295,6 +316,8 @@ void web_start(void) {
         { .uri = "/api/net", .method = HTTP_POST, .handler = post_net },
         { .uri = "/api/vpnprof", .method = HTTP_POST, .handler = post_vpnprof },
         { .uri = "/api/update", .method = HTTP_POST, .handler = post_update },
+        { .uri = "/api/sd", .method = HTTP_GET, .handler = sdfs_get },
+        { .uri = "/api/sd", .method = HTTP_POST, .handler = sdfs_post },
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
 }

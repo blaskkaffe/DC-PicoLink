@@ -70,6 +70,14 @@ profile upload.
 | OpenVPN to Dreamcast Live, Dreamcast on tunnel address + 1, input rules on tun0 | `ovpn.c`, `vpn.c`; routes pushed by the server go into the tunnel (`../hooks/dcl_lwip_hooks.h`) |
 | UPnP port forwarding (optional) | `portfwd.c`: as DreamPi's port_forwarding.py, each mapping deleted, then DreamPi's game ports straight to the Dreamcast's home address; nothing else (not the Netlink ports); on by default |
 
+### SD card files
+
+The page's *SD card* section copies files (VMU saves, openMenu's folders) between the card in the
+cable's slot and a computer or phone over Wi-Fi: browse, download, upload, new folder, delete.
+The cable lends the card block by block (`firmware/sdlink_model.h`); FatFs runs on the ESP32
+(`main/sdfs.c`). While the page has the card the Dreamcast sees none; details in
+[../hardware/SD-SLOT.md](../hardware/SD-SLOT.md).
+
 ### DCNow! ID
 
 DCNow! knows a device only by the SHA-256 of its Wi-Fi MAC address, and cannot remove entries.

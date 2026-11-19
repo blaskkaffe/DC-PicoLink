@@ -211,6 +211,9 @@ static void deliver(void) {
         st.eth_in++;
         eth_from_dc(rx.payload, rx.n);        /* E-4: second network interface */
         break;
+    case LINK_CH_SD:                          /* the slot card for the web page (sdfs.c) */
+        sdfs_from_cable(rx.payload, rx.n);
+        break;
     case LINK_CH_TEST:                        /* the cable's self-test: straight back */
         link_send(LINK_CH_TEST, rx.payload, rx.n);   /* once: only this task frees room, so waiting here never helped */
         st.test_echo++;

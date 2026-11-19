@@ -71,6 +71,11 @@ that fails.
 - [ ] DCNow! session starts with Ethernet traffic.
 - [ ] SD card in the slot at power-up: `SD card: N MB SDHC/SDXC in the slot`.
 - [ ] A loader (openMenu, DreamShell) lists the card; a game loads from it.
+- [ ] Page *SD card*: with openMenu running, *Take the card* is refused while it reads the card,
+      works 3 s after; folders open; download a VMU save; upload a file and download it again
+      (same bytes); make and delete a folder; *Give it back*; reset: openMenu sees the new file.
+- [ ] Close the page while the card is taken: after ~60 s `SD card: back to the Dreamcast`.
+- [ ] Pull the card while the page has it: the page reports it, the cable logs the card gone.
 - [ ] Writing (a save, a file copy) and reading it back after a restart.
 - [ ] Card pulled: `SD card: removed or not answering`; put back: found again within ~2 s.
 - [ ] No card: one line `SD card slot: no card (no answer)`, nothing repeating.

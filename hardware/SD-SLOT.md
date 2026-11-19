@@ -43,3 +43,21 @@ SD loaders accept works; SDSC (2 GB and smaller) and SDHC/SDXC are handled. SPI 
 (`-DDC_SDC_HZ=...` to change). A run of blocks the Dreamcast reads is one CMD18 on the card, bytes move in bulk (about 1.4 MB/s at 12.5 MHz), and every block's CRC is checked: a block damaged on the wires is read again before the Dreamcast gets it. The search for a card
 pauses while the Dreamcast uses the serial port (a search costs a few ms of the main loop); a
 card that is already found stays in use.
+
+## Saves to and from a computer (ESP32 web page)
+
+With the ESP32 board, the page (*SD card*) shows the card's files: open folders, download a
+file, upload files into the open folder, make a folder, delete. That is the way to copy VMU
+saves and openMenu's files to and from a computer or phone over Wi-Fi.
+
+* **Take the card** lends the card to the page. Meanwhile the Dreamcast sees **no card**: two
+  programs writing one FAT file system at the same time would break it. The cable lends it
+  only when the Dreamcast has not used the card for 3 s (otherwise the page says why).
+* **Give it back to the Dreamcast** returns it. It also goes back by itself 10 min after the
+  last file operation, and 60 s after the page was closed (the page asks every 5 s while
+  open). A program that had the card open before (openMenu at its menu) may keep old file
+  information: reset the Dreamcast after changing files, before saving from a game.
+* The card must be FAT32 (as the Dreamcast's SD loaders need anyway). Long file names work.
+* Speed: downloads run at the Wi-Fi's pace (the card reads ~1.4 MB/s); uploads are written
+  block by block, roughly 150-250 KB/s, plenty for saves.
+* When the Pi's dcsd serves the Dreamcast's SD card, the slot is not used and the page says so.
