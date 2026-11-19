@@ -7,3 +7,6 @@ CONFIG_DCL_LSPI_SCLK=5
 CONFIG_DCL_LSPI_CS=4
 CONFIG_DCL_LSPI_HS=2
 CONFIG_DCL_LSPI_DR=1
+# W5500 module interrupt on GPIO7 (under the Zero's unused GP8, wired from outside): GPIO9 sits
+# under the Zero's GP15, the strength pin that is soldered through both boards
+CONFIG_DCL_W5500_INT=7

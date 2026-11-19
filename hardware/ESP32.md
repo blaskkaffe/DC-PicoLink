@@ -51,12 +51,20 @@ the USB end may differ slightly).
 | 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
 | 6 | GP27 ↔ GPIO11 | **never**: SD MOSI (out) / W5500 MOSI (out): two drivers | GP5 ↔ GPIO4 | **solder**: SPI CS |
 | 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 CS (out): two drivers | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | the strength pin (opposite corner to 5V): safe, GPIO9 is the W5500 module's INT and the Zero keeps GP15 a plain input without pulls | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 8 | GP15 ↔ GPIO9 | the strength pin (opposite corner to 5V): safe, both unused (the Zero keeps GP15 a plain input without pulls) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 9 | GP14 ↔ GPIO8 | **never**: GP14 is the Dreamcast side's power-sense input (bottom-edge corner) | GP8 ↔ GPIO7 | not joined: GPIO7 is the W5500 module's INT, wired from outside |
 
+Both boards have nine pins per side; the Zero's bottom edge (GP9-14) is the Dreamcast's.
 Minimum: 5V, GND, the six link pins (right, 3-8), plus GP15 ↔ GPIO9 for strength. With a pin
 header through both boards, **every position that has a header pin is joined**: fit pins only
 where the table says solder (or pull/clip the others), never at 3-7 on the left.
 Corners: 5V/GND top left, GP0/GP1 top right, GP15 bottom left, the SPI pins bottom right.
+
+**Insulate between the boards.** The two backs face each other: the SuperMini's back has about
+20 bare pads (GPIO14-21, 33-48 incl. the strapping pins 45/46, B+/B-) and the USB socket's
+shield tabs; the Zero's back has the RP2040, the crystal and a column of test pads. Put Kapton
+tape (or a thin insulating sheet) on one back, and keep the header's spacer between the boards
+(or a gap of about 1 mm) so nothing touches.
 None of the soldered ESP32 pins is a strapping pin except GPIO3 (JTAG source), which only
 matters with a burned eFuse (not on these boards); the Zero's pull-up on GP4 keeps it high.
 Not joined pins are wired from the outside:
@@ -84,14 +92,15 @@ the ESP32's own pins, all on the row next to 3V3 and GND:
 | GPIO11 | MOSI |
 | GPIO13 | MISO |
 | GPIO10 | CS (SCS) |
-| GPIO9 | INT |
+| GPIO9 | INT (zero-stack build: GPIO7, since GPIO9 is the soldered strength pin) |
 
 The firmware finds the module by itself ("wired port: W5500 module found", or "no W5500 module
 found ... off"). With a cable plugged in, the port is the **uplink** when a router answers DHCP
 (the wired network then is the way out, ahead of Wi-Fi), or the socket for the **Dreamcast's
 broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.98.x, DNS and
-NAT like on the cable's own network). In the stack GPIO9-13 sit over the Zero's GP15 and
-GP26-29: GP15 is an unused input, GP26-29 are not joined.
+NAT like on the cable's own network). In the stack GPIO10-13 sit over the Zero's GP26-29 (not joined, wired from the
+outside), GPIO9 under GP15 (the soldered strength pin, unused), and INT goes to GPIO7 (under the
+Zero's unused GP8, not joined).
 
 SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP27, MISO GP28, CS GP29), see [SD-SLOT.md](SD-SLOT.md).
 

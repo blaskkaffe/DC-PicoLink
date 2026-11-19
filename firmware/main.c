@@ -1215,9 +1215,10 @@ static void link_init(void) {
     gpio_set_dir(PIN_LSPI_DR, GPIO_IN);
     gpio_pull_down(PIN_LSPI_DR);
     for (uint p = 0; p <= 1; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
-    /* GP15 sits over the ESP32's GPIO9, the W5500 module's interrupt line: soldered for strength,
-       so no pull-down of ours may load it */
-    gpio_init(15); gpio_set_dir(15, GPIO_IN); gpio_disable_pulls(15);
+    /* GP15 sits over the ESP32's GPIO9 (the strength pin, soldered through both boards) and GP8
+       over GPIO7 (the W5500 module's interrupt, wired from outside): plain inputs without pulls,
+       so neither loads an ESP32 pin even where a header joins them */
+    for (uint p = 8; p <= 15; p += 7) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
     lspi_dma_tx = (int)dma_claim_unused_channel(true);
     lspi_dma_rx = (int)dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config((uint)lspi_dma_tx);
