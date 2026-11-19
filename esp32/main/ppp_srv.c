@@ -80,8 +80,10 @@ static size_t ser_out(const void *data, size_t len) {
 static void sq_clear(void);                  /* the serial queue (below) */
 static volatile bool call_lan;               /* this call: the Dreamcast has its home address, no NAT (dclan.c) */
 
+static void sq_sent(size_t n);                 /* the serial queue's pacing (below) */
 static u32_t out_cb(ppp_pcb *p, const void *data, u32_t len, void *ctx) {
     (void)p; (void)ctx;
+    if (carrier == 0) sq_sent(len);
     return (u32_t)ser_out(data, len);
 }
 
@@ -123,26 +125,48 @@ static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_
    the cable gets one at a time. Only touched in lwIP's context (its thread or the core lock). */
 #if CONFIG_DCL_LINK_SPI
 static serq_t sq;
+static serq_pace_t pace;                       /* what waits on the cable for the line (estimate) */
 static volatile bool feed_posted;
+static esp_timer_handle_t feed_timer;
 static void sq_drop(void *p) { pbuf_free((struct pbuf *)p); }
+static void sq_feed_cb(void *a);
+static void feed_timer_cb(void *a) {           /* esp_timer task: go on in lwIP's thread */
+    (void)a;
+    if (!feed_posted) { feed_posted = true; if (tcpip_try_callback(sq_feed_cb, NULL) != ERR_OK) feed_posted = false; }
+}
 static void sq_feed(void) {
     struct pbuf *q;
-    while (serq_feed_ok((uint32_t)link_backlog()) && (q = serq_next(&sq, NULL))) {
-        if (netif_is_up(&pppif)) ppp_output_orig(&pppif, q, NULL);
+    float wire = (float)link_wire_baud();
+    while (!serq_empty(&sq)) {
+        uint32_t wait = 0;
+        if (!serq_feed_ok((uint32_t)link_backlog())) return;          /* the link task wakes us (ppp_serial_room) */
+        if (!serq_pace_ok(&pace, (uint64_t)esp_timer_get_time(), wire, &wait)) {
+            if (!feed_timer) {
+                esp_timer_create_args_t a = { .callback = feed_timer_cb, .name = "serq" };
+                if (esp_timer_create(&a, &feed_timer) != ESP_OK) return;
+            }
+            esp_timer_stop(feed_timer);
+            esp_timer_start_once(feed_timer, wait);
+            return;
+        }
+        q = serq_next(&sq, NULL);
+        if (netif_is_up(&pppif)) ppp_output_orig(&pppif, q, NULL);   /* ser_out counts its bytes into pace */
         pbuf_free(q);
     }
 }
 static void sq_feed_cb(void *a) { (void)a; feed_posted = false; sq_feed(); }
+static void sq_sent(size_t n) { serq_pace_now(&pace, (uint64_t)esp_timer_get_time(), (float)link_wire_baud()); serq_pace_sent(&pace, (uint32_t)n); }
 /* the link task: the cable took bytes; go on in lwIP's thread if something waits */
 void ppp_serial_room(void) {
     if (feed_posted || serq_empty(&sq) || !serq_feed_ok((uint32_t)link_backlog())) return;
     feed_posted = true;
     if (tcpip_try_callback(sq_feed_cb, NULL) != ERR_OK) feed_posted = false;
 }
-static void sq_clear(void) { LOCK_TCPIP_CORE(); serq_clear(&sq, sq_drop); UNLOCK_TCPIP_CORE(); }
+static void sq_clear(void) { LOCK_TCPIP_CORE(); serq_clear(&sq, sq_drop); pace.q = 0; UNLOCK_TCPIP_CORE(); }
 #else
 void ppp_serial_room(void) {}
 static void sq_clear(void) {}
+static void sq_sent(size_t n) { (void)n; }
 #endif
 
 static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {

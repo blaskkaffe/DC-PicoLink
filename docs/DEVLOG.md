@@ -384,3 +384,9 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
 - SD slot: CMD18 streams for the Dreamcast's runs, bulk SPI transfers, CRC checked per block.
   The ESP32 shows the card's files (sdlink_model.h + sdfs.c); tests/test_sdlink.c runs
   ESP-IDF's FatFs over the link protocol on the host, against a FAT32 image.
+- Later the same night: the first version of the queue made the cable refuse the ESP32's serial
+  pieces above ~20 ms. A refused piece stops the whole link (the cable runs no transaction while
+  it holds one), so the Dreamcast's own packets to the server waited too: up to 129 ms during a
+  download in the simulation, which did not model the upstream at all. Now the ESP32 paces by
+  time (serq_pace_t, the line rate from the cable's hello) and the cable takes what fits; the
+  simulation measures the upstream and fails if it ever waits.

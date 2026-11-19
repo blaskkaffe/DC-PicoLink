@@ -9,6 +9,7 @@
  * Either way a mutex keeps packets from interleaving.
  */
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -173,6 +174,9 @@ size_t link_last_answer(char *out, size_t cap, uint32_t *seq) {
     return n;
 }
 
+static volatile uint32_t wire_baud;    /* the serial line's rate (the cable's hello, every second) */
+uint32_t link_wire_baud(void) { return wire_baud; }
+
 /* an answer from the cable: keep it; "ok hello.* / ok link.*" lines also go to cable_info */
 static void on_api(const char *p, size_t n) {
     xSemaphoreTake(info_lock, portMAX_DELAY);
@@ -188,6 +192,7 @@ static void on_api(const char *p, size_t n) {
             (strncmp(rest, "hello.", 6) == 0 || strncmp(rest, "link.", 5) == 0)) {
             if (strncmp(rest, "hello.kind", 10) == 0) is_info = true;
             size_t rl = len - (size_t)(rest - line);
+            if (rl > 17 && strncmp(rest, "link.serial.wire ", 17) == 0) wire_baud = (uint32_t)strtoul(rest + 17, NULL, 10);
             if (o + rl + 2 < sizeof info) { memcpy(info + o, rest, rl); o += rl; info[o++] = '\n'; }
         }
     }

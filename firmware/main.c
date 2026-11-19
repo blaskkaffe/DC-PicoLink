@@ -43,7 +43,6 @@
 #include "hardware/uart.h"
 #include "dcmode.h"
 #include "link_model.h"
-#include "serq_model.h"
 #include "link_test_model.h"
 #include "cable_api.h"
 #define W5_PUSH(b) ((void)(b))
@@ -346,9 +345,7 @@ static void usb_to_dc(void) {
     }
 
     uint32_t n = 0;
-    if (ser_to_link()) {                          /* bytes from the ESP32: small DMA pieces, the line's queue stays short */
-        uint32_t hold = serq_hold(wire_baud);
-        if (limit > hold) limit = hold;
+    if (ser_to_link()) {                          /* bytes from the ESP32 (it paces them: serq_model.h) */
         while (n < limit && ser_in_rd != ser_in_wr)
             tx_buf[tx_cur][n++] = ser_in[ser_in_rd++ % SER_IN_SIZE];
     } else if (!ser_bridge() && tud_cdc_available())
@@ -1373,8 +1370,9 @@ static bool link_deliver(void) {
             return true;
         }
         if (!ser_to_link() || dc_mode != MODE_SERIAL) { link_ser_drop += (uint32_t)n; return true; }
-        /* hold only ~20 ms for the line; the rest waits on the ESP32, where UDP can go first (serq_model.h) */
-        if (ser_in_wr - ser_in_rd >= serq_hold(wire_baud) || SER_IN_SIZE - (ser_in_wr - ser_in_rd) < n) return false;
+        /* refused only when it does not fit: a refused packet stops the whole link (the Dreamcast's
+           own packets to the ESP32 too), so the ESP32 paces what it sends instead (serq_model.h) */
+        if (SER_IN_SIZE - (ser_in_wr - ser_in_rd) < n) return false;
         for (size_t i = 0; i < n; i++) ser_in[ser_in_wr++ % SER_IN_SIZE] = p[i];
         return true;
     case LINK_CH_ETH:

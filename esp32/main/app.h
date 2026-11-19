@@ -9,7 +9,8 @@ void link_start(void);
 bool link_send(uint8_t ch, const void *p, size_t n);   /* false if the queue is full */
 bool link_is_up(void);
 size_t link_room(void);                              /* free bytes in the queue to the cable */
-size_t link_backlog(void);                           /* bytes still waiting for the cable */
+size_t link_backlog(void);
+uint32_t link_wire_baud(void);                       /* the Dreamcast serial line's rate, 0 = not known yet */                           /* bytes still waiting for the cable */
 void ppp_serial_room(void);
 void sdfs_from_cable(const uint8_t *p, size_t n);   /* LINK_CH_SD answers (sdfs.c) */                          /* from the link: the cable took bytes (serial queue, ppp_srv.c) */
 void link_wait_room(int ms);                         /* until the cable takes bytes, at most ms (not from the link task) */

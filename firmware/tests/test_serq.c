@@ -26,7 +26,21 @@ int main(void) {
     CHECK(serq_hold(9600) == 64);
     CHECK(serq_hold(1562500) == 2048);
     CHECK(serq_hold(0) == 64);
-    CHECK(serq_feed_ok(0) && !serq_feed_ok(1));
+    CHECK(serq_feed_ok(0) && serq_feed_ok(1023) && !serq_feed_ok(1024));
+    /* pacing: what waits on the cable drains at baud/10 bytes per second */
+    {
+        serq_pace_t pc = { 0, 0 }; uint32_t w = 0;
+        CHECK(serq_pace_ok(&pc, 0, 115200, &w));                       /* nothing sent yet */
+        serq_pace_sent(&pc, 1000);                                     /* 1000 bytes = 86.8 ms */
+        CHECK(!serq_pace_ok(&pc, 0, 115200, &w));
+        CHECK(w > 60000 && w < 70000);                                 /* until 230 bytes are left: ~67 ms */
+        CHECK(!serq_pace_ok(&pc, 60000, 115200, &w));
+        CHECK(serq_pace_ok(&pc, 68000, 115200, &w));
+        CHECK(serq_pace_now(&pc, 200000, 115200) == 0.0f);             /* never below zero */
+        serq_pace_t pu = { 0, 0 };
+        serq_pace_sent(&pu, 500);
+        CHECK(!serq_pace_ok(&pu, 1000, 0, &w) && w >= 1000);            /* rate not known: 115200 assumed */
+    }
 
     /* fast goes first; each queue keeps its own order */
     serq_t s; memset(&s, 0, sizeof s);
