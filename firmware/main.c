@@ -26,6 +26,7 @@
  */
 
 #include <string.h>
+#include <malloc.h>
 #include <math.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
@@ -716,9 +717,13 @@ static void force_task(void) {
    it stops after 60 s and keeps the last 1.3 ms. Sent to the Pi as 'L' len:u16 data chunks (oldest
    sample first), ending with a zero-length chunk; dcsd decodes the SPI frames. */
 #if DC_DIAG
-#define CAP_BYTES  32768u
-#define CAP_WORDS  (CAP_BYTES / 4)
-static uint32_t cap_buf[CAP_WORDS] __attribute__((aligned(CAP_BYTES)));
+/* the ring is taken from the free RAM at start (aligned to its size for the DMA ring): as a
+   static buffer it sat at the next 32 KB boundary after the code, so a little more code
+   moved it 32 KB on and the debug build no longer fit (this firmware runs from RAM) */
+static uint32_t *cap_buf;
+static uint32_t cap_bytes;                       /* 32 KiB, or 16 / 8 if RAM is short; 0 = none */
+#define CAP_BYTES  cap_bytes
+#define CAP_WORDS  (cap_bytes / 4)
 static int cap_dma = -1;
 static uint cap_sm = 1, cap_off;
 static enum { CAP_IDLE, CAP_ARMED, CAP_SEND } cap_state;
@@ -726,6 +731,8 @@ static uint32_t cap_sent, cap_armed_at, cap_start, cap_seen_w5;
 static float cap_mhz;
 
 static void cap_init(void) {
+    for (cap_bytes = 32768u; cap_bytes >= 8192u && !(cap_buf = memalign(cap_bytes, cap_bytes)); cap_bytes /= 2) { }
+    if (!cap_buf) cap_bytes = 0;
     pio_sm_claim(pio1, cap_sm);
     cap_off = pio_add_program(pio1, &la_capture_program);
     pio_sm_config c = la_capture_program_get_default_config(cap_off);
@@ -754,9 +761,10 @@ static void capture_task(void) {
     uint32_t now = time_us_32();
     if (cap_req) {
         cap_req = false;
+        if (!cap_bytes) { status("capture: no RAM for the ring"); return; }
         pio_sm_set_enabled(pio1, cap_sm, false);
         dma_channel_abort(cap_dma);
-        memset(cap_buf, 0xFF, sizeof cap_buf);
+        memset(cap_buf, 0xFF, cap_bytes);
         pio_sm_clear_fifos(pio1, cap_sm);
         pio_sm_restart(pio1, cap_sm);
         pio_sm_exec(pio1, cap_sm, pio_encode_jmp(cap_off));
@@ -767,7 +775,7 @@ static void capture_task(void) {
         channel_config_set_transfer_data_size(&dc, DMA_SIZE_32);
         channel_config_set_read_increment(&dc, false);
         channel_config_set_write_increment(&dc, true);
-        channel_config_set_ring(&dc, true, 15);              /* 32 KiB write ring */
+        channel_config_set_ring(&dc, true, (uint)__builtin_ctz(cap_bytes));   /* write ring of cap_bytes */
         channel_config_set_dreq(&dc, pio_get_dreq(pio1, cap_sm, false));
         dma_channel_configure(cap_dma, &dc, cap_buf, &pio1->rxf[cap_sm], 0xFFFFFFFFu, true);
         pio_sm_set_enabled(pio1, cap_sm, true);
@@ -1138,6 +1146,48 @@ static void sdcard_init(void) {
     gpio_put(PIN_SDC_CS, 1);
     gpio_set_dir(PIN_SDC_CS, GPIO_OUT);
 }
+/* the slot card for the ESP32's web page (sdlink_model.h): while it has the card, the
+   Dreamcast sees none */
+static bool esp_owns;                                /* the ESP32 has the slot card */
+static uint32_t dc_sd_last;                          /* the Dreamcast's last SD read/write (time_us_32) */
+static int sdlk_bad;                                 /* failed block requests in a row */
+static void sdlk_take(void) {
+    sdl_src_detach(&sdsrc, &sdcard);
+    esp_owns = true;
+    status("SD card: the ESP32's web page has the card; the Dreamcast sees no card until it is given back");
+}
+static void sdlk_give_back(void) {
+    esp_owns = false;
+    if (sdc_attached) sdl_src_attach(&sdsrc, &sdcard);
+    status("SD card: back to the Dreamcast");
+}
+static bool sdlk_did(bool ok) {
+    if (ok) { sdlk_bad = 0; return true; }
+    if (++sdlk_bad >= 3 && sdc_attached) {           /* the card went away under the web page */
+        sdl_stream_stop(&sdcard);
+        sdc_attached = false;
+        status("SD card: removed or not answering (web page)");
+    }
+    return false;
+}
+static bool sdlk_write_block(uint32_t lba, const uint8_t *d) {
+    bool ok = sdl_write(&sdcard, lba, d) || sdl_write(&sdcard, lba, d);
+    bool stuck = false;
+    while (ok && sdl_write_busy_t(&sdcard, &stuck)) { }   /* a few ms: the Dreamcast is not using SD now */
+    return ok && !stuck;
+}
+#define SDLK_SEND(p, n)      link_send(LINK_CH_SD, (p), (n))
+#define SDLK_READ(l, r, d)   sdlk_did(((r) && sdl_stream_read(&sdcard, (l), (d))) || sdl_read(&sdcard, (l), (d)))
+#define SDLK_WRITE(l, d)     sdlk_did(sdlk_write_block((l), (d)))
+#define SDLK_HAVE_CARD()     sdc_attached
+#define SDLK_BLOCKS()        sdcard.blocks
+#define SDLK_PI()            sd_link_up
+#define SDLK_DC_LAST_US()    dc_sd_last
+#define SDLK_TAKE()          sdlk_take()
+#define SDLK_GIVE()          sdlk_give_back()
+#include "sdlink_model.h"
+static sdlk_cable_t sdlk;
+
 static void sdcard_task(void) {
     static uint32_t next_try;
     static const char *said_why;
@@ -1146,6 +1196,11 @@ static void sdcard_task(void) {
         if (sdc_attached) { sdc_attached = false; status("SD card: the Pi's dcsd serves the Dreamcast's SD card now; the slot rests"); }
         return;
     }
+    {   /* the Dreamcast's use of its SD card: a new read run or a written block */
+        static uint32_t g0, w0;
+        if (sd.rd_gen != g0 || sd.wr_seq != w0) { g0 = sd.rd_gen; w0 = sd.wr_seq; dc_sd_last = now; }
+    }
+    if (esp_owns) return;                            /* the web page has it (sdlk_cable_poll) */
     if (!sdc_attached) {
         static bool tried;                           /* always once at start; then not while serial runs (a search costs a few ms) */
         if (tried && ((int32_t)(now - next_try) < 0 || seen_mode == MODE_SERIAL)) return;
@@ -1176,6 +1231,7 @@ static void sdcard_task(void) {
 
 static void sd_task(void) {
     sdcard_task();
+    sdlk_cable_poll(&sdlk, time_us_32());
     /* No DTR on a vendor interface: the link is up while dcsd talks to us (it
        sends 'I' at start and every 2 s), and down after 5 s of silence. */
     static uint32_t last_rx;
@@ -1335,7 +1391,9 @@ static bool link_deliver(void) {
     case LINK_CH_TEST:
         link_test_rx(&link_test, p, n, time_us_32());
         return true;
-    default:                         /* STAT, SD (reserved): nothing for the cable */
+    case LINK_CH_SD:                 /* the ESP32's web page and the slot card */
+        return sdlk_cable_rx(&sdlk, p, n, time_us_32());
+    default:                         /* STAT: nothing for the cable */
         return true;
     }
 }

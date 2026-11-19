@@ -37,6 +37,14 @@ fi
 # the ESP32-only probe's bit-banged SPI slave (logic only; the probe firmware measures the timing)
 if gcc -O2 -Wall -o "$out/test_dcspi_bb" ../esp32/tests/dcspi_bb/test_dcspi_bb.c && "$out/test_dcspi_bb" > "$out/dcspi_bb.log"; then
     echo "PASS test_dcspi_bb: $(tail -1 "$out/dcspi_bb.log")"; else echo "FAIL test_dcspi_bb"; tail "$out/dcspi_bb.log"; fail=1; fi
+# SD files over the link (sdlink_model.h) with ESP-IDF's FatFs on top: needs IDF_PATH
+if [ -n "$IDF_PATH" ] && [ -f "$IDF_PATH/components/fatfs/src/ff.c" ]; then
+    ff="$out/ff"; mkdir -p "$ff"; fs="$IDF_PATH/components/fatfs/src"
+    cp "$fs/ff.c" "$fs/ff.h" "$fs/ffunicode.c" "$fs/diskio.h" "$ff/"
+    sed -e 's|#include "freertos/FreeRTOS.h"||; s|#include "freertos/semphr.h"||; s|#define FF_FS_REENTRANT\t1|#define FF_FS_REENTRANT\t0|' "$fs/ffconf.h" > "$ff/ffconf.h"
+    if gcc -O1 -Wall -I. -I"$ff" -Itests/sdlink_stub tests/test_sdlink.c "$ff/ff.c" "$ff/ffunicode.c" -o "$out/test_sdlink" 2> "$out/sdlink.cc" && "$out/test_sdlink" > "$out/sdlink.log"; then
+        echo "PASS test_sdlink: $(tail -1 "$out/sdlink.log")"; else echo "FAIL test_sdlink"; cat "$out/sdlink.cc"; tail "$out/sdlink.log"; fail=1; fi
+else echo "SKIP test_sdlink (set IDF_PATH for ESP-IDF's FatFs)"; fi
 # the ESP32 web page's script must parse (a bad escape leaves the page at "link: ?")
 "$here/check-web-page.sh" || fail=1
 exit $fail
