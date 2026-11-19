@@ -85,6 +85,8 @@ static volatile bool cap_req;
 #endif
 static inline uint8_t sdc_xfer(uint8_t b) { uint8_t r; spi_write_read_blocking(SDC_SPI, &b, &r, 1); return r; }
 #define SDL_XFER(b)   sdc_xfer(b)
+#define SDL_READ(p, n)  spi_read_blocking(SDC_SPI, 0xFF, (p), (n))     /* the FIFO stays full: no gap per byte */
+#define SDL_WRITE(p, n) spi_write_blocking(SDC_SPI, (p), (n))
 #define SDL_CS(on)    gpio_put(PIN_SDC_CS, !(on))
 #define SDL_SLOW()    spi_set_baudrate(SDC_SPI, 400000)
 #define SDL_FAST()    spi_set_baudrate(SDC_SPI, DC_SDC_HZ)
@@ -1164,11 +1166,11 @@ static void sdcard_task(void) {
         return;
     }
     if (!sdl_src_poll(&sdsrc, &sdcard, 2)) {
-        sdl_src_detach(&sdsrc);
+        sdl_src_detach(&sdsrc, &sdcard);
         sdc_attached = false;
         next_try = now + 1000000u;
-        status("SD card: removed or not answering (%lu blocks read, %lu written, %lu errors)",
-               (unsigned long)sdcard.reads, (unsigned long)sdcard.writes, (unsigned long)sdcard.errors);
+        status("SD card: removed or not answering (%lu blocks read, %lu written, %lu errors, %lu bad CRCs read again)",
+               (unsigned long)sdcard.reads, (unsigned long)sdcard.writes, (unsigned long)sdcard.errors, (unsigned long)sdcard.crc_bad);
     }
 }
 
@@ -1183,7 +1185,7 @@ static void sd_task(void) {
         return;
     }
     if (sdc_attached && tud_vendor_available()) {     /* the Pi's dcsd is back: hand over */
-        sdl_src_detach(&sdsrc);
+        sdl_src_detach(&sdsrc, &sdcard);
     }
     uint8_t buf[256];
     uint32_t n;

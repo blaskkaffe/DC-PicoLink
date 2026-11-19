@@ -32,13 +32,23 @@ static struct {
     int busy;                  /* bytes of busy after a write (kept across deselect) */
     int latency;               /* 0xFF bytes before a data token */
     int fail_reads;            /* the next N block reads answer an error */
-    uint32_t cmds;
+    int corrupt;               /* the next N blocks sent have one bit flipped (a glitch on the wires) */
+    bool streaming; uint32_t st_blk;   /* CMD18 */
+    uint32_t cmds, cmd17, cmd18, cmd12;
 } card;
 static uint32_t clock_us;
 
 static void out_push(uint8_t b) { card.out[card.on++] = b; }
 static void out_ffs(int n) { while (n--) out_push(0xFF); }
 
+static void block_out(uint32_t b) {
+    out_ffs(card.latency); out_push(0xFE);
+    int at = card.on;
+    for (int i = 0; i < 512; i++) out_push(pimg[b][i]);
+    uint16_t crc = sd_crc16(pimg[b], 512);
+    out_push((uint8_t)(crc >> 8)); out_push((uint8_t)crc);
+    if (card.corrupt) { card.corrupt--; card.out[at + 100] ^= 0x10; }
+}
 static uint32_t addr_blk(uint32_t a) { return card.sdhc ? a : a / 512; }
 
 static void exec(void) {
@@ -66,14 +76,16 @@ static void exec(void) {
         out_push(0); out_push(0);
         return;
     }
-    if (c == 17) {
+    if (c == 12) { card.cmd12++; card.streaming = false; out_push(0x00); out_push(0x00); out_push(0x00); return; }   /* R1, then 2 busy */
+    if (card.streaming) { out_push(0x04); return; }   /* only CMD12 during a stream */
+    if (c == 17 || c == 18) {
         uint32_t b = addr_blk(a);
         if (b >= PBLK) { out_push(0x40); return; }
         if (card.fail_reads) { card.fail_reads--; out_push(0x08); return; }      /* CRC/communication error */
-        out_push(0x00); out_ffs(card.latency); out_push(0xFE);
-        for (int i = 0; i < 512; i++) out_push(pimg[b][i]);
-        uint16_t crc = sd_crc16(pimg[b], 512);
-        out_push((uint8_t)(crc >> 8)); out_push((uint8_t)crc);
+        out_push(0x00);
+        if (c == 18) { card.cmd18++; card.streaming = true; card.st_blk = b; return; }   /* blocks follow in xfer() */
+        card.cmd17++;
+        block_out(b);
         return;
     }
     if (c == 24) {
@@ -98,6 +110,7 @@ static uint8_t xfer(uint8_t mosi) {
     }
     if (card.wr_state == 3) { card.wr_state = 0; card.busy = 300; return 0xE5; }   /* xxx0 0101 accepted */
     if (card.busy) { card.busy--; return 0x00; }
+    if (card.streaming && card.op >= card.on && card.st_blk < PBLK) { card.on = card.op = 0; block_out(card.st_blk++); }   /* the next block of the stream */
     uint8_t miso = card.op < card.on ? card.out[card.op++] : 0xFF;
     if (card.cn == 0 && (mosi & 0xC0) == 0x40) card.cmd[card.cn++] = mosi;
     else if (card.cn) { card.cmd[card.cn++] = mosi; if (card.cn == 6) { card.cn = 0; exec(); } }
@@ -106,7 +119,7 @@ static uint8_t xfer(uint8_t mosi) {
 
 static int speed;
 #define SDL_XFER(b) xfer(b)
-#define SDL_CS(on) (card.selected = (on), card.cn = card.selected ? card.cn : 0)
+#define SDL_CS(on) (card.selected = (on), card.cn = card.selected ? card.cn : 0)   /* a real card keeps a CMD18 across CS: so does this one */
 #define SDL_SLOW() (speed = 1)
 #define SDL_FAST() (speed = 2)
 #define SDL_NOW_US() (clock_us)
@@ -200,9 +213,68 @@ int main(void) {
     card.inserted = false;
     CHECK(!sdl_src_poll(&s, &c, 2));
     sd.wr_seq++;
-    sdl_src_detach(&s);
+    sdl_src_detach(&s, &c);
     CHECK(!sd.present && sd.wr_ack == sd.wr_seq);
 
-    printf(fails ? "sdcard: %d FAILED\n" : "sdcard: all ok (SDHC, SDSC, none, reads, writes, block source, read retry, stuck write)\n", fails);
+    /* streaming: a Dreamcast run of 200 blocks is one CMD18 on the card; a damaged block is
+       read again; a write in between, a jump elsewhere and a single block all stop it first */
+    memset(&card, 0, sizeof card); card.inserted = card.sdhc = card.v2 = true; card.latency = 2;
+    fill_img(5);
+    CHECK(sdl_init(&c));
+    sdl_src_attach(&s, &c);
+    sd_start_stream(300, 0xFFFFFFFFu);
+    got = 0;
+    for (int it = 0; it < 5000 && got < 200; it++) {
+        if (got == 50) card.corrupt = 1;              /* once, mid-run */
+        CHECK(sdl_src_poll(&s, &c, 2));
+        uint32_t avail = (uint16_t)((sd.rd_ready & 0xFFFF) - (uint16_t)sd.rd_consumed);
+        if (avail) {
+            uint8_t *sl = sd.slot[sd.rd_consumed % SD_SLOTS];
+            CHECK(!memcmp(sl + 3, pimg[300 + got], 512));
+            uint16_t cc = sd_crc16(pimg[300 + got], 512);
+            CHECK(sl[515] == (uint8_t)(cc >> 8) && sl[516] == (uint8_t)cc);
+            sd.rd_consumed++; got++;
+        }
+        if (fails) break;
+    }
+    CHECK(got == 200);
+    CHECK(c.crc_bad == 1);
+    CHECK(card.cmd18 <= 3 && card.cmd17 <= 2);       /* one run (+1 after the damaged block), not 200 commands */
+    printf("  200-block run: %u CMD18, %u CMD17, %u CMD12, %u bad CRC read again\n", card.cmd18, card.cmd17, card.cmd12, c.crc_bad);
+    /* the Dreamcast continues where it stopped: the card's stream goes on (no new command)
+       if the next block is where the stream is; read-ahead makes it a new one here */
+    sd_stop_stream();
+    uint32_t c18 = card.cmd18;
+    sd_start_stream(2000, 0xFFFFFFFFu);              /* elsewhere: CMD12 + a new CMD18 */
+    for (int it = 0; it < 20; it++) CHECK(sdl_src_poll(&s, &c, 2));
+    CHECK(card.cmd18 == c18 + 1 && card.streaming);
+    CHECK(!memcmp(sd.slot[0] + 3, pimg[2000], 512));
+    memset(sd.wr_buf, 0x77, 512); sd.wr_lba = 2003; sd.wr_seq++;   /* a write mid-stream: stops it first */
+    n = 0; while (sd.wr_ack != sd.wr_seq && n < 10000) { CHECK(sdl_src_poll(&s, &c, 2)); n++; }
+    CHECK(sd.wr_ack == sd.wr_seq && pimg[2003][0] == 0x77 && !card.streaming);
+    sd_start_stream(2003, 1);                         /* single block: CMD17, sees the new data */
+    for (int it = 0; it < 10; it++) CHECK(sdl_src_poll(&s, &c, 2));
+    CHECK(!memcmp(sd.slot[0] + 3, pimg[2003], 512));
+    /* SDSC streams with byte addresses */
+    memset(&card, 0, sizeof card); card.inserted = true;
+    fill_img(11);
+    CHECK(sdl_init(&c) && !c.sdhc);
+    sdl_src_attach(&s, &c);
+    sd_start_stream(1500, 0xFFFFFFFFu);
+    got = 0;
+    for (int it = 0; it < 500 && got < 20; it++) {
+        CHECK(sdl_src_poll(&s, &c, 2));
+        if ((uint16_t)((sd.rd_ready & 0xFFFF) - (uint16_t)sd.rd_consumed)) {
+            CHECK(!memcmp(sd.slot[sd.rd_consumed % SD_SLOTS] + 3, pimg[1500 + got], 512));
+            sd.rd_consumed++; got++;
+        }
+    }
+    CHECK(got == 20 && card.cmd18 == 1);
+    sdl_src_detach(&s, &c);
+    CHECK(!card.streaming);
+    /* the table CRC matches the bit-by-bit one */
+    for (int k = 0; k < 50; k++) CHECK(sdl_crc16(pimg[k], 512) == sd_crc16(pimg[k], 512));
+
+    printf(fails ? "sdcard: %d FAILED\n" : "sdcard: all ok (SDHC, SDSC, none, reads, writes, block source, read retry, stuck write, CMD18 runs, CRC re-read)\n", fails);
     return fails != 0;
 }

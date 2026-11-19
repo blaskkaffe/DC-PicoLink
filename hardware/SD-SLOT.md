@@ -40,6 +40,6 @@ The card is the Dreamcast's SD card (the same emulation the Pi's `dcsd` serves; 
 connected it takes precedence). Status lines: `SD card: N MB SDHC/SDXC in the slot`, `SD card
 slot: no card (no answer)`, `SD card: removed or not answering`. Any FAT32 card the Dreamcast's
 SD loaders accept works; SDSC (2 GB and smaller) and SDHC/SDXC are handled. SPI clock 12.5 MHz
-(`-DDC_SDC_HZ=...` to change). Reads one block at a time, about 1 MB/s. The search for a card
+(`-DDC_SDC_HZ=...` to change). A run of blocks the Dreamcast reads is one CMD18 on the card, bytes move in bulk (about 1.4 MB/s at 12.5 MHz), and every block's CRC is checked: a block damaged on the wires is read again before the Dreamcast gets it. The search for a card
 pauses while the Dreamcast uses the serial port (a search costs a few ms of the main loop); a
 card that is already found stays in use.
