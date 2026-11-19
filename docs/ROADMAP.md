@@ -18,6 +18,8 @@
 * Works on a breadboard build with a Dreamcast: SPI link, serial PPP over Wi-Fi, DNS, VPN with
   built-in profiles and pushed routes, UPnP port forwarding, DCNow! + port 1998, web page,
   firmware update.
+* Written since the last hardware test (host-tested): UDP-first queue for the serial line,
+  VPN auto picks the fastest ping, DCNow! ID clone/lock, the slot card's files on the web page.
 * Written and host-tested, **not on hardware yet**: the soldered stack, W5500 emulation as a
   network, SD slot on SPI1 (GP26-29), the wired uplink / BBA port, USB modem, DCNet,
   Netlink/XBAND/Capcom, shared-IPv4 check.
@@ -29,9 +31,12 @@
 ## 2. SD card on a physical slot
 
 * Written (sdcard_model.h, not on hardware yet): a card on SPI1 (GP26/27/28, CS GP9, or GP29 on
-  the zero-stack) is the Dreamcast's SD card when the Pi's dcsd isn't connected.
-* Next: USB mass storage (TinyUSB MSC) of the card while the Dreamcast is off; multi-block
-  reads for speed; fix openMenu 1.7.1 "no SD card" (needs a debug log of the openMenu boot).
+  the zero-stack) is the Dreamcast's SD card when the Pi's dcsd isn't connected; multi-block
+  streams and a CRC check on every block.
+* Written (sdlink_model.h + esp32/main/sdfs.c, not on hardware yet): the card's files on the
+  ESP32's web page (download, upload, folders, delete).
+* Next: USB mass storage (TinyUSB MSC) of the card while the Dreamcast is off; fix openMenu
+  1.7.1 "no SD card" (needs a debug log of the openMenu boot).
 
 ## 3. Hosts
 

@@ -367,3 +367,20 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   core1's W5500 path: instructions identical to the previous build (only literal addresses moved).
 - VPN routes pushed by the server go into the tunnel through lwIP's route hook
   (esp32/hooks/dcl_lwip_hooks.h wraps ESP-IDF's own ip4_route_src_hook).
+
+## Serial line queue, SD files over Wi-Fi, debug build RAM (19 Nov 2026)
+
+- Lag on serial games during any download: everything for the Dreamcast waited in one line of
+  bytes (ESP32 ring + 4 KB on the cable, ~12 KB = ~1 s at 115200), and a full ring made the PPP
+  output sleep inside lwIP's own thread in 10 ms ticks (FreeRTOS at 100 Hz), stalling every
+  network on the box. tests/test_serq_sim.c runs the real rules: a 20 Hz game update during a
+  download waited ~1 s (4 s at 57600) before, ~0.12 s average / 0.19 s worst now, the line just
+  as busy. Fix: whole packets wait on the ESP32 (UDP first, TCP in order), the cable holds ~20 ms.
+- Building every variant caught a break the main build hid: room_sem existed only in the SPI
+  build, so the UART-link ESP32 image did not compile. Build all variants after link changes.
+- The debug build (runs from RAM) stopped linking after ~2 KB more code: the 32 KB capture
+  buffer, aligned to its size, sits first in .bss at the next 32 KB boundary after the code,
+  so crossing a boundary costs 32 KB at once. It is allocated at start now (16 KB fits today).
+- SD slot: CMD18 streams for the Dreamcast's runs, bulk SPI transfers, CRC checked per block.
+  The ESP32 shows the card's files (sdlink_model.h + sdfs.c); tests/test_sdlink.c runs
+  ESP-IDF's FatFs over the link protocol on the host, against a FAT32 image.

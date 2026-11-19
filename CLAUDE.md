@@ -5,7 +5,7 @@ docs/DEVLOG.md (how the hard bugs were found; read before touching timing code).
 
 ## Build and test
 - Pico SDK 2.1.1 + Ubuntu `gcc-arm-none-eabi`. `cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 [-DDC_DIAG=0|1] && make -C build`
-- `tools/run-tests.sh [build-dir]`: C model tests; with a build dir also the PIO simulations (both pin layouts).
+- `tools/run-tests.sh [build-dir]`: C model tests; with a build dir also the PIO simulations (both pin layouts); with IDF_PATH set also the SD-over-link test with ESP-IDF's FatFs.
 - Board layouts: `-DDC_BOARD=pico` (default) or `zero-stack` (DC on GPIO9-14, ESP32 link over SPI). ESP32: `sdkconfig.zero-stack` for the SPI link.
 - `tools/make-dreampi-setup.sh`: the one-file DreamPi installer (never commit the generated file).
 - CI (.github/workflows/build.yml) builds release (250 MHz, diag off) and debug UF2s; tags `v*` make a GitHub release.
@@ -20,6 +20,9 @@ docs/DEVLOG.md (how the hard bugs were found; read before touching timing code).
 - Dreamcast pins: always via PIN_* / DC_PIN_BASE, never literal GPIO numbers; the PIO programs keep absolute `wait gpio` and are moved at load (dc_pio_reloc.h).
 - SPI link: the cable never clocks unless HS is high AND HS has fallen since its last transaction (edge latch); any change to that rule must pass tests/test_link_spi.c (it caught a probe that beat the ESP32's post_trans).
 - Host side for DreamPi stays an add-on: own files, services, iptables chains; never edit DreamPi's scripts.
+- The slot card has one owner: while the ESP32's page has it (sdlink_model.h), the Dreamcast sees no card. Never let both write the FAT.
+- The debug build (DC_DIAG=1) runs from RAM and is near full: big buffers are allocated at start (see the capture ring), not static with alignment.
+- The serial line to the Dreamcast keeps whole packets on the ESP32 (serq_model.h); never wait inside lwIP's thread for link room. tests/test_serq_sim.c must pass.
 
 ## Conventions
 - Status lines are plain English, read by users in `journalctl`; keep them short and specific.

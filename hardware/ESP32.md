@@ -14,8 +14,10 @@ the boards:
   boards soldered back to back, ~1.4 MB/s each way at once, enough for the Dreamcast's full
   W5500 speed (~1000 KB/s out, ~550 KB/s in). See [the stack](#the-rp2040-zero--esp32-s3-supermini-stack-spi-link).
 
-**Status: written and host-tested (timing simulation of the SPI link, PIO simulations at
-both pin layouts), not yet tried on hardware.**
+**Status: the SPI link works on a breadboard build (the boards joined by wires; self-test
+PASS, serial games online). The soldered stack, the W5500 emulation through the ESP32, the
+W5500 module and the USB modem are host-tested only (timing simulation of the SPI link, PIO
+simulations at both pin layouts).**
 
 ## UART link (Pico wiring)
 
@@ -261,8 +263,9 @@ On the page, *Firmware update*:
   `dc1` / `call link.update`.
 
 The first image with this flash layout (two app slots, from commit 2026-11-19) has to go over
-USB once, as the merged image; settings saved on the box survive it, uploaded VPN profiles do
-not (the built-in ones are used).
+USB once, as the merged image. The merged image over USB **erases the saved settings** (Wi-Fi,
+DCNow! ID, switches): the box starts as new. Uploaded VPN profiles have their own partition and
+stay. Updates from the page keep everything.
 
 ## DCNet
 
@@ -282,6 +285,8 @@ Works for the USB modem and for the serial cable (`ATDT*69...`).
 | TTL 64 for the Dreamcast's packets, double-SYN drop for ports 3200-3205 | same |
 | DCNow! reports, config service on port 1998 (dreamcast.online/now/configure) | same, as `dreampi.local` |
 | DCNet with `*69` | same |
-| VPN (Dreamcast Live): the Dreamcast gets the tunnel address + 1, inbound limited to ICMP, TCP 65432/65433, UDP 20001/20002 | same; profiles uploaded on the page (Internet for the Dreamcast > VPN profiles) |
+| VPN (Dreamcast Live): the Dreamcast gets the tunnel address + 1, inbound limited to ICMP, TCP 65432/65433, UDP 20001/20002 | same; profiles built in (or uploaded on the page) |
+| VPN server: one ping to each in server.list, the fastest is used | same (no answer from any: list order, shumania first); the page can pin one |
+| dcnatrules: the address swaps in dnat.txt (old game servers to revived ones) | same, fetched at start and kept in flash |
 | UPnP port forwarding (only with `--enable-port-forwarding`, off by default) | same port list, on by default (page switch); plus the Netlink ports, and the box's own NAT forwards the game ports on to the Dreamcast |
 | Netlink: direct dial, matchmaking, game server codes (netlink_config.ini), XBAND server and calls, Capcom matching | same, over the USB modem; no SIP ring on XBAND calls |

@@ -3,9 +3,9 @@
 How each part works today, in detail. For the big picture see [ARCHITECTURE.md](ARCHITECTURE.md);
 for what changes next see [ROADMAP.md](ROADMAP.md).
 
-> **SD card:** this describes the current implementation (blocks served from a disk image
-> on the host by `dcsd`). It is planned to move to a physical SD slot on the board
-> (ROADMAP.md); the Dreamcast side of the emulation stays the same.
+> **SD card:** the SD sections describe blocks served from a disk image on the host by `dcsd`.
+> The board's own SD slot (`sdcard_model.h`, [../hardware/SD-SLOT.md](../hardware/SD-SLOT.md))
+> feeds the same Dreamcast-side emulation when no dcsd is connected.
 
 One RP2040 on the Dreamcast serial port (through a DC SD Adapter V2), seen by the
 PC/Pi as a composite USB device:

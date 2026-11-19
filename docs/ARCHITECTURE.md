@@ -24,8 +24,12 @@ backup that is copied to the controller's VMU at launch and back afterwards).
 * Today: blocks come from a disk image on the host (`dcsd` daemon, USB vendor interface).
 * Written (not on hardware yet): a physical SD slot on the board's own SPI pins, with the
   RP2040 emulating the card protocol towards the Dreamcast and using the card as storage
-  (`sdcard_model.h`). No host software needed; the card can be read in any PC. Planned:
-  the board shows it as a USB drive while the Dreamcast is off.
+  (`sdcard_model.h`: multi-block streams, every block's CRC checked). No host software
+  needed; the card can be read in any PC.
+* Written (not on hardware yet): with the ESP32, the slot card's files on the web page. The
+  cable lends the card block by block over the link (`sdlink_model.h`), FatFs runs on the ESP32;
+  while the page has the card the Dreamcast sees none.
+* Planned: the board shows the card as a USB drive while the Dreamcast is off.
 
 ## Mode selection
 
