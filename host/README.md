@@ -4,7 +4,7 @@ What runs on the computer the board is plugged into.
 
 | Folder | Status |
 |---|---|
-| [`dreampi/`](dreampi) | working: udev names, `dcusb0` DHCP + NAT, Dreamcast Live VPN address (`dcusb0-vpn`), SD image server (`dcsd`), helper commands. Kept as a self-contained add-on to DreamPi: own files, services and iptables chains, nothing in DreamPi's scripts is changed. |
+| [`dreampi/`](dreampi) | working: udev names, `dcusb0` DHCP + NAT, Dreamcast Live VPN address (`dcusb0-vpn`), Dreamcast Now! for the W5500 Dreamcast (`dcusb0-dcnow`), the Quake 3 server-list fix (`dcusb0-masterfix`), SD image server (`dcsd`), helper commands (`dcsd-mode`, `dcsd-capture`, `dreampi-snapshot`). Kept as a self-contained add-on to DreamPi: own files, services and iptables chains, nothing in DreamPi's scripts is changed. |
 | [`linux/`](linux) | planned |
 | [`macos/`](macos) | planned |
 | [`windows/`](windows) | planned |

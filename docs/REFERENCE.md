@@ -356,6 +356,9 @@ Everything the Pi needs is in `host/dreampi/`:
 | `dcsd-mount` / `dcsd-umount` | `/usr/local/sbin/` | mount the image's FAT32 partition at `/mnt/dcsd` to edit it on the Pi |
 | `dcsd-mode` / `dcsd-capture` | `/usr/local/sbin/` | force a mode / arm the logic capture |
 | `dcusb0-vpn` + `.service` | `/usr/local/sbin/`, `/etc/systemd/system/` | the Dreamcast's own Dreamcast Live VPN address (see above) |
+| `dcusb0-dcnow` + `.service` | `/usr/local/sbin/`, `/etc/systemd/system/` | Dreamcast Now! "online" for the W5500 Dreamcast, as DreamPi's `dcnow.py` does for a modem Dreamcast (every 15 s while it is online; DreamPi reports instead while a modem/serial call is up) |
+| `dcusb0-masterfix` + `.service` | `/usr/local/sbin/`, `/etc/systemd/system/` | relay so Quake 3's server list works: the master is silent when the query has the word `dreamcast`, the relay removes it (`MASTER_ADDR` in `/etc/dcusb0.conf`) |
+| `dreampi-snapshot` | `/usr/local/bin/` | read-only report of what the DreamPi and the add-on are doing right now (`sudo dreampi-snapshot > file.txt`) |
 | `install.sh` / `uninstall.sh` | – | sets up / removes all of the above |
 
 Install (copy the `host/dreampi` folder to the Pi first, e.g. with `scp -r host/dreampi pi@dreampi.local:`):
@@ -408,7 +411,9 @@ W5500/SD PIO programs are the same; the firmware loads them moved to the board's
 `-DDC_USB_BRIDGE=1` (test build): the computer's USB network goes straight to the ESP32
 instead of the W5500 emulation, to test the link and the ESP32's network without a Dreamcast.
 Options: `-DDC_POWER_PIN=-1` turns off the sense-wire detection (default: the sixth Dreamcast
-pin, GPIO7 or GPIO14).
+pin, GPIO7 or GPIO14). `-DDC_VERSION=...` replaces `git describe` in the first log line.
+`-DDC_SDC_HZ=...` sets the SPI1 clock of the SD slot (default 12.5 MHz). `DC_PIN_BASE` and
+`DC_LINK_SPI` are set by `-DDC_BOARD=zero-stack` (9 and 1); don't pass them yourself.
 `-DDC_BAUD_MATCH=0` turns off
 Dreamcast baud rounding. `-DDC_AUTOBAUD=0` measures but never follows the DC's rate.
 `-DW5_VERSIONR_VALUE=0x..` (diagnostics) changes the W5500 version register.
@@ -417,12 +422,40 @@ the logic capture, the per-frame list and the late-read detail. The counters in 
 status lines (frames, late reads, underruns, bad RECV pointers, framing errors) stay.
 
 Release files (GitHub releases, built by CI): `dc-picolink-<version>-250mhz.uf2`
-(release: diagnostics off), `-250mhz-debug.uf2` and `-200mhz-debug.uf2` (diagnostics on).
+(release: diagnostics off), `-250mhz-debug.uf2` and `-200mhz-debug.uf2` (diagnostics on), and for the
+stack `-zero-stack-250mhz-debug.uf2` and `-zero-stack-250mhz-usbbridge-test.uf2` (the `DC_USB_BRIDGE=1` test build).
+The DreamPi installer `dc-picolink-dreampi-setup.sh` is a release file too.
 All work with or without the sense wire. The first log line after connecting
 (`cable: DC-PicoLink firmware <version> (<date> <time>) ready; ...; power sense ...`)
 shows which build is running and whether the wire is in use.
 There is no 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate and never reboots the board. To
 reflash, hold the BOOTSEL button while plugging in.
+
+## Host tests
+
+`tools/run-tests.sh` compiles and runs these with plain `gcc` (no hardware, no Pico SDK); CI runs
+them on every push. `tools/run-tests.sh <firmware build dir>` adds `pio_sim.py` and `kos_replay.py`
+(the PIO programs at both Dreamcast pin layouts) and `test_pio_reloc`. `test_sdlink` needs `IDF_PATH`
+(ESP-IDF's FatFs) and is skipped without it.
+
+| Test (`firmware/tests/`) | What it checks |
+|---|---|
+| `test_w5500`, `test_w5500_recv` | KallistiOS `w5500_adapter.c`'s SPI traffic, byte for byte, through the W5500 model; RX_RSR follows RECV at once |
+| `test_sd`, `test_sd_detect`, `test_sdcard` | KOS `sd.c` against the SD card model; the W5500 → SD switch rule (≥ 2 × 0xFF, then a command); the card on SPI1 (SDHC/SDSC, no card, multi-block) |
+| `test_sense`, `test_baud` | the power-sense wire; the wire rate equals what dcload sets on the Dreamcast for every request above 115200 (build with `-lm`) |
+| `test_link`, `test_link_spi`, `test_link_test` | link framing and the cable's `dc1` answers; the SPI link as a 1 µs step simulation; the self-test echo |
+| `test_sdlink` | the slot card's files over the link, with ESP-IDF's FatFs on top |
+| `test_serq`, `test_serq_sim` | the queues in front of the Dreamcast's serial line; a game's UDP updates beside a TCP download |
+| `test_hayes`, `test_hdlc`, `test_ipfilter`, `test_usbmodem` | Hayes modem answers; the PPP frame filter (TTL 64, PowerSmash double SYN); the same rules on Ethernet frames; the USB voice modem's answers |
+| `test_dns`, `test_dcnow`, `test_pubip`, `test_vpnpick`, `test_dclan` | the ESP32's DNS helper; DCNow! rules and the settings-service answer; the public-address query; VPN auto order (fastest ping first); the Dreamcast's home address (.98/.99 pick, 1:1 rewrite, ARP) |
+| `test_dcnet`, `test_netlink` | which calls go to DCNet; dial strings, Netlink data exchange, STUN, matchmaking JSON |
+| `test_pio_reloc` | `dc_pio_relocate()` on the really assembled PIO programs |
+
+Also run by the script: `esp32/tests/dcspi_bb` (the ESP32-only probe's bit-banged slave logic),
+`tools/dctest/dctest.py selftest` (once per run), and `tools/check-web-page.sh` (the ESP32 page's
+script must parse). Separately: `esp32/tests/run-ppp-test.sh` and `esp32/tests/ovpn/run-ovpn-test.sh`
+(CI runs both), and, as root with namespaces, `tools/test-dcusb0-vpn.sh` and
+`tools/test-dcusb0-masterfix.sh` for the DreamPi add-on's routing.
 
 ## Link self-test
 

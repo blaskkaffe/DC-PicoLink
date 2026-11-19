@@ -228,7 +228,7 @@ boot a dcload-serial CDI, then `dc-tool-ser -t /dev/dccable -b 1500000 -x progra
 | [`esp32/`](esp32) | ESP32-S3 firmware: the cable's link to Wi-Fi without a computer (under test) |
 | [`hardware/`](hardware) | wiring and build notes, [SD slot](hardware/SD-SLOT.md), [ESP32](hardware/ESP32.md) |
 | [`docs/`](docs) | [architecture](docs/ARCHITECTURE.md), [technical reference](docs/REFERENCE.md), [roadmap](docs/ROADMAP.md), [testing](docs/TESTING.md), [development log](docs/DEVLOG.md) |
-| [`tools/`](tools) | test runner, DreamPi installer builder, `dreampi_vpn_extract.py` (VPN profiles out of a DreamPi image, plain Python, works in a-Shell on iOS) |
+| [`tools/`](tools) | test runner (`run-tests.sh`) and the scripts it calls, DreamPi installer builder, `dctest/` (Dreamcast test program and host tool), network-namespace tests of the DreamPi add-on, `dreampi_vpn_extract.py` (VPN profiles out of a DreamPi image, plain Python, works in a-Shell on iOS) |
 
 ## Building
 

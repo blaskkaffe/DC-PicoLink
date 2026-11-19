@@ -20,8 +20,8 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 |---|---|---|---|---|
 | DC-BlueRetro | master | 2025-12-14 | 0 | Upstream BlueRetro, final commit "Farewell". Pure mirror |
 | | unified | | 0 | = master |
-| DC-PicoLink | main | 2026-10-27 | 0 | v0.8-era firmware, docs, dctest |
-| | claude/vibrant-meitner-9g03mc | 2026-10-27 | 6 | Cable diagnostics + dctest. PR #1 merged an earlier state; these 6 came after |
+| DC-PicoLink | main | 2026-11-19 | 0 | Cable firmware (serial, W5500, SD), RP2040-Zero + ESP32-S3 stack, DreamPi add-on, dctest, docs. Updated 19 Nov to match the code |
+| | claude/vibrant-meitner-9g03mc | | | Gone from the repo (only `main` and `unified` exist). Its six commits (PL-1 to PL-6) are in `main` now |
 | DC-DreamDash | main | 2026-10-12 | 0 | Module-based DreamPi dashboard |
 | | wifi | 2026-09-30 | 0 | Already merged into main, nothing to take |
 | | development | 2026-10-16 | 10 | DC Bridge module (added, then removed), autoupdates switch, Serial PPP / KOSnet rows |
@@ -54,22 +54,28 @@ The local clones were shallow, so the first ahead/behind counts (up to 1,536) we
 
 **Baseline (main):** serial coder's cable with dcload-exact baud dividers, auto-baud, FTDI-style sampling, RTS/CTS (PL-B1). W5500 emulation as a USB network interface (PL-B2). SD card emulation with the image served by the `dcsd` host daemon (PL-B3). Serial/SPI auto-detect via GPIO6/GPIO2 (PL-B4). SD vs W5500 sharing one chip select, with SD detection locked once a program opens the W5500 socket (PL-B5). DreamPi add-on and one-file installer (PL-B6). `dctest` hardware test tool (PL-B7). Plain-English status lines starting with `git describe`, diagnostics build switch (PL-B8). Host dirs for linux, macos, windows, dreampi.
 
-**Only on `claude/vibrant-meitner` (6 commits):**
-- PL-1 RTS-held-high watch: status line when the Dreamcast's RTS pad is high in >=2% of samples over 5 s. *written; no test in the diff*
-- PL-2 Pad-level report while the Dreamcast is off: the six pads are read out so a cable can be tested without a meter. *written; no test in the diff*
-- PL-3 Auto-baud guard (`ab_fraction`): follow a 1/n fraction of the wire rate only after 16 agreeing windows. Has a model test in `test_baud.c`. *host-tested*
-- PL-4 dctest: leave the Dreamcast at the start rate after each run, auto-return after 20 s without a host.
-- PL-5 dctest: 64 KB Dreamcast receive queue, queue high-water mark and main-loop gap in STATS. The commit message cites a 30-minute soak on hardware: 577 of 582 tests passed, the 5 failures being Dreamcast-program stalls.
-- PL-6 dctest: USB write timeout fails one test instead of ending the run; soak re-finds the Dreamcast.
+**Merged into `main` since the first snapshot (were only on `claude/vibrant-meitner`):**
+- PL-1 RTS-held-high watch: status line when the Dreamcast's RTS pad is high in >=2% of samples over 5 s. *in main, `firmware/main.c`*
+- PL-2 Pad-level report while the Dreamcast is off: the pads are read out every 10 s and when they change, so a cable can be tested without a meter. *in main*
+- PL-3 Auto-baud guard (`ab_fraction`): follow a 1/n fraction of the wire rate only after 16 agreeing windows. *in main, model test in `test_baud.c`*
+- PL-4 to PL-6 dctest: leave the Dreamcast at the start rate after each run, 64 KB receive queue with high-water marks, a USB write timeout fails one test. *in main, `tools/dctest`*
 
-**Ideas in PicoLink's own ROADMAP (not on any branch):**
-- PL-R1 Physical SD slot on the RP2040's SPI1 (GPIO26/27/28, CS GPIO9); card becomes the block source; drop the host image link; status on a second small USB serial.
-- PL-R2 USB mass storage of the card while the Dreamcast is off.
-- PL-R3 Fix openMenu 1.7.1 "no SD card" (it reads two sectors and stops). **Ties to OM Serial VMU.**
-- PL-R4 Host support: Linux udev + sharing script, macOS/Windows instructions, Android investigation, a PPP server without DreamPi, own USB VID/PID.
-- PL-R5 W5500 MISO timing margin; slow command-register polls.
-- PL-R6 **Internal modem tiering:** Pi Zero 2W with DreamPi inside the console, PicoLink to the Zero over GPIO (UART + framed packets over SPI with a TUN program), GPIO line switch so games that try the modem first fall back to serial, priority W5500 → serial → modem, per-game choice from openMenu's last-played file, later an I2S software modem.
-- PL-R7 Validation backlog: dctest on hardware, Quake 3 / UT / AFO / Worms over `dcusb0-vpn`, release (diag off) build on hardware.
+**Added to `main` after the first snapshot (Nov 2026):**
+- PL-B9 **Board layouts:** `-DDC_BOARD=zero-stack` (RP2040-Zero, Dreamcast on GPIO9-14, ESP32 link over SPI) beside the Pico wiring (Dreamcast on GPIO2-7, ESP32 link over UART). One firmware, PIO programs moved at load (`dc_pio_reloc.h`).
+- PL-B10 **ESP32-S3 side** (`esp32/`): modem emulation and PPP server, Wi-Fi + web page, DNS, Dreamcast Live VPN (own OpenVPN client, auto picks the fastest), UPnP, DCNow!, DCNet, Netlink/XBAND/Capcom matching (USB modem), W5500 uplink or BBA port, DNAT address swaps, UDP-first serial queue, firmware update of both boards from the page. Breadboard-tested over the serial cable; the soldered stack, USB modem, BBA, DCNet and Netlink are not tried on hardware.
+- PL-B11 **SD card in the board's own slot** (SPI1, `sdcard_model.h`) and **its files on the ESP32's web page** (`sdlink_model.h`, `esp32/main/sdfs.c`). Host-tested, not on hardware.
+- PL-B12 **DreamPi add-on:** `dcusb0-vpn`, `dcusb0-dcnow`, `dcusb0-masterfix` (Quake 3 server list), `dreampi-snapshot`; namespace tests for the routing.
+- PL-B13 **Serial:** no flow control from the Dreamcast (its RTS floats in games), fast slew / 8 mA on MISO tried and reverted, false W5500 -> SD switches fixed, ESP32 link self-test at every link-up.
+- PL-B14 CI builds release and debug UF2s for both boards, runs the host tests, builds `dctest` against KallistiOS (CDI image), and runs the ESP32 PPP and OpenVPN tests; tags `v*` make releases.
+
+**Ideas in PicoLink's own ROADMAP, status at 19 Nov:**
+- PL-R1 Physical SD slot on SPI1: *written and host-tested (PL-B11), not on hardware.* The host image link stays as the other source.
+- PL-R2 USB mass storage of the card while the Dreamcast is off: *open.*
+- PL-R3 Fix openMenu 1.7.1 "no SD card" (it reads two sectors and stops): *open; needs an openMenu boot log.* **Ties to OM Serial VMU.**
+- PL-R4 Host support: *DreamPi only;* Linux, macOS and Windows scripts are planned; the ESP32 covers the no-computer case.
+- PL-R5 W5500 MISO timing margin; slow command-register polls: *still listed under Robustness.*
+- PL-R6 Internal modem tiering with a Pi Zero 2W: *still on the ROADMAP; the ESP32 stack and its USB modem port are the first step in that direction.*
+- PL-R7 Validation backlog: *open,* see `docs/TESTING.md` (zero-stack checklist) and ROADMAP section 1.
 
 ### DC-DreamDash (DreamPi dashboard add-on)
 

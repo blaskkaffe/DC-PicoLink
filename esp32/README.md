@@ -145,7 +145,7 @@ waiting need the VPN on such a connection.
 |---|---|
 | `main/link.c` | link to the cable (UART or SPI slave), packets, `get hello` every second, self-test echo |
 | `main/wifi.c` | setup network + home network (NVS) |
-| `main/web.c` | the page and `/api/*` |
+| `main/web.c` | the page (`/`) and its API: `GET /api/status`, `POST /api/wifi`, `/api/dc1`, `/api/serial`, `/api/net`, `/api/vpnprof`, `/api/update`, and `GET`/`POST /api/sd` (the slot card's files, `sdfs.c`) |
 | `main/ppp_srv.c` | modem emulation, PPP server, NAT, call control (serial cable and USB modem) |
 | `main/dc_eth.c` | the cable's W5500 network as an interface |
 | `main/wired.c` | the W5500 module: uplink or BBA port |
@@ -155,12 +155,15 @@ waiting need the VPN on such a connection.
 | `main/portfwd.c` | UPnP, NAT port maps (only without a home address), shared-IPv4 check |
 | `main/dclan.c` | the Dreamcast's own home address as on DreamPi: the .99/.98 pick, proxy ARP, routing, the VPN's 1:1 mapping (`../firmware/dclan_model.h`) |
 | `main/dnsd.c`, `main/dcnow.c`, `main/pubip.c` | DNS server, DCNow! + port 1998 service, public address |
+| `main/dnat.c` | DreamPi's `dnat.txt` address swaps (Alien Front Online etc.), fetched every six hours, last copy kept in flash |
+| `main/sdfs.c` | the slot card's files over the link (FatFs on `LINK_CH_SD`) for the web page: `GET/POST /api/sd` |
+| `main/app.h`, `main/ovpn.h` | shared declarations of the ESP32 tasks; the OpenVPN client's interface |
 | `main/main.c` | status-line ring, serial monitor ring, start-up |
 | `hooks/dcl_lwip_hooks.h` | lwIP route hook (VPN routes) |
 | `components/` | vendored `mdns`, `usb_host_cdc_acm` (Apache-2.0) |
 | `../firmware/*_model.h` | host-compilable rules shared with the cable, each with a test in `../firmware/tests` |
 
-Tests: `../tools/run-tests.sh` (all models), `tests/run-ppp-test.sh` (lwIP's PPP server on the
+Tests: `../tools/run-tests.sh` (all models; also checks that the web page's script parses, `../tools/check-web-page.sh`), `tests/run-ppp-test.sh` (lwIP's PPP server on the
 PC, talked to like a Dreamcast), `tests/ovpn/run-ovpn-test.sh` (the OpenVPN client against a
 real OpenVPN 2.6 server).
 

@@ -38,7 +38,7 @@ fi
 if gcc -O2 -Wall -o "$out/test_dcspi_bb" ../esp32/tests/dcspi_bb/test_dcspi_bb.c && "$out/test_dcspi_bb" > "$out/dcspi_bb.log"; then
     echo "PASS test_dcspi_bb: $(tail -1 "$out/dcspi_bb.log")"; else echo "FAIL test_dcspi_bb"; tail "$out/dcspi_bb.log"; fail=1; fi
 # SD files over the link (sdlink_model.h) with ESP-IDF's FatFs on top: needs IDF_PATH
-if [ -n "$IDF_PATH" ] && [ -f "$IDF_PATH/components/fatfs/src/ff.c" ]; then
+if [ -n "${IDF_PATH:-}" ] && [ -f "$IDF_PATH/components/fatfs/src/ff.c" ]; then
     ff="$out/ff"; mkdir -p "$ff"; fs="$IDF_PATH/components/fatfs/src"
     cp "$fs/ff.c" "$fs/ff.h" "$fs/ffunicode.c" "$fs/diskio.h" "$ff/"
     sed -e 's|#include "freertos/FreeRTOS.h"||; s|#include "freertos/semphr.h"||; s|#define FF_FS_REENTRANT\t1|#define FF_FS_REENTRANT\t0|' "$fs/ffconf.h" > "$ff/ffconf.h"

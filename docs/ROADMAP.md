@@ -2,13 +2,13 @@
 
 > Under development: the ESP32 side has been tested with a Dreamcast on a breadboard build (serial PPP, DNS, VPN, UPnP, DCNow!; Quake, Quake III, Unreal Tournament, Alien Front Online). The soldered stack and the parts listed in 1b are not tested yet (docs/TESTING.md).
 
-## 1. Validate the current firmware (v0.8)
+## 1. Validate the current firmware (on a DreamPi)
 
-* Run `tools/dctest` (serial baud sweep, ramps, switching, W5500 net/soak) on hardware first;
-  compile `dctest.c` in a real KOS environment (never built against KOS yet).
+* Run `tools/dctest` (serial baud sweep, ramps, switching, W5500 net/soak) on hardware first.
+  CI builds `dctest.elf` and a CDI image against KallistiOS (the `dctest` artifact).
 
-* Test the net8f state on hardware (see TESTING.md): DreamShell boot, openMenu, long
-  W5500 sessions (RX resyncs should stay rare), serial PPP.
+* Test the current `main` build on hardware with a DreamPi (the zero-stack checklist is in TESTING.md):
+  DreamShell boot, openMenu, long W5500 sessions (RX resyncs should stay rare), serial PPP.
 * Test `dcusb0-vpn` with Quake 3, Unreal Tournament, AFO, Worms World Party.
 * Validate the release build (diagnostics off) on hardware: all testing so far used
   diagnostics on.

@@ -2,6 +2,12 @@
 
 Newest first. "Done" is what actually happened; "To do" is what is still open.
 
+## 2026-11-19: `unified` merged into DC-PicoLink `main`; PicoLink documents checked against the code
+
+**Done**
+- `unified` merged into `main` (README conflicts resolved: family banner kept above the status warning; `main`'s credits kept, because `main` ports Netlink code and vendors Espressif components).
+- PicoLink docs brought in line with the code: ROADMAP (no v0.8/net8f), ARCHITECTURE (models, ESP32 link), REFERENCE (build options, release files, host tests, Pi-side files), esp32/README (files, web API), host/README. `01-feature-inventory.md`: PicoLink section rewritten to the state of `main`.
+
 ## 2026-11-03 (late night, 5): the iBlue game id now follows Maple 0x21
 
 **Done**

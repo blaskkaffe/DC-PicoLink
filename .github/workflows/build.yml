@@ -52,7 +52,7 @@ jobs:
           build 250mhz       -DDC_SYS_KHZ=250000 -DDC_DIAG=0
           build 250mhz-debug -DDC_SYS_KHZ=250000 -DDC_DIAG=1
           build 200mhz-debug -DDC_DIAG=1
-          # RP2040-Zero + ESP32-S3 SuperMini stack (not tried on hardware yet)
+          # RP2040-Zero + ESP32-S3 SuperMini stack (tried on a breadboard build; the soldered stack is not)
           build zero-stack-250mhz-debug        -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack
           build zero-stack-250mhz-usbbridge-test -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1
           tools/run-tests.sh "$PWD/build-250mhz"

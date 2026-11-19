@@ -57,15 +57,21 @@ the optional sense wire, its 3.3 V supply (found automatically).
 RP2040, Pico SDK, runs from RAM (no flash-cache stalls), 250 MHz recommended.
 
 * **core0:** TinyUSB (composite device: CDC-ACM serial, vendor interface, CDC-NCM), the
-  UART bridge with DMA, auto-baud, the SD card's host link, status lines.
+  UART bridge with DMA, auto-baud, the SD card's host link (USB vendor interface to `dcsd`, or
+  the card in the board's own SPI1 slot), the ESP32 link (UART, or SPI on the zero-stack), the
+  link self-test, status lines.
 * **core1:** the bus watcher and everything timing-critical. In SPI mode it runs with
   interrupts off: a W5500 read must be answered within ~250 ns of the header, and KOS
   bit-bangs SPI with clock-low phases of ~40 ns.
 * **PIO:** pio0: UART TX/RX, a baud meter, the SD shifter. pio1: the W5500 shifter (finds
   frame ends itself; MISO changes right after each rising edge, because KOS samples RXD
   late), and a logic-analyzer capture for diagnostics.
-* Host-testable models: `w5500_model.h`, `sd_model.h`, `sense_model.h`, `baud_model.h`
-  (tests in `firmware/tests`).
+* Host-testable models (`firmware/*_model.h`, tests in `firmware/tests`): for the cable itself
+  `w5500_model.h`, `sd_model.h`, `sdcard_model.h`, `sense_model.h`, `baud_model.h`,
+  `link_model.h`, `link_spi_model.h`, `link_test_model.h`, `sdlink_model.h`, `serq_model.h`; the rules
+  shared with the ESP32 (it compiles the same headers) `hayes_model.h`, `hdlc_model.h`,
+  `ipfilter_model.h`, `dns_model.h`, `dcnow_model.h`, `pubip_model.h`, `vpnpick_model.h`,
+  `usbmodem_model.h`, `dcnet_model.h`, `netlink_model.h`, `dclan_model.h`. List with one line each: [REFERENCE.md](REFERENCE.md#host-tests).
 * Builds: release (diagnostics off) and debug (`DC_DIAG=1`: PPP frame checker, logic
   capture, per-frame lists, late-read detail).
 
@@ -78,7 +84,7 @@ RP2040, Pico SDK, runs from RAM (no flash-cache stalls), 250 MHz recommended.
 | macOS | works | planned: Internet Sharing | — (SD slot) |
 | Windows | works | planned: built-in NCM driver (Windows 11) + Internet Connection Sharing | — (SD slot) |
 | Android | possible | possible (USB tethering stack) | — |
-| **ESP32-S3** (no computer, `esp32/`) | over the UART link (GPIO12-15) | over the UART link | — (SD slot) |
+| **ESP32-S3** (no computer, `esp32/`) | over the link (UART on GPIO12-15, or SPI on the zero-stack) | over the link | the slot card's files on the web page |
 | iOS | no USB serial / network access for apps | — | — |
 
 **ESP32 link.** Instead of (or beside) USB, the cable can talk to an ESP32-S3 over UART0
