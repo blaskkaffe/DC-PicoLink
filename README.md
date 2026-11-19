@@ -80,7 +80,7 @@ ESP32 details: [esp32/README.md](esp32/README.md).
 | USB modem | a USB voice modem on the ESP32: dial tone, number, answer, PPP | yes |
 | BBA | the Dreamcast's Broadband Adapter on the ESP32's W5500 module | |
 | DNS | DreamPi's DNS list from dreamcast.online, revival DNS; over TCP when the router intercepts DNS | yes |
-| DCNow! | reports, and `picolink.local:1998` (DreamPi's configuration service) | yes |
+| DCNow! | reports, and `dreampi.local:1998` for dreamcast.online/now/configure | yes |
 | DCNet | `*69` before the number, or every call | yes |
 | Netlink | direct dial, matchmaking, game server codes, XBAND, Capcom matching (USB modem) | yes |
 | VPN | Dreamcast Live, profiles built in (okayed by Dreamcast Live); the Dreamcast gets its own VPN address; auto mode pings every server and takes the fastest | yes |
