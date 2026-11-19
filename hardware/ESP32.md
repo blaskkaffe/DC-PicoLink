@@ -283,7 +283,7 @@ Works for the USB modem and for the serial cable (`ATDT*69...`).
 | dial tone, number ends after 2 s without a key, answer 8 s later (ATZ0, AT&F0, ATE0W2, ATA) | same |
 | dnsmasq with dreampi_dns.conf from dreamcast.online, upstream 46.101.91.123 / 209.50.50.129 | same; if the router intercepts DNS (UDP 53), the questions go over TCP |
 | TTL 64 for the Dreamcast's packets, double-SYN drop for ports 3200-3205 | same |
-| DCNow! reports, config service on port 1998 (dreamcast.online/now/configure) | same, as `dreampi.local` |
+| DCNow! reports, config service on port 1998 (dreamcast.online/now/configure) | same, as `picolink.local` |
 | DCNet with `*69` | same |
 | VPN (Dreamcast Live): the Dreamcast gets the tunnel address + 1, inbound limited to ICMP, TCP 65432/65433, UDP 20001/20002 | same; profiles built in (or uploaded on the page) |
 | VPN server: one ping to each in server.list, the fastest is used | same (no answer from any: list order, shumania first); the page can pin one |

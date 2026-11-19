@@ -29,8 +29,9 @@ that fails.
 - [ ] `home network: the Dreamcast gets 192.168.x.98, this box is .99 ...` once Wi-Fi is up (as a DreamPi picks them).
 - [ ] Port forwarding line: `router ... forwards 216 game ports to the Dreamcast's address 192.168.x.98` (public IPv4) or the shared-IPv4 text. The router's UPnP list shows .98, no Netlink ports, nothing for this box.
 - [ ] If the router refuses mappings for another device's address (UPnP "secure mode"), the line says `refused`; DreamPi has the same limit.
-- [ ] `http://dreampi.local:1998` shows `mac_address` / `is_enabled`; dreamcast.online/now/configure
-      finds the box and the name can be set.
+- [ ] `http://picolink.local:1998` shows `mac_address` / `is_enabled`, and `http://picolink.local` is the
+      page; `dreampi.local` does not answer from this box. Does dreamcast.online/now/configure still
+      find the box (it may look for `dreampi.local`)? Note the result here.
 - [ ] Wired uplink (W5500 module on the ESP32, cable to the router): wired line shows `uplink`
       with a DHCP address; Internet still works with Wi-Fi switched off.
 
@@ -53,7 +54,7 @@ that fails.
       Wi-Fi connection the field is gone, and typing through `/api/net` is refused with a status line.
 - [ ] *Clone DreamPi* with a real DreamPi on the network (empty address, then its address):
       `cloned the DreamPi at ...`; *DCNow! ID* switches between this box and the clone; with this
-      box's own `dreampi.local` answering only, the clone says `only this box answered`.
+      box's own address typed in, the clone says `only this box answered`.
 - [ ] Mode *only while it is away*: with the cloned DreamPi on, the box reports with its own ID
       (`reporting with this box's own ID`); power the DreamPi off: after ~90 s and no running
       session `reporting as ... (the other device's ID)`; power it on: back to the own ID.

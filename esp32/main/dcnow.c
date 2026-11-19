@@ -208,8 +208,8 @@ void dcnow_presence_poll(void) {
     refresh_eff(false);
 }
 
-/* Clone a DreamPi: copy its ID. Without an address, "dreampi.local" is looked up; this box
-   answers to that name too, so an answer from itself does not count. */
+/* Clone a DreamPi: copy its ID. Without an address, "dreampi.local" is looked up (this box is
+   picolink.local, so only a real DreamPi answers; an answer from this box's own address is still refused). */
 static char clone_ip[16];
 static void clone_task(void *arg) {
     (void)arg;
@@ -295,9 +295,10 @@ static void cfg_start(void) {
     static const httpd_uri_t p = { .uri = "/*", .method = HTTP_POST, .handler = cfg_post };
     static const httpd_uri_t o = { .uri = "/*", .method = HTTP_OPTIONS, .handler = cfg_options };
     httpd_register_uri_handler(h, &g); httpd_register_uri_handler(h, &p); httpd_register_uri_handler(h, &o);
-    /* the page looks for the box under DreamPi's name */
-    if (mdns_init() == ESP_OK) { mdns_hostname_set("dreampi"); mdns_instance_name_set("DC-PicoLink (as DreamPi)"); }
-    const char *m = "DCNow!: settings service on, as on a DreamPi (http://dreampi.local:1998, for dreamcast.online/now/configure)";
+    /* this box is picolink.local (a real DreamPi on the network keeps dreampi.local to itself: two
+       hosts with one mDNS name make each other rename). The same name reaches the web page on port 80. */
+    if (mdns_init() == ESP_OK) { mdns_hostname_set("picolink"); mdns_instance_name_set("DC-PicoLink"); }
+    const char *m = "DCNow!: settings service on, as on a DreamPi (http://picolink.local:1998; dreamcast.online/now/configure may look for dreampi.local instead)";
     log_add("esp32", m, strlen(m));
 }
 
