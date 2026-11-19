@@ -66,15 +66,7 @@ static volatile bool dcd_seen, dcd;          /* the modem reports DCD (serial st
 static uint32_t stream_drop;
 static int64_t prefix_ms = -100000;          /* when "*69" was last dialled on its own */
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[160];
-    va_list ap; va_start(ap, fmt);
-    int k = vsnprintf(t, sizeof t, fmt, ap);
-    va_end(ap);
-    if (k > (int)sizeof t - 1) k = sizeof t - 1;
-    log_add("esp32", t, (size_t)k);
-}
+#define say say_line
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static void push(uint8_t what, uint8_t val) { ev_t e = { what, val }; xQueueSend(evq, &e, 0); }

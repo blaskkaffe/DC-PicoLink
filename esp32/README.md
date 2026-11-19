@@ -100,10 +100,29 @@ the `.conf` files and `server.list` from a DreamPi's `/etc/openvpn/client/`, or 
 `dreampi-vpn.txt` that `../tools/dreampi_vpn_extract.py` makes from a DreamPi image.
 
 Like DreamPi, the tunnel stays up the whole time the box is on, not only during calls. Which
-server: "auto" on the page tries them in `server.list` order (shumania first), starts from the
-top again after a lost tunnel, and on a fallback server goes back to the first one every 15
-minutes while no Dreamcast is online. DreamPi pings every server once at start and takes the
-fastest; the page can also pin one server.
+server: "auto" on the page does as DreamPi: one ping to every server (1 s to answer), the
+fastest first (status line `VPN: ping ...`). Servers that do not answer follow in `server.list`
+order (shumania first), so with ping blocked everywhere it is the list order. After a lost
+tunnel it pings again; on a slower fallback server it pings again and moves to the fastest every
+15 minutes while no Dreamcast is online. The page can also pin one server.
+
+### The serial line's queue
+
+The serial line is the slowest part (115200 baud = 11.5 KB/s). Everything for the Dreamcast
+used to wait in one line of bytes (up to ~12 KB on the ESP32 and the cable), so during a
+download a game update could wait over a second. Now the cable holds only ~20 ms; the rest waits
+on the ESP32 as whole packets in two queues, and the line gets one packet at a time:
+
+* **UDP and ICMP first** (game updates, DNS, ping), then **TCP** (pages, downloads, lobbies).
+  TCP stays in one queue in arrival order, so its segments never overtake each other.
+* Full queues drop as a modem's full buffer would: UDP its oldest packet (a game wants the
+  newest), TCP its newest (the server sends it again). `queue_full` in `/api/status` counts them.
+* The Dreamcast connects exactly as before. A game alone sees no difference (nothing waits).
+
+`firmware/tests/test_serq_sim.c` runs the real rules: a 20 Hz game update during a download
+with an 8 KB TCP window waited about 1 s at 115200 (4 s at 57600) before, about 0.12 s on
+average and 0.19 s at worst now (0.22 / 0.35 s at 57600), with the line just as busy. What is
+left is mostly the TCP segment the update has to wait behind (1500 bytes = 0.13 s at 115200).
 
 ### Shared IPv4 (carrier-grade NAT)
 

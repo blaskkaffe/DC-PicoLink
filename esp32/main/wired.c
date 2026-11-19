@@ -117,9 +117,7 @@ static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (e->esp_netif != bba_if) return;
     cnt.leases++;
     lease_ip = e->ip.addr;
-    char t[96];
-    int k = snprintf(t, sizeof t, "wired port: the Dreamcast's broadband adapter got " IPSTR " by DHCP", IP2STR(&e->ip));
-    log_add("esp32", t, (size_t)k);
+    say_line("wired port: the Dreamcast's broadband adapter got " IPSTR " by DHCP", IP2STR(&e->ip));
 }
 
 static void up_on(void) {

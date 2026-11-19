@@ -9,6 +9,8 @@ void link_start(void);
 bool link_send(uint8_t ch, const void *p, size_t n);   /* false if the queue is full */
 bool link_is_up(void);
 size_t link_room(void);                              /* free bytes in the queue to the cable */
+size_t link_backlog(void);                           /* bytes still waiting for the cable */
+void ppp_serial_room(void);                          /* from the link: the cable took bytes (serial queue, ppp_srv.c) */
 void link_wait_room(int ms);                         /* until the cable takes bytes, at most ms (not from the link task) */
 
 typedef struct {
@@ -31,6 +33,9 @@ size_t link_last_answer(char *out, size_t cap, uint32_t *seq);
 /* ---- logs kept for the web page (main.c) ---- */
 /* status lines from the cable and the ESP32's own notes; each has a running number */
 void log_add(const char *src, const char *text, size_t n);
+void say_line(const char *fmt, ...) __attribute__((format(printf, 1, 2)));   /* a status line */
+#include "esp_http_client.h"
+int https_req(const char *url, http_event_handle_cb ev, int timeout_ms, const char *ua, const char *post, esp_err_t *er);
 size_t log_since(uint32_t since, char *json_out, size_t cap, uint32_t *next);
 /* serial bytes seen in both directions, for the monitor */
 void ser_mon_add(bool from_dc, const uint8_t *p, size_t n);

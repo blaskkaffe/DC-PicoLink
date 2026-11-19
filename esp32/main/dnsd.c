@@ -249,26 +249,16 @@ static bool fetch_file(void) {
     nc = malloc(sizeof *nc);
     if (!nc) { snprintf(fetch_err, sizeof fetch_err, "out of memory"); return false; }
     dns_conf_defaults(nc); fln = 0; took = 0; got = 0;
-    esp_http_client_config_t c = {
-        .url = DNS_FILE_URL, .event_handler = http_ev, .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024,
-    };
-    tls_lock();
-    esp_http_client_handle_t h = esp_http_client_init(&c);
     bool ok = false;
-    esp_err_t er = h ? esp_http_client_perform(h) : ESP_ERR_NO_MEM;
-    int code = h && er == ESP_OK ? esp_http_client_get_status_code(h) : 0;
-    if (h) esp_http_client_cleanup(h);
-    tls_unlock();
+    esp_err_t er;
+    int code = https_req(DNS_FILE_URL, http_ev, 10000, NULL, NULL, &er);
     if (er == ESP_OK && code == 200 && got) {
         if (fln) take_line();
         xSemaphoreTake(conf_lk, portMAX_DELAY);
         dns_conf_t *old = conf; conf = nc;                     /* the new table stays (no second 8 KB copy) */
         xSemaphoreGive(conf_lk);
         free(old);
-        char t[96];
-        int k = snprintf(t, sizeof t, "DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", conf->n_ovr, conf->n_up - 2, took);
-        log_add("esp32", t, (size_t)k);
+        say_line("DNS: %d overrides and %d extra servers from dreamcast.online (%d lines)", conf->n_ovr, conf->n_up - 2, took);
         ok = true;
     } else if (er != ESP_OK) snprintf(fetch_err, sizeof fetch_err, "%s", esp_err_to_name(er));
     else snprintf(fetch_err, sizeof fetch_err, "HTTP %d", code);

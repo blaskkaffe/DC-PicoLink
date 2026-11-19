@@ -43,15 +43,7 @@ static volatile bool kick;
 static uint32_t map_dc, map_me;                 /* what the NAT maps point at now (network order) */
 static struct { int upnp_ok, upnp_fail, maps; char router[48], err[112], dc[16], outside[16]; int shared; } st;   /* shared: 1 = provider's NAT, 2 = another NAT in front */
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[160];
-    va_list ap; va_start(ap, fmt);
-    int k = vsnprintf(t, sizeof t, fmt, ap);
-    va_end(ap);
-    if (k > (int)sizeof t - 1) k = sizeof t - 1;
-    log_add("esp32", t, (size_t)k);
-}
+#define say say_line
 
 void portfwd_set_enabled(bool on) {
     enabled = on; kick = true;

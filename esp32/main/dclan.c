@@ -54,12 +54,7 @@ static volatile uint16_t ah_port;                 /* local TCP port of the reque
 static volatile uint32_t ah_peer;                 /* the router (host order) */
 static volatile uint8_t ah_proto = 6;             /* TCP (UPnP) or UDP (the check below) */
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[180];
-    va_list ap; va_start(ap, fmt); int k = vsnprintf(t, sizeof t, fmt, ap); va_end(ap);
-    log_add("esp32", t, (size_t)(k < (int)sizeof t ? k : (int)sizeof t - 1));
-}
+#define say say_line
 static const char *ips(uint32_t h, char *b) { snprintf(b, 16, "%u.%u.%u.%u", (unsigned)(h >> 24), (unsigned)(h >> 16 & 255), (unsigned)(h >> 8 & 255), (unsigned)(h & 255)); return b; }
 
 bool dclan_addrs(uint32_t *this_ip, uint32_t *dc_ip) {

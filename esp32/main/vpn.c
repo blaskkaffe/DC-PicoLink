@@ -34,6 +34,7 @@
 #include "esp_heap_caps.h"
 #include "esp_mac.h"
 #include "ovpn.h"
+#include "vpnpick_model.h"
 #include "app.h"
 
 static const char *TAG = "vpn";
@@ -47,6 +48,7 @@ extern const char vpn_profiles_end[]   asm("_binary_vpn_profiles_txt_end");
 typedef struct { char host[64]; int port; size_t off, len; } prof_t;
 static bool prof_uploaded;                       /* text in the vpnprof partition (else built in) */
 static prof_t prof[MAX_PROF];
+static int order_[MAX_PROF], best_ = 0;            /* auto: servers by ping (ping_order) */
 static int nprof;
 
 static volatile bool enabled;
@@ -141,9 +143,7 @@ static void op_ip(void *c, const uint8_t *ip, size_t n) {
     if (n >= 28 && ip[9] == 1 && ip[20] == 0 && ((ip[24] << 8) | ip[25]) == PING_ID && ping_sent_us) {
         st.ping_ms = (int)((esp_timer_get_time() - ping_sent_us) / 1000);
         ping_sent_us = 0;
-        char t[80];
-        int k = snprintf(t, sizeof t, "VPN: tunnel works, %d ms to the server's gateway", st.ping_ms);
-        log_add("esp32", t, (size_t)k);
+        say_line("VPN: tunnel works, %d ms to the server's gateway", st.ping_ms);
         return;
     }
     if (!vif_added) return;
@@ -394,13 +394,7 @@ bool vpn_profiles_write(const void *d, size_t n, bool first, bool last) {
 }
 
 /* ---------- connect ---------- */
-static void note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-#include <stdarg.h>
-static void note(const char *fmt, ...) {
-    char t[128];
-    va_list ap; va_start(ap, fmt); int k = vsnprintf(t, sizeof t, fmt, ap); va_end(ap);
-    log_add("esp32", t, (size_t)(k < (int)sizeof t ? k : (int)sizeof t - 1));
-}
+#define note say_line
 
 static void teardown(void) {
     xSemaphoreTake(lk, portMAX_DELAY);
@@ -497,9 +491,9 @@ static void session_conf(int i, ovpn_conf_t *cf) {
     for (;;) {
         if (!enabled || pick_changed) break;
         drain_out();                              /* anything that queued while the session was held (the ping below) */
-        /* auto: on a fallback server, go back to the first (shumania) every 15 min while no Dreamcast is online */
-        if (announced && i != 0 && !pick_host[0] && now_ms() - up_at > 15u * 60 * 1000 && !dc_online()) {
-            note("VPN: trying %s again (first in the list)", prof[0].host);
+        /* auto: on a fallback server, ping again and go to the fastest every 15 min while no Dreamcast is online */
+        if (announced && i != best_ && !pick_host[0] && now_ms() - up_at > 15u * 60 * 1000 && !dc_online()) {
+            note("VPN: trying %s again (the fastest when last pinged)", prof[best_].host);
             break;
         }
         fd_set rs; FD_ZERO(&rs); FD_SET(vsock, &rs);
@@ -551,6 +545,53 @@ static void session_conf(int i, ovpn_conf_t *cf) {
     teardown();
 }
 
+/* auto: as DreamPi's openvpn-client, one ping to every server (1 s to answer), the fastest
+   first; no answer = after those, in the list's order (shumania first) */
+static void ping_order(void) {
+    int32_t rtt[MAX_PROF];
+    uint32_t addr[MAX_PROF];
+    int64_t t0[MAX_PROF];
+    for (int i = 0; i < nprof; i++) { rtt[i] = -1; addr[i] = 0; t0[i] = 0; }
+    int s = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (s >= 0) {
+        for (int i = 0; i < nprof; i++) {
+            struct addrinfo hints = { .ai_family = AF_INET }, *res = NULL;
+            if (getaddrinfo(prof[i].host, NULL, &hints, &res) != 0 || !res) continue;
+            addr[i] = ((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr;
+            freeaddrinfo(res);
+            uint8_t e[16] = { 8, 0, 0, 0, PING_ID >> 8, PING_ID & 255, 0, (uint8_t)(0x40 + i), 'D', 'C', 'P', 'L' };
+            uint16_t c = csum(e, sizeof e); e[2] = c >> 8; e[3] = c;
+            struct sockaddr_in to = { .sin_family = AF_INET, .sin_addr.s_addr = addr[i] };
+            t0[i] = esp_timer_get_time();
+            sendto(s, e, sizeof e, 0, (struct sockaddr *)&to, sizeof to);
+        }
+        int64_t end = esp_timer_get_time() + 1000000;
+        for (int64_t now; (now = esp_timer_get_time()) < end;) {
+            struct timeval tv = { 0, (long)(end - now) };
+            setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+            uint8_t b[80];
+            struct sockaddr_in from; socklen_t fl = sizeof from;
+            int n = recvfrom(s, b, sizeof b, 0, (struct sockaddr *)&from, &fl);
+            if (n <= 0) break;
+            int h = (b[0] & 15) * 4;                          /* the raw socket gives the IP header too */
+            if (n < h + 8 || b[h] != 0 || ((b[h + 4] << 8) | b[h + 5]) != PING_ID) continue;
+            int i = b[h + 7] - 0x40;
+            if (i < 0 || i >= nprof || addr[i] != from.sin_addr.s_addr || rtt[i] >= 0) continue;
+            rtt[i] = (int32_t)((esp_timer_get_time() - t0[i]) / 1000);
+        }
+        close(s);
+    }
+    vpnpick_order(rtt, nprof, order_);
+    best_ = order_[0];
+    char m[200]; size_t o = 0;
+    for (int i = 0; i < nprof && o < sizeof m - 40; i++) {
+        int k = order_[i];
+        o += (size_t)snprintf(m + o, sizeof m - o, "%s%s ", i ? ", " : "", prof[k].host);
+        o += (size_t)(rtt[k] >= 0 ? snprintf(m + o, sizeof m - o, "%ld ms", (long)rtt[k]) : snprintf(m + o, sizeof m - o, "no answer"));
+    }
+    say_line("VPN: ping %s", m);
+}
+
 static void vpn_task(void *arg) {
     (void)arg;
     int fail_round = 0;
@@ -558,10 +599,11 @@ static void vpn_task(void *arg) {
         if (!enabled || !nprof || !inet_up()) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
         pick_changed = false;
         int only = pick_index();
-        /* as DreamPi's server.list order, shumania first; a chosen server is the only one tried */
+        /* a chosen server is the only one tried; auto: fastest ping first (ping_order) */
+        if (only < 0) ping_order();
         for (int k = 0; k < (only >= 0 ? 1 : nprof) && enabled && !pick_changed; k++) {
             uint32_t c0 = st.connects;
-            session(only >= 0 ? only : k);
+            session(only >= 0 ? only : order_[k]);
             if (st.connects != c0) { fail_round = 0; break; }   /* was up, then lost: start again from the first */
             if (!enabled || pick_changed) break;
             vTaskDelay(pdMS_TO_TICKS(2000));
@@ -577,11 +619,10 @@ static void vpn_task(void *arg) {
 static bool chosen_off;                               /* switched off on the page: never switched on by itself */
 /* the box found a reason (IPv4 shared by the provider): on, unless switched off on the page */
 void vpn_auto_on(const char *why) {
-    if (!nprof) { char m[160]; int k = snprintf(m, sizeof m, "VPN: would switch on (%s), but there are no VPN profiles yet", why); log_add("esp32", m, (size_t)k); return; }
+    if (!nprof) { say_line("VPN: would switch on (%s), but there are no VPN profiles yet", why); return; }
     if (enabled || chosen_off) return;
     enabled = true;
-    char m[160]; int k = snprintf(m, sizeof m, "VPN: switched on by itself (%s)", why);
-    log_add("esp32", m, (size_t)k);
+    say_line("VPN: switched on by itself (%s)", why);
 }
 
 void vpn_set_enabled(bool on) {
@@ -598,8 +639,7 @@ void vpn_set_pick(const char *host) {
     snprintf(pick_host, sizeof pick_host, "%s", h);
     nvs_handle_t n;
     if (nvs_open("dcl", NVS_READWRITE, &n) == ESP_OK) { nvs_set_str(n, "vpn_host", pick_host); nvs_commit(n); nvs_close(n); }
-    char m[112]; int k = snprintf(m, sizeof m, "VPN: server %s", pick_host[0] ? pick_host : "auto (shumania first, as DreamPi's list)");
-    log_add("esp32", m, (size_t)k);
+    say_line("VPN: server %s", pick_host[0] ? pick_host : "auto (the fastest ping, as DreamPi)");
     pick_changed = true;
 }
 int vpn_profiles_n(void) { return nprof; }

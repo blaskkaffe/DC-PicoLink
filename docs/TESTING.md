@@ -43,6 +43,10 @@ that fails.
 - [ ] The router's device list shows .98 (with this box's MAC); from a computer at home, `ping 192.168.x.98` answers while the Dreamcast is online (if the game answers pings).
 - [ ] Web browser loads pages; DNS line counts questions.
 - [ ] During a big download over serial, `queue_full` in `/api/status` (ppp) may count up, but other traffic (the page, the VPN, a second game) keeps answering at normal speed.
+- [ ] Serial queue: Quake III's lagometer and ping with and without a download in a web browser
+      at the same time are close (before: the ping jumped by up to a second). A game alone: as before.
+- [ ] VPN auto: the log has `VPN: ping <server> N ms, ...` and connects to the first one listed;
+      with ICMP blocked to all of them, `no answer` everywhere and shumania is used.
 - [ ] Phantasy Star Online connects; Quake III master list loads.
 - [ ] DCNow!: the box shows up as online while the game is connected.
 - [ ] DCNow! ID on a new box (before any Wi-Fi was saved): typing a MAC works; after the first

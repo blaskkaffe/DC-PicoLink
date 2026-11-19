@@ -56,21 +56,15 @@ static void dnat_load(void) {
     if (nvs_get_blob(h, "dnat", keep, &n) == ESP_OK && n) {
         ipf_dnat_t *d = &sets[1 - cur]; memset(d, 0, sizeof *d); fln = 0; took = 0;
         feed(d, keep, n); if (fln) line(d);
-        if (d->n) { swap_in(d); char m[96]; int k = snprintf(m, sizeof m, "DNAT: %d address swaps from the last download (as DreamPi's dcnatrules)", d->n); log_add("esp32", m, (size_t)k); }
+        if (d->n) { swap_in(d); say_line("DNAT: %d address swaps from the last download (as DreamPi's dcnatrules)", d->n); }
     }
     nvs_close(h);
 }
 
 static bool fetch(char *err, size_t en) {
     ipf_dnat_t *d = &sets[1 - cur]; memset(d, 0, sizeof *d); fln = 0; took = 0; keep_n = 0; fill = d;
-    esp_http_client_config_t c = { .url = DNAT_URL, .event_handler = http_ev, .timeout_ms = 10000,
-                                   .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024 };
-    tls_lock();
-    esp_http_client_handle_t h = esp_http_client_init(&c);
-    esp_err_t er = h ? esp_http_client_perform(h) : ESP_ERR_NO_MEM;
-    int code = h && er == ESP_OK ? esp_http_client_get_status_code(h) : 0;
-    if (h) esp_http_client_cleanup(h);
-    tls_unlock();
+    esp_err_t er;
+    int code = https_req(DNAT_URL, http_ev, 10000, NULL, NULL, &er);
     fill = NULL;
     if (er != ESP_OK) { snprintf(err, en, "%s", esp_err_to_name(er)); return false; }
     if (code != 200) { snprintf(err, en, "HTTP %d", code); return false; }
@@ -79,8 +73,7 @@ static bool fetch(char *err, size_t en) {
     bool changed = d->n != sets[cur].n || memcmp(d->r, sets[cur].r, sizeof d->r[0] * (size_t)d->n);
     swap_in(d);
     if (changed) {
-        char m[96]; int k = snprintf(m, sizeof m, "DNAT: %d address swaps from shumania.ddns.net/dnat.txt (as DreamPi's dcnatrules)", d->n);
-        log_add("esp32", m, (size_t)k);
+        say_line("DNAT: %d address swaps from shumania.ddns.net/dnat.txt (as DreamPi's dcnatrules)", d->n);
         if (keep_n <= KEEP_MAX) {
             nvs_handle_t h2;
             if (nvs_open("dcl", NVS_READWRITE, &h2) == ESP_OK) { nvs_set_blob(h2, "dnat", keep, keep_n); nvs_commit(h2); nvs_close(h2); }

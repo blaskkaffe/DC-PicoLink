@@ -143,18 +143,14 @@ static void task(void *arg) {
         uint32_t a = ask();
         { static int checks; if (checks < 3 && !dnsd_tcp()) { checks++; check_dns_path(); } }   /* the first few rounds (Wi-Fi may come up late) */
         if (a && a != pub) {
-            char m[64];
-            int k = snprintf(m, sizeof m, "public address %u.%u.%u.%u (for the game packet rules)",
+            say_line("public address %u.%u.%u.%u (for the game packet rules)",
                              (unsigned)(a >> 24), (unsigned)(a >> 16 & 255), (unsigned)(a >> 8 & 255), (unsigned)(a & 255));
-            log_add("esp32", m, (size_t)k);
         }
         if (a) pub = a;
         else if (!pub && hint) {
             pub = hint;
-            char m[160];
-            int k = snprintf(m, sizeof m, "public address %u.%u.%u.%u (from the router: the OpenDNS lookup is blocked on this network)",
+            say_line("public address %u.%u.%u.%u (from the router: the OpenDNS lookup is blocked on this network)",
                              (unsigned)(hint >> 24), (unsigned)(hint >> 16 & 255), (unsigned)(hint >> 8 & 255), (unsigned)(hint & 255));
-            log_add("esp32", m, (size_t)k);
         } else if (!pub) {
             static char said[200];                       /* once per reason, not every minute */
             if (strncmp(said, why, sizeof said - 1)) {

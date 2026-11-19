@@ -28,11 +28,7 @@ static void mark_joined(void) {
 }
 bool wifi_joined_once(void) { return joined_once; }
 
-static void note(const char *fmt, const char *a) {
-    char t[160];
-    int k = snprintf(t, sizeof t, fmt, a);
-    log_add("esp32", t, (size_t)k);
-}
+#define note say_line
 
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg;
@@ -41,9 +37,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         if (sta_up) {
             const wifi_event_sta_disconnected_t *d = (const wifi_event_sta_disconnected_t *)data;
-            char t[160];
-            int k = snprintf(t, sizeof t, "Wi-Fi: lost %s (reason %d, signal %d dBm), trying again", sta_ssid, d ? d->reason : -1, d ? d->rssi : 0);
-            log_add("esp32", t, (size_t)k);
+            say_line("Wi-Fi: lost %s (reason %d, signal %d dBm), trying again", sta_ssid, d ? d->reason : -1, d ? d->rssi : 0);
         }
         sta_up = false;
         if (sta_ssid[0]) esp_wifi_connect();

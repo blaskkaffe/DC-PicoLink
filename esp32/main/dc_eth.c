@@ -76,9 +76,7 @@ static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {
     cnt.leases++;
     lease_ip = e->ip.addr;
     snprintf(cnt.last_ip, sizeof cnt.last_ip, IPSTR, IP2STR(&e->ip));
-    char t[96];
-    int k = snprintf(t, sizeof t, "Ethernet: the Dreamcast got " IPSTR " by DHCP", IP2STR(&e->ip));
-    log_add("esp32", t, (size_t)k);
+    say_line("Ethernet: the Dreamcast got " IPSTR " by DHCP", IP2STR(&e->ip));
 }
 
 static void watch_task(void *arg) {

@@ -33,7 +33,9 @@
 #define TX_BUF       (16 * 1024)
 
 static const char *TAG = "link";
+size_t link_room(void);
 static SemaphoreHandle_t tx_lock, info_lock;
+static SemaphoreHandle_t room_sem;     /* SPI: given when a transaction takes bytes out of the ring */
 static uint8_t tx_seq;
 static link_rx_t rx;
 static volatile int64_t last_rx_us = -10000000;
@@ -52,7 +54,6 @@ bool link_is_up(void) { return esp_timer_get_time() - last_rx_us < 3000000; }
 #define RING_SIZE   (1u << RING_BITS)
 static uint8_t ring[RING_SIZE];
 static uint32_t ring_wr, ring_rd;      /* free-running; guarded by tx_lock */
-static SemaphoreHandle_t room_sem;     /* given when a transaction takes bytes out of the ring */
 static uint8_t *lspi_txb[LSPI_NBUF], *lspi_rxb[LSPI_NBUF];
 static spi_slave_transaction_t lspi_tr[LSPI_NBUF];
 static uint16_t lspi_txn[LSPI_NBUF];   /* queued bytes in each loaded chunk */
@@ -73,24 +74,14 @@ static void lspi_update_dr(void) {
     gpio_set_level(CONFIG_DCL_LSPI_DR, (ring_wr != ring_rd || lspi_loaded_bytes) ? 1 : 0);
 }
 
-bool link_send(uint8_t ch, const void *p, size_t n) {
-    static uint8_t w[LINK_MAX_WIRE];
-    bool ok = false;
-    xSemaphoreTake(tx_lock, portMAX_DELAY);
-    if (RING_SIZE - (ring_wr - ring_rd) >= LINK_MAX_WIRE) {
-        size_t k = link_build(ch, tx_seq, p, n, w);
-        if (k) {
-            tx_seq++;
-            for (size_t i = 0; i < k; i++) ring[(ring_wr + (uint32_t)i) & (RING_SIZE - 1)] = w[i];
-            ring_wr += (uint32_t)k;
-            st.sent++;
-            ok = true;
-            lspi_update_dr();
-        }
-    }
-    if (!ok) st.send_full++;
-    xSemaphoreGive(tx_lock);
-    return ok;
+/* bytes into the ring (tx_lock held): two copies at most, not one per byte */
+static void wire_put(const uint8_t *w, size_t k) {
+    uint32_t at = ring_wr & (RING_SIZE - 1), first = RING_SIZE - at;
+    if (first > k) first = (uint32_t)k;
+    memcpy(ring + at, w, first);
+    memcpy(ring, w + first, k - first);
+    ring_wr += (uint32_t)k;
+    lspi_update_dr();
 }
 
 /* refill chunk i from the ring and hand it to the driver */
@@ -102,7 +93,7 @@ static void lspi_load(int i) {
     lspi_update_dr();
     bool freed = lspi_txn[i] != 0;
     xSemaphoreGive(tx_lock);
-    if (freed) xSemaphoreGive(room_sem);
+    if (freed) { xSemaphoreGive(room_sem); ppp_serial_room(); }   /* the serial queue may go on (ppp_srv.c) */
     lspi_tr[i].length = LINK_SPI_CHUNK * 8;
     lspi_tr[i].tx_buffer = lspi_txb[i];
     lspi_tr[i].rx_buffer = lspi_rxb[i];
@@ -110,35 +101,38 @@ static void lspi_load(int i) {
     ESP_ERROR_CHECK(spi_slave_queue_trans(LSPI_HOST, &lspi_tr[i], portMAX_DELAY));
 }
 #else
+static void wire_put(const uint8_t *w, size_t k) { uart_write_bytes(LINK_PORT, w, k); }
+#endif
+
+/* one packet to the cable, or false if the queue has no room for the largest packet */
 bool link_send(uint8_t ch, const void *p, size_t n) {
     static uint8_t w[LINK_MAX_WIRE];
     bool ok = false;
     xSemaphoreTake(tx_lock, portMAX_DELAY);
-    size_t free_b = 0;
-    uart_get_tx_buffer_free_size(LINK_PORT, &free_b);
-    if (free_b >= LINK_MAX_WIRE) {
+    if (link_room() >= LINK_MAX_WIRE) {
         size_t k = link_build(ch, tx_seq, p, n, w);
-        if (k) {
-            tx_seq++;
-            uart_write_bytes(LINK_PORT, w, k);
-            st.sent++;
-            ok = true;
-        }
+        if (k) { tx_seq++; wire_put(w, k); st.sent++; ok = true; }
     }
     if (!ok) st.send_full++;
     xSemaphoreGive(tx_lock);
     return ok;
 }
-#endif
 
 bool link_dc1(const char *msg, size_t n) { return link_send(LINK_CH_API, msg, n); }
 
-/* free bytes in the queue to the cable */
+/* free bytes in the queue to the cable; and bytes still waiting for it (ring + loaded chunks) */
 size_t link_room(void) {
 #if CONFIG_DCL_LINK_SPI
     return RING_SIZE - (ring_wr - ring_rd);          /* a word read: a snapshot is enough */
 #else
     size_t f = 0; uart_get_tx_buffer_free_size(LINK_PORT, &f); return f;
+#endif
+}
+size_t link_backlog(void) {
+#if CONFIG_DCL_LINK_SPI
+    return (ring_wr - ring_rd) + lspi_loaded_bytes;
+#else
+    return TX_BUF - link_room();
 #endif
 }
 /* wait until the cable has taken bytes (SPI) or at most ms; never from the link's reader task */
@@ -229,9 +223,7 @@ static void deliver(void) {
 static void note_up_down(bool *was_up) {
     bool up = link_is_up();
     if (up != *was_up) {
-        char t[96];
-        int k = snprintf(t, sizeof t, up ? "link to the cable: up" : "link to the cable: down (nothing heard for 3 s)");
-        log_add("esp32", t, (size_t)k);
+        say_line(up ? "link to the cable: up" : "link to the cable: down (nothing heard for 3 s)");
         *was_up = up;
     }
 }

@@ -21,6 +21,9 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "lwip/netif.h"
+#include "lwip/tcpip.h"
+#include "lwip/pbuf.h"
+#include "sdkconfig.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
 #include "netif/ppp/ppp_impl.h"
@@ -55,24 +58,16 @@ static volatile bool up;
 static bool enabled = true;
 static struct { uint32_t sessions, dials, stray, lwip_drop, q_drop; } cnt;
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[128];
-    va_list ap; va_start(ap, fmt);
-    int k = vsnprintf(t, sizeof t, fmt, ap);
-    va_end(ap);
-    if (k > (int)sizeof t - 1) k = sizeof t - 1;
-    log_add("esp32", t, (size_t)k);
-}
+#define say say_line
 
 /* bytes to the Dreamcast; waits a little when the link queue is full */
 static size_t ser_out(const void *data, size_t len) {
     const uint8_t *d = data; size_t done = 0;
     if (carrier == 1) return usbmodem_write(data, len);
     while (done < len) {
-        size_t c = len - done; if (c > 1024) c = 1024;
+        size_t c = len - done; if (c > SERQ_PIECE) c = SERQ_PIECE;   /* the cable holds ~20 ms + two pieces: small pieces keep that short */
         int tries = 0;
-        while (!link_send(LINK_CH_SER, d + done, c)) {     /* rare: packets are admitted only with room (serq_admit) */
+        while (!link_send(LINK_CH_SER, d + done, c)) {     /* rare: packets reach here only with room (serq_feed_ok / serq_admit) */
             if (++tries > 50) return done;
             link_wait_room(20);
         }
@@ -82,6 +77,7 @@ static size_t ser_out(const void *data, size_t len) {
     return done;
 }
 
+static void sq_clear(void);                  /* the serial queue (below) */
 static volatile bool call_lan;               /* this call: the Dreamcast has its home address, no NAT (dclan.c) */
 
 static u32_t out_cb(ppp_pcb *p, const void *data, u32_t len, void *ctx) {
@@ -104,6 +100,7 @@ static void emit_to_lwip(void *ctx, const uint8_t *p, size_t n) {
 /* end the call (lk held): close, wait until lwIP lets go of it, free */
 static void teardown_locked(void) {
     if (!pcb) return;
+    sq_clear();                                    /* nothing queued may reach a PPP that is going away */
     pppapi_close(pcb, 1);
     bool freed = false;
     for (int i = 0; i < 80 && !freed; i++) {
@@ -120,11 +117,54 @@ static void teardown_locked(void) {
 /* packets to the Dreamcast pass the DreamPi helper rules (dc2k2, dcvoip: ipfilter_model.h) */
 static ipf_t ipf_in;
 static netif_output_fn ppp_output_orig;
+static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst);
+
+/* ---- the serial line's queue (serq_model.h): whole packets wait here, UDP before TCP, and
+   the cable gets one at a time. Only touched in lwIP's context (its thread or the core lock). */
+#if CONFIG_DCL_LINK_SPI
+static serq_t sq;
+static volatile bool feed_posted;
+static void sq_drop(void *p) { pbuf_free((struct pbuf *)p); }
+static void sq_feed(void) {
+    struct pbuf *q;
+    while (serq_feed_ok((uint32_t)link_backlog()) && (q = serq_next(&sq, NULL))) {
+        if (netif_is_up(&pppif)) ppp_output_orig(&pppif, q, NULL);
+        pbuf_free(q);
+    }
+}
+static void sq_feed_cb(void *a) { (void)a; feed_posted = false; sq_feed(); }
+/* the link task: the cable took bytes; go on in lwIP's thread if something waits */
+void ppp_serial_room(void) {
+    if (feed_posted || serq_empty(&sq) || !serq_feed_ok((uint32_t)link_backlog())) return;
+    feed_posted = true;
+    if (tcpip_try_callback(sq_feed_cb, NULL) != ERR_OK) feed_posted = false;
+}
+static void sq_clear(void) { LOCK_TCPIP_CORE(); serq_clear(&sq, sq_drop); UNLOCK_TCPIP_CORE(); }
+#else
+void ppp_serial_room(void) {}
+static void sq_clear(void) {}
+#endif
+
 static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
-    if (carrier == 0 && !serq_admit((uint32_t)link_room(), p->tot_len)) { cnt.q_drop++; return ERR_OK; }   /* the serial line is full: drop, don't stall lwIP */
     ipf_in.public_ip = pubip_get(); ipf_in.dnat = dnat_rules();
+    if (carrier != 0) {                                        /* the USB modem has its own buffer */
+        if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
+        return ppp_output_orig(nif, p, dst);
+    }
+#if CONFIG_DCL_LINK_SPI
+    struct pbuf *c = pbuf_clone(PBUF_RAW, PBUF_RAM, p);       /* own copy: a Wi-Fi buffer must not wait here */
+    if (!c) { cnt.q_drop++; return ERR_OK; }
+    ipf_to_dc(&ipf_in, (uint8_t *)c->payload, c->len);
+    uint32_t d0 = sq.dropped;
+    serq_put(&sq, c, c->tot_len, serq_is_fast(c->payload, c->len), sq_drop);
+    cnt.q_drop += sq.dropped - d0;
+    sq_feed();
+    return ERR_OK;
+#else
+    if (!serq_admit((uint32_t)link_room(), p->tot_len)) { cnt.q_drop++; return ERR_OK; }   /* full: drop, never wait in lwIP's thread */
     if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
     return ppp_output_orig(nif, p, dst);
+#endif
 }
 
 /* DCNet ended (dcnet.c's task): back to the modem's command mode, tell the Dreamcast */
@@ -140,6 +180,7 @@ static bool start_ppp(int who) {
     teardown_locked();
     if (pcb) { say("PPP: the last call has not ended yet; restart the box if this repeats"); return false; }
     carrier = who;
+    sq_clear();
     memset(&pppif, 0, sizeof pppif);
     hdlc_init(&flt, emit_to_lwip, NULL);
     pcb = pppapi_pppos_create(&pppif, out_cb, status_cb, (void *)(uintptr_t)session);

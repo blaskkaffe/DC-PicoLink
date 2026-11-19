@@ -35,15 +35,7 @@ static bool tilde;
 static char ap_name[32] = "";
 static struct { uint32_t calls, connected, failed, to_ap, to_dc; } cnt;
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[160];
-    va_list ap; va_start(ap, fmt);
-    int k = vsnprintf(t, sizeof t, fmt, ap);
-    va_end(ap);
-    if (k > (int)sizeof t - 1) k = sizeof t - 1;
-    log_add("esp32", t, (size_t)k);
-}
+#define say say_line
 
 static uint64_t now_ms(void) { return (uint64_t)(esp_timer_get_time() / 1000); }
 

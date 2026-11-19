@@ -320,22 +320,13 @@ static bool post_once(void) {
     }
     char url[160];
     snprintf(url, sizeof url, "https://" DCNOW_HOST DCNOW_PATH, id);
-    esp_http_client_config_t c = { .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 15000, .crt_bundle_attach = esp_crt_bundle_attach };
-    tls_lock();                                         /* one secure connection at a time: RAM */
-    esp_http_client_handle_t h = esp_http_client_init(&c);
-    if (!h) { tls_unlock(); snprintf(why, sizeof why, "out of memory"); return false; }
-    esp_http_client_set_header(h, "User-Agent", DCNOW_UA);
-    esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
-    esp_http_client_set_post_field(h, body, (int)strlen(body));
-    esp_err_t e = esp_http_client_perform(h);
-    int code = e == ESP_OK ? esp_http_client_get_status_code(h) : 0;
-    bool ok = e == ESP_OK && code < 400;
+    esp_err_t e;
+    int code = https_req(url, NULL, 15000, DCNOW_UA, body, &e);
+    bool ok = e == ESP_OK && code > 0 && code < 400;
     if (!ok) {                                       /* why: no route, no memory for TLS, or the server said no */
         if (e != ESP_OK) snprintf(why, sizeof why, "%s; largest free block %u", esp_err_to_name(e), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         else snprintf(why, sizeof why, "HTTP %d", code);
     }
-    esp_http_client_cleanup(h);
-    tls_unlock();
     return ok;
 }
 

@@ -44,15 +44,7 @@ static int64_t xband_since = -1;                 /* when the XBAND server call e
 static int xband_ls = -1;
 static struct { uint32_t calls, connected, failed, to_net, to_dc, recovered; int ping_ms; char last[48]; char peer[40]; } st = { .ping_ms = -1 };
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...) {
-    char t[170];
-    va_list ap; va_start(ap, fmt);
-    int k = vsnprintf(t, sizeof t, fmt, ap);
-    va_end(ap);
-    if (k > (int)sizeof t - 1) k = sizeof t - 1;
-    log_add("esp32", t, (size_t)k);
-}
+#define say say_line
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static void pause_ms(int ms) { vTaskDelay(pdMS_TO_TICKS(ms) + 1); }
 
@@ -152,17 +144,9 @@ static bool match_call(const char *action, const char *game, const char *ip12, u
     char url[256];
     if (port) snprintf(url, sizeof url, "https://" NL_MATCH_HOST NL_MATCH_PATH "?action=%s&gameID=%s&client_ip=%s&port=%u&key=" NL_MATCH_KEY, action, game, ip12, (unsigned)port);
     else snprintf(url, sizeof url, "https://" NL_MATCH_HOST NL_MATCH_PATH "?action=%s&gameID=%s&client_ip=%s&key=" NL_MATCH_KEY, action, game, ip12);
-    esp_http_client_config_t c = { .url = url, .event_handler = hev, .timeout_ms = 8000, .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024 };
     hlen = 0;
-    tls_lock();
-    esp_http_client_handle_t h = esp_http_client_init(&c);
-    bool ok = false;
-    if (h) {
-        esp_http_client_set_header(h, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
-        ok = esp_http_client_perform(h) == ESP_OK && esp_http_client_get_status_code(h) < 400;
-        esp_http_client_cleanup(h);
-    }
-    tls_unlock();
+    int code = https_req(url, hev, 8000, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36", NULL, NULL);
+    bool ok = code > 0 && code < 400;
     hbuf[hlen] = 0;
     return ok;
 }
@@ -568,12 +552,7 @@ static void cfg_task(void *arg) {
         nsv = malloc(sizeof *nsv);
         if (!nsv) continue;
         nl_servers_defaults(nsv); ncur = -1; lln = 0;
-        esp_http_client_config_t c = { .url = NL_CONFIG_URL, .event_handler = cfg_ev, .timeout_ms = 10000, .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024 };
-        tls_lock();
-        esp_http_client_handle_t h = esp_http_client_init(&c);
-        bool ok = h && esp_http_client_perform(h) == ESP_OK && esp_http_client_get_status_code(h) == 200;
-        if (h) esp_http_client_cleanup(h);
-        tls_unlock();
+        bool ok = https_req(NL_CONFIG_URL, cfg_ev, 10000, NULL, NULL, NULL) == 200;
         if (ok) {
             if (lln) { ll[lln] = 0; nl_servers_line(nsv, &ncur, ll); }
             servers = *nsv;                                     /* (calls only read it from the modem task) */

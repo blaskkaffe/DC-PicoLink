@@ -4,10 +4,13 @@
  * network (E-4) come next and plug into link.c's deliver().
  */
 #include <string.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
@@ -43,6 +46,43 @@ static SemaphoreHandle_t tls_mx;
 
 void tls_lock(void) { xSemaphoreTake(tls_mx, portMAX_DELAY); }
 void tls_unlock(void) { xSemaphoreGive(tls_mx); }
+
+/* a status line (shared by all parts: one copy of the formatting code; lines are rare, so the
+   call costs nothing that matters) */
+void say_line(const char *fmt, ...) {
+    char t[180];
+    va_list ap; va_start(ap, fmt);
+    int k = vsnprintf(t, sizeof t, fmt, ap);
+    va_end(ap);
+    if (k < 0) return;
+    log_add("esp32", t, (size_t)(k < (int)sizeof t ? k : (int)sizeof t - 1));
+}
+
+/* one HTTPS request, one at a time (tls_lock: RAM). The body goes to ev as it arrives, so
+   nothing is copied twice. post: a form to send (POST), NULL = GET. Returns the HTTP status,
+   0 if it failed (*er says why). */
+int https_req(const char *url, http_event_handle_cb ev, int timeout_ms, const char *ua, const char *post, esp_err_t *er) {
+    esp_http_client_config_t c = { .url = url, .event_handler = ev, .timeout_ms = timeout_ms,
+                                   .crt_bundle_attach = esp_crt_bundle_attach, .buffer_size = 1024,
+                                   .method = post ? HTTP_METHOD_POST : HTTP_METHOD_GET };
+    tls_lock();
+    esp_http_client_handle_t h = esp_http_client_init(&c);
+    esp_err_t e = ESP_ERR_NO_MEM;
+    int code = 0;
+    if (h) {
+        if (ua) esp_http_client_set_header(h, "User-Agent", ua);
+        if (post) {
+            esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
+            esp_http_client_set_post_field(h, post, (int)strlen(post));
+        }
+        e = esp_http_client_perform(h);
+        if (e == ESP_OK) code = esp_http_client_get_status_code(h);
+        esp_http_client_cleanup(h);
+    }
+    tls_unlock();
+    if (er) *er = e;
+    return code;
+}
 
 void log_add(const char *src, const char *text, size_t n) {
     if (n >= LOG_LEN) n = LOG_LEN - 1;
