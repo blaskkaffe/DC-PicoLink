@@ -431,6 +431,15 @@ shows which build is running and whether the wire is in use.
 There is no 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate and never reboots the board. To
 reflash, hold the BOOTSEL button while plugging in.
 
+## USB modem: pacing and priority
+
+The modem's own buffer is deep and hidden: a TCP burst handed to a 33.6k modem (3.4 KB/s) waits in it for
+seconds, and a game update goes in behind it. So on a USB modem call `ppp_srv.c` keeps packets in the same
+two queues as the serial line (UDP and ICMP first, TCP behind; `serq_model.h`), hands the modem a packet only
+while it holds less than ~120 ms of bytes (`serq_pace_*`, the line speed from the `CONNECT` line,
+`usbmodem_line_bps()`, 33600 if the modem does not say), and sizes the queues to the line (fast ~0.4 s, bulk
+~1.5 s). The USB write no longer waits in lwIP's thread for a full modem buffer. Not tried on hardware yet.
+
 ## Host tests
 
 `tools/run-tests.sh` compiles and runs these with plain `gcc` (no hardware, no Pico SDK); CI runs
@@ -445,7 +454,7 @@ them on every push. `tools/run-tests.sh <firmware build dir>` adds `pio_sim.py` 
 | `test_sense`, `test_baud` | the power-sense wire; the wire rate equals what dcload sets on the Dreamcast for every request above 115200 (build with `-lm`) |
 | `test_link`, `test_link_spi`, `test_link_test` | link framing and the cable's `dc1` answers; the SPI link as a 1 µs step simulation; the self-test echo |
 | `test_sdlink` | the slot card's files over the link, with ESP-IDF's FatFs on top |
-| `test_serq`, `test_serq_sim` | the queues in front of the Dreamcast's serial line; a game's UDP updates beside a TCP download |
+| `test_serq`, `test_serq_sim`, `test_serq_pace` | the queues in front of the Dreamcast's serial line; a game's UDP updates beside a TCP download; the USB modem's pacing and queue sizes (a 33.6k line, Quake-3-style load) |
 | `test_hayes`, `test_hdlc`, `test_ipfilter`, `test_usbmodem` | Hayes modem answers; the PPP frame filter (TTL 64, PowerSmash double SYN); the same rules on Ethernet frames; the USB voice modem's answers |
 | `test_dns`, `test_dcnow`, `test_pubip`, `test_vpnpick`, `test_dclan` | the ESP32's DNS helper; DCNow! rules and the settings-service answer; the public-address query; VPN auto order (fastest ping first); the Dreamcast's home address (.98/.99 pick, 1:1 rewrite, ARP) |
 | `test_dcnet`, `test_netlink` | which calls go to DCNet; dial strings, Netlink data exchange, STUN, matchmaking JSON |

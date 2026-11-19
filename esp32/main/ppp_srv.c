@@ -124,22 +124,56 @@ static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_
 #if CONFIG_DCL_LINK_SPI
 static serq_t sq;
 static volatile bool feed_posted;
+static serq_pace_t pace;                     /* a USB modem call: the line's speed (the modem's own buffer is deep and out of sight) */
+static bool tick_armed;
+static esp_timer_handle_t tick_timer;        /* not lwIP's sys_timeout: its pool is small and an empty pool asserts */
 static void sq_drop(void *p) { pbuf_free((struct pbuf *)p); }
+static bool sq_feed_ok(void) {
+    if (carrier == 1) return serq_pace_ok(&pace, esp_timer_get_time());
+    return serq_feed_ok((uint32_t)link_backlog());
+}
+static void sq_tick_cb(void *a);
+static void sq_tick_fire(void *a);
 static void sq_feed(void) {
     struct pbuf *q;
-    while (serq_feed_ok((uint32_t)link_backlog()) && (q = serq_next(&sq, NULL))) {
-        if (netif_is_up(&pppif)) ppp_output_orig(&pppif, q, NULL);
+    while (sq_feed_ok() && (q = serq_next(&sq, NULL))) {
+        if (netif_is_up(&pppif)) {
+            if (carrier == 1) serq_pace_add(&pace, esp_timer_get_time(), q->tot_len);
+            ppp_output_orig(&pppif, q, NULL);
+        }
         pbuf_free(q);
     }
+    /* the modem takes nothing from us to tell that it has room: look again when the paced line has drained enough */
+    if (carrier == 1 && !serq_empty(&sq) && !tick_armed) {
+        if (!tick_timer) {
+            const esp_timer_create_args_t ta = { .callback = sq_tick_fire, .name = "sq_pace" };
+            if (esp_timer_create(&ta, &tick_timer) != ESP_OK) { tick_timer = NULL; return; }
+        }
+        tick_armed = true;
+        esp_timer_start_once(tick_timer, (uint64_t)serq_pace_wait_ms(&pace, esp_timer_get_time()) * 1000u);
+    }
+}
+static void sq_tick_cb(void *a) { (void)a; tick_armed = false; sq_feed(); }          /* lwIP's thread */
+static void sq_tick_fire(void *a) {                                                   /* esp_timer's task */
+    (void)a;
+    if (tcpip_try_callback(sq_tick_cb, NULL) != ERR_OK && tick_timer) esp_timer_start_once(tick_timer, 10000);
 }
 static void sq_feed_cb(void *a) { (void)a; feed_posted = false; sq_feed(); }
 /* the link task: the cable took bytes; go on in lwIP's thread if something waits */
 void ppp_serial_room(void) {
-    if (feed_posted || serq_empty(&sq) || !serq_feed_ok((uint32_t)link_backlog())) return;
+    if (carrier == 1 || feed_posted || serq_empty(&sq) || !serq_feed_ok((uint32_t)link_backlog())) return;
     feed_posted = true;
     if (tcpip_try_callback(sq_feed_cb, NULL) != ERR_OK) feed_posted = false;
 }
-static void sq_clear(void) { LOCK_TCPIP_CORE(); serq_clear(&sq, sq_drop); UNLOCK_TCPIP_CORE(); }
+static void sq_clear(void) {
+    LOCK_TCPIP_CORE();
+    if (tick_timer) esp_timer_stop(tick_timer);
+    tick_armed = false;
+    serq_clear(&sq, sq_drop);
+    if (carrier == 1) { serq_pace_init(&pace, usbmodem_line_bps(), esp_timer_get_time()); serq_limits(&sq, &pace); }
+    else { sq.fast_max = 0; sq.bulk_max = 0; }
+    UNLOCK_TCPIP_CORE();
+}
 #else
 void ppp_serial_room(void) {}
 static void sq_clear(void) {}
@@ -147,10 +181,12 @@ static void sq_clear(void) {}
 
 static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
     ipf_in.public_ip = pubip_get(); ipf_in.dnat = dnat_rules();
+#if !CONFIG_DCL_LINK_SPI
     if (carrier != 0) {                                        /* the USB modem has its own buffer */
         if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
         return ppp_output_orig(nif, p, dst);
     }
+#endif
 #if CONFIG_DCL_LINK_SPI
     struct pbuf *c = pbuf_clone(PBUF_RAW, PBUF_RAM, p);       /* own copy: a Wi-Fi buffer must not wait here */
     if (!c) { cnt.q_drop++; return ERR_OK; }

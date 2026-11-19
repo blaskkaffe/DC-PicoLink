@@ -17,6 +17,7 @@
  * To flash again: hold BOOT while plugging the board into the computer.
  */
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <math.h>
@@ -117,6 +118,14 @@ static void new_dev_cb(usb_device_handle_t h) {
     if (usb_host_get_device_descriptor(h, &dd) == ESP_OK)
         snprintf(usb_id, sizeof usb_id, "%04x:%04x", dd->idVendor, dd->idProduct);
     other_dev = true;
+}
+
+/* the line speed of this call from "CONNECT 33600" (W2: the line, not the USB side); 33600 if the modem does not say */
+uint32_t usbmodem_line_bps(void) {
+    const char *l = connect_line;
+    if (strncmp(l, "CONNECT", 7)) return 33600;
+    long v = strtol(l + 7, NULL, 10);
+    return v >= 300 && v <= 115200 ? (uint32_t)v : 33600;
 }
 
 /* ---- to the modem ---- */
@@ -414,6 +423,7 @@ void usbmodem_start(void) {
 
 #else
 size_t usbmodem_write(const void *data, size_t len) { (void)data; (void)len; return 0; }
+uint32_t usbmodem_line_bps(void) { return 33600; }
 bool um_cmd(const char *c, int ms) { (void)c; (void)ms; return false; }
 bool um_connect(bool originate, int ms) { (void)originate; (void)ms; return false; }
 int um_read(uint8_t *b, size_t cap, int ms) { (void)b; (void)cap; (void)ms; return -1; }

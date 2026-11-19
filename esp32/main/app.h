@@ -67,6 +67,7 @@ void ppp_modem_call_end(void);
 /* usbmodem.c: a USB voice modem on this board's USB socket (the Dreamcast's own modem calls it) */
 void usbmodem_start(void);
 size_t usbmodem_write(const void *data, size_t len);
+uint32_t usbmodem_line_bps(void);                          /* this call's line speed from the CONNECT line (33600 if unknown) */
 void usbmodem_call_over(void);                          /* PPP ended: hang up */
 size_t usbmodem_info_json(char *out, size_t cap);
 /* the modem, for netlink.c (from the modem task only) */

@@ -48,7 +48,7 @@ static inline bool serq_admit(uint32_t room, uint32_t ip_len) {
 
 /* the queues: a ring of packet handles each (void *: pbufs on the ESP32, anything in tests) */
 typedef struct { void *p[SERQ_PKTS]; uint32_t len[SERQ_PKTS]; uint8_t rd, wr; uint32_t bytes; } serq_q_t;
-typedef struct { serq_q_t fast, bulk; uint32_t dropped; } serq_t;
+typedef struct { serq_q_t fast, bulk; uint32_t dropped; uint32_t fast_max, bulk_max; } serq_t;   /* *_max 0 = SERQ_FAST_MAX / SERQ_BULK_MAX */
 
 static inline bool serq_q_empty(const serq_q_t *q) { return q->rd == q->wr; }
 static inline void *serq_q_pop(serq_q_t *q, uint32_t *len) {
@@ -66,7 +66,7 @@ static inline void serq_q_push(serq_q_t *q, void *p, uint32_t len) {
 /* put a packet in; whatever is dropped (the new packet, or the oldest fast ones) goes to drop() */
 static inline void serq_put(serq_t *s, void *p, uint32_t len, bool fast, void (*drop)(void *)) {
     serq_q_t *q = fast ? &s->fast : &s->bulk;
-    uint32_t max = fast ? SERQ_FAST_MAX : SERQ_BULK_MAX;
+    uint32_t max = fast ? (s->fast_max ? s->fast_max : SERQ_FAST_MAX) : (s->bulk_max ? s->bulk_max : SERQ_BULK_MAX);
     if (len > max) { s->dropped++; drop(p); return; }
     if (fast)
         while ((uint8_t)(q->wr - q->rd) >= SERQ_PKTS || q->bytes + len > max) { drop(serq_q_pop(q, NULL)); s->dropped++; }
@@ -85,3 +85,46 @@ static inline void *serq_next(serq_t *s, uint32_t *len) {
     return p ? p : serq_q_pop(&s->bulk, len);
 }
 static inline bool serq_empty(const serq_t *s) { return serq_q_empty(&s->fast) && serq_q_empty(&s->bulk); }
+
+/* ---- a line whose speed is known and whose own buffer is deep and out of sight: the USB modem ----
+ * A 33.6k call carries ~3.4 KB/s. Bytes handed to the modem sit in its buffer for as long as
+ * they need (a 8 KB window = 2.4 s), and a game update goes in behind them. So the ESP32 hands
+ * the modem a packet only while it believes the modem holds less than ~120 ms of bytes
+ * (serq_pace_*), and keeps the rest in the queues above (UDP first, fast drops its oldest),
+ * with queue sizes of a few hundred ms at that speed (serq_limits). */
+#define SERQ_PACE_HOLD_MS  120u
+typedef struct { uint32_t bps; int64_t t_us; uint32_t pending; } serq_pace_t;   /* bps: bytes per second of the line */
+
+static inline void serq_pace_init(serq_pace_t *p, uint32_t line_bits_per_s, int64_t now_us) {
+    if (line_bits_per_s < 4800u) line_bits_per_s = 4800u;
+    if (line_bits_per_s > 56000u) line_bits_per_s = 56000u;
+    p->bps = line_bits_per_s / 10u; p->t_us = now_us; p->pending = 0;
+}
+/* bytes the line has taken since the last look */
+static inline void serq_pace_age(serq_pace_t *p, int64_t now_us) {
+    if (now_us < p->t_us) { p->t_us = now_us; return; }
+    uint64_t drained = (uint64_t)(now_us - p->t_us) * p->bps / 1000000u;
+    if (drained >= p->pending) { p->pending = 0; p->t_us = now_us; return; }
+    p->pending -= (uint32_t)drained;
+    p->t_us += (int64_t)(drained * 1000000u / p->bps);
+}
+static inline uint32_t serq_pace_hold(const serq_pace_t *p) {
+    uint32_t h = p->bps * SERQ_PACE_HOLD_MS / 1000u;
+    return h < 64u ? 64u : h;
+}
+static inline bool serq_pace_ok(serq_pace_t *p, int64_t now_us) { serq_pace_age(p, now_us); return p->pending < serq_pace_hold(p); }
+/* n = bytes of the packet on the wire (PPP framing adds ~1/8) */
+static inline void serq_pace_add(serq_pace_t *p, int64_t now_us, uint32_t n) { serq_pace_age(p, now_us); p->pending += n + n / 8u + 8u; }
+/* ms until the next packet may go (>= 1) */
+static inline uint32_t serq_pace_wait_ms(serq_pace_t *p, int64_t now_us) {
+    serq_pace_age(p, now_us);
+    uint32_t h = serq_pace_hold(p);
+    if (p->pending < h) return 1u;
+    return (uint32_t)(((uint64_t)(p->pending - h) * 1000u) / p->bps) + 1u;
+}
+/* queue sizes for that line: fast ~0.4 s (one full packet at least), bulk ~1.5 s (a TCP window at least) */
+static inline void serq_limits(serq_t *s, const serq_pace_t *p) {
+    uint32_t f = p->bps * 400u / 1000u, b = p->bps * 1500u / 1000u;
+    s->fast_max = f < 1600u ? 1600u : f;
+    s->bulk_max = b < 3000u ? 3000u : b;
+}

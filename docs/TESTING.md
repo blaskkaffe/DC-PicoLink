@@ -86,6 +86,13 @@ that fails.
 - [ ] Modem plugged in: `USB modem vvvv:pppp plugged in`, `dial tone on`.
 - [ ] Dreamcast dials: `the Dreamcast dialled <number>; answering in 8 s`, `CONNECT ...`, PPP up.
 - [ ] Browser, PSO, Quake III master list; DCNow! online.
+- [ ] Quake III play over the modem with a bulk transfer beside it (a browser page or a map download):
+      no multi-second lag spikes; the status line at PPP start says the line speed
+      (`USB modem: answered, CONNECT 33600`) and the update's ping stays under ~0.5 s. The ESP32 keeps
+      UDP in front of TCP and hands the modem only ~120 ms of bytes at a time (`serq_pace_*`); before
+      this, TCP bursts piled up in the modem's own buffer, ~2.4 s for 8 KB at 33.6k. Tell which
+      line speed and whether the spikes are gone; if they remain, note the time of each spike
+      and the status lines around it (DCNow! report failures, VPN, memory).
 - [ ] DCNet: `*69` before the number (or "every call"): `DCNet: connected`.
 - [ ] Hang up on the Dreamcast: `the line dropped` / `ended the call`, dial tone back.
 - [ ] Modem unplugged mid-call: `unplugged during the call`; plugged back: dial tone again.
