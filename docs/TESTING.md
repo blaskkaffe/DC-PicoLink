@@ -2,7 +2,7 @@
 
 Firmware: Zero `dc-picolink-zero-stack-250mhz.uf2` (release; the `-debug` one logs more),
 ESP32 `dc-picolink-esp32-zero-stack-modem-merged.bin` (USB modem port) or `-nomodem-`
-(USB socket stays the ESP32's console). Everything is read on the page (`http://192.168.4.1`
+(USB socket stays the ESP32's console). Everything is read on the page (`http://192.168.98.1`
 on the setup network, or the box's home-network address). Send the status lines of anything
 that fails.
 
@@ -44,6 +44,11 @@ that fails.
 - [ ] Web browser loads pages; DNS line counts questions.
 - [ ] Phantasy Star Online connects; Quake III master list loads.
 - [ ] DCNow!: the box shows up as online while the game is connected.
+- [ ] DCNow! ID on a new box (before any Wi-Fi was saved): typing a MAC works; after the first
+      Wi-Fi connection the field is gone, and typing through `/api/net` is refused with a status line.
+- [ ] *Clone DreamPi* with a real DreamPi on the network (empty address, then its address):
+      `cloned the DreamPi at ...`; *DCNow! ID* switches between this box and the clone; with this
+      box's own `dreampi.local` answering only, the clone says `only this box answered`.
 - [ ] Peer-to-peer game (ChuChu Rocket!, Planet Ring): with the VPN on a shared IPv4.
 - [ ] DCNet: ISP password `password`, dial with `*69` in front: `DCNet: connected to <AP>`.
 - [ ] Hang up and dial again (no restart needed).
@@ -80,8 +85,8 @@ that fails.
 ## 5. BBA over the W5500 module (real Broadband Adapter -> Ethernet -> W5500 on the ESP32)
 
 - [ ] Cable from the Dreamcast's BBA: after ~10 s the wired line shows `BBA`, DHCP lease
-      `192.168.98.x` to the Dreamcast.
+      `192.168.97.x` to the Dreamcast.
 - [ ] BBA games (PSO, Quake III, browser with BBA): Internet through Wi-Fi.
 - [ ] DCNow! session with BBA traffic.
-- [ ] `home network: the Dreamcast (192.168.98.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
+- [ ] `home network: the Dreamcast (192.168.97.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
 - [ ] Swap the cable to the router: the role changes to `uplink` without a restart.

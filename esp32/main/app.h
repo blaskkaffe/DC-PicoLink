@@ -99,8 +99,11 @@ void dcnow_set_online(int source, bool on);                /* 0 = PPP call, 1 = 
 void dcnow_set_enabled(bool on);
 bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
-bool dcnow_set_id(const char *mac_or_id);              /* "" = own; a DreamPi's MAC or ID: one DCNow! entry for both */
-const char *dcnow_shared_id(void);
+bool dcnow_set_id(const char *mac_or_id);              /* typed: "" = back to this box's own; a DreamPi's MAC or ID. Refused once the box has joined a Wi-Fi network (wifi_joined_once) */
+const char *dcnow_shared_id(void);                         /* the other device's ID (typed or cloned), "" if none */
+void dcnow_use_other(bool on);                             /* report as that device (true) or with this box's own ID (false) */
+void dcnow_clone(const char *ip);                          /* copy the ID of a DreamPi on this network (ip "" = find dreampi.local); runs in its own task */
+size_t dcnow_id_json(char *o, size_t cap);                 /* {"own","other","use","locked","busy","msg"} for the status page */
 
 /* ---- VPN to Dreamcast Live (vpn.c, E-7) ---- */
 void vpn_start(void);
@@ -145,6 +148,8 @@ uint32_t pubip_get(void);
 void pubip_hint(uint32_t host_order);                  /* the router's public outside address (UPnP), a fallback */
 void pubip_start(void);
 void wifi_start(void);
+bool wifi_joined_once(void);                               /* this box has been on a home network (kept in flash) */
+#define DCL_AP_IP "192.168.98.1"                           /* the setup network's address, and the page on it */
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);
 

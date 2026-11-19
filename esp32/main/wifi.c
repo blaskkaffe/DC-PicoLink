@@ -1,5 +1,5 @@
 /*
- * Wi-Fi: always a setup network "DC-PicoLink-XXXX" (192.168.4.1), plus the home network
+ * Wi-Fi: always a setup network "DC-PicoLink-XXXX" (192.168.98.1), plus the home network
  * once one is saved (Settings on the web page). Saved in NVS ("wifi" / "ssid", "pass").
  */
 #include <string.h>
@@ -18,6 +18,15 @@ static esp_netif_t *sta_if, *ap_if;
 static char ap_name[33], sta_ssid[33];
 static volatile bool sta_up;
 static char sta_ip[16];
+static bool joined_once;                       /* this box has been on a home network: kept in flash */
+
+static void mark_joined(void) {
+    if (joined_once) return;
+    joined_once = true;
+    nvs_handle_t h;
+    if (nvs_open("wifi", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "once", 1); nvs_commit(h); nvs_close(h); }
+}
+bool wifi_joined_once(void) { return joined_once; }
 
 static void note(const char *fmt, const char *a) {
     char t[160];
@@ -42,6 +51,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
         snprintf(sta_ip, sizeof sta_ip, IPSTR, IP2STR(&ev->ip_info.ip));
         sta_up = true;
+        mark_joined();
         char t[96];
         snprintf(t, sizeof t, "%s, address %s", sta_ssid, sta_ip);
         note("Wi-Fi: connected to %s", t);
@@ -95,7 +105,16 @@ void wifi_start(void) {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     sta_if = esp_netif_create_default_wifi_sta();
     ap_if = esp_netif_create_default_wifi_ap();
-    (void)sta_if; (void)ap_if;
+    (void)sta_if;
+    {   /* the setup network's own address (the page is at http://192.168.98.1), a /24 of its own */
+        esp_netif_ip_info_t ip = { 0 };
+        esp_netif_str_to_ip4(DCL_AP_IP, &ip.ip);
+        ip.gw = ip.ip;
+        esp_netif_str_to_ip4("255.255.255.0", &ip.netmask);
+        esp_netif_dhcps_stop(ap_if);
+        esp_netif_set_ip_info(ap_if, &ip);
+        esp_netif_dhcps_start(ap_if);
+    }
     wifi_init_config_t ic = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&ic));
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL);
@@ -117,6 +136,11 @@ void wifi_start(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     char ssid[33], pass[65];
     load(ssid, pass);
+    {   nvs_handle_t h; uint8_t v = 0;
+        if (nvs_open("wifi", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "once", &v); nvs_close(h); }
+        joined_once = v != 0;
+        if (ssid[0]) mark_joined();                         /* a box that already has a network saved counts as joined */
+    }
     wifi_config_t sc = { 0 };
     strlcpy((char *)sc.sta.ssid, ssid, sizeof sc.sta.ssid);
     strlcpy((char *)sc.sta.password, pass, sizeof sc.sta.password);
@@ -124,6 +148,6 @@ void wifi_start(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sc));
     ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_ps(WIFI_PS_NONE);                          /* no modem sleep: it adds 100-300 ms spikes to game traffic */
-    note("Wi-Fi: setup network %s, page at http://192.168.4.1", ap_name);
+    note("Wi-Fi: setup network %s, page at http://" DCL_AP_IP, ap_name);
     if (!ssid[0]) note("Wi-Fi: no home network saved yet%s", " (Settings on the page)");
 }

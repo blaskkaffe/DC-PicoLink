@@ -1,8 +1,11 @@
 # DC-PicoLink ESP32 side
 
-> ⚠️ **Under development, not tested on hardware yet.** Everything below is written, builds
-> and passes the host tests; none of it has been tried with a real Dreamcast, modem or router.
-> No guarantee that it works. Test list: [../docs/TESTING.md](../docs/TESTING.md).
+> ⚠️ **Under development.** Tested with a real Dreamcast on a breadboard build (the cable and
+> the ESP32 joined by wires), over the serial cable on home Wi-Fi and a phone hotspot: PPP, DNS,
+> DNAT swaps, VPN, UPnP, DCNow!; Quake, Quake III (also the 8-player mod), Unreal Tournament and
+> Alien Front Online. Written and host-tested but not tried on hardware: the soldered stack,
+> the cable's W5500 emulation as a network, the SD slot, the wired port, the USB modem, DCNet,
+> Netlink. No guarantee that it works. Test list: [../docs/TESTING.md](../docs/TESTING.md).
 
 Firmware for an **ESP32-S3** next to the cable, so a Dreamcast can go online without a
 Raspberry Pi: it does what DreamPi does, plus Wi-Fi, a web page, a wired port and a USB modem.
@@ -28,13 +31,16 @@ idf.py -B build-zero -p /dev/ttyACM0 flash monitor
 
 CI builds merged images (Actions → build → artifact `dc-picolink-esp32`), flashed with
 `esptool.py --chip esp32s3 write_flash 0x0 <image>-merged.bin`. If the board isn't found
-(always with the modem build), hold BOOT while plugging it in. Flashing keeps the settings and
-uploaded VPN profiles (own partitions, `partitions.csv`).
+(always with the modem build), hold BOOT while plugging it in. The merged image **erases the
+saved settings** (Wi-Fi, DCNow! ID, switches), so the box starts as new; the uploaded VPN
+profiles stay (own partition, `partitions.csv`). Updating from the page (*Firmware update*, the
+app `.bin` or the merged one) and `idf.py flash` keep everything.
 
 ## Use
 
 Join **DC-PicoLink-XXXX** (password `dreamcast`, change it in menuconfig) and open
-http://192.168.4.1. Save your home network under *Wi-Fi*; the page is then also on the address
+http://192.168.98.1 (the setup network is a /24 of its own, 192.168.98.0; a home network with
+that range would clash with it). Save your home network under *Wi-Fi*; the page is then also on the address
 shown there. The page shows the link to the cable, status lines from both boards, the serial
 monitor, and the settings: Internet over serial, DCNow!, VPN, DCNet, port forwarding, VPN
 profile upload.
@@ -48,7 +54,7 @@ profile upload.
 | serial cable | modem emulation (`../firmware/hayes_model.h`), lwIP's PPP server. As on DreamPi: the Dreamcast gets its own home address (usually .98, this box .99 = its DNS and gateway), this box answers ARP for it, no NAT (`dclan.c`); tun+1 with the VPN up, mapped 1:1 to the home address. Without a free home address: 10.64.0.2 behind NAT |
 | the cable's W5500 emulation | second interface 192.168.99.1/24, DHCP, DNS (`dc_eth.c`); mapped 1:1 to the Dreamcast's home address (NAT only without one) |
 | USB modem | a USB voice modem on this board's USB socket; the Dreamcast's own modem calls it over a phone cord (`usbmodem.c`) |
-| BBA | a W5500 module on GPIO9-13 (`wired.c`): with a cable from the Dreamcast's BBA it serves 192.168.98.x; with a cable to a router it is the uplink instead |
+| BBA | a W5500 module on GPIO9-13 (`wired.c`): with a cable from the Dreamcast's BBA it serves 192.168.97.x; with a cable to a router it is the uplink instead |
 
 ### As DreamPi
 
@@ -58,11 +64,26 @@ profile upload.
 | pppd, no login | lwIP PPP server (`ppp_srv.c`) |
 | dnsmasq with `dreampi_dns.conf`, revival DNS 46.101.91.123 / 209.50.50.129 | `dnsd.c`; the file is read while it downloads; if the router intercepts DNS, questions go over TCP |
 | TTL 64, PowerSmash double-SYN drop, Planet Ring / Daytona public address | `../firmware/hdlc_model.h`, `ipfilter_model.h`, `pubip.c` |
-| `dcnow.py`, `config_server.py` (port 1998) | `dcnow.c`; also announced as `dreampi.local` for dreamcast.online/now/configure. DCNow! knows a device by the SHA-256 of its MAC address; the page can set a DreamPi's MAC (or the ID it logs as "MAC address: ...") so both count as one |
+| `dcnow.py`, `config_server.py` (port 1998) | `dcnow.c`; also announced as `dreampi.local` for dreamcast.online/now/configure. DCNow! knows a device by the SHA-256 of its MAC address (see *DCNow! ID* below) |
 | DCNet (`*69`, `dcnet.rpi`) | `dcnet.c`: closest access point, TCP 7654/7656, the `~` fix. Also over the serial cable |
 | Netlink (eaudunord/Netlink): direct dial, matchmaking, game server codes, XBAND, Capcom | `netlink.c` (USB modem only); no SIP ring on XBAND calls |
 | OpenVPN to Dreamcast Live, Dreamcast on tunnel address + 1, input rules on tun0 | `ovpn.c`, `vpn.c`; routes pushed by the server go into the tunnel (`../hooks/dcl_lwip_hooks.h`) |
 | UPnP port forwarding (optional) | `portfwd.c`: as DreamPi's port_forwarding.py, each mapping deleted, then DreamPi's game ports straight to the Dreamcast's home address; nothing else (not the Netlink ports); on by default |
+
+### DCNow! ID
+
+DCNow! knows a device only by the SHA-256 of its Wi-Fi MAC address, and cannot remove entries.
+So the ID cannot be made up freely:
+
+* **This box** (the default): the ID of this box's own Wi-Fi MAC. The ESP32-S3 has one base MAC;
+  Wi-Fi station = base, setup network = base+1, the W5500 wired port and the cable's Ethernet
+  side = base+3. DCNow! and the VPN use the Wi-Fi station one, whichever way the traffic goes.
+* **Clone DreamPi** (page: *Clone a DreamPi on this network*): reads the ID from a DreamPi's
+  settings service (port 1998) on the same network, found as `dreampi.local` or by its address.
+  Both devices then count as one player at DCNow!, with the stats together. The page's *DCNow! ID*
+  menu switches between this box and the cloned one at any time.
+* **Typing** a MAC or ID is possible only until the box has been on a Wi-Fi network once
+  (the field disappears after that). The way to unlock it again is flashing the merged image.
 
 ### VPN
 

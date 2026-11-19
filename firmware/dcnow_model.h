@@ -55,3 +55,25 @@ static inline bool dcnow_pick(dcnow_t *d, char *out) {
     }
     return false;
 }
+
+/* A DreamPi's (or this firmware's) settings service on port 1998 answers
+   {"mac_address": "<64 hex characters>", "is_enabled": true}. Copies the ID, in lower case,
+   into out[65]; false if there is no 64-character hex ID there. */
+static inline bool dcnow_parse_cfg(const char *js, char *out) {
+    const char *k = strstr(js, "\"mac_address\"");
+    if (!k) return false;
+    k += 13;
+    while (*k == ' ') k++;
+    if (*k++ != ':') return false;
+    while (*k == ' ') k++;
+    if (*k++ != '"') return false;
+    for (int i = 0; i < 64; i++) {
+        char c = k[i];
+        if (c >= 'A' && c <= 'F') c = (char)(c + 32);
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        out[i] = c;
+    }
+    if (k[64] != '"') return false;
+    out[64] = 0;
+    return true;
+}

@@ -309,18 +309,19 @@ size_t net_info_json(char *out, size_t cap) {
     uint32_t q, fwd, ovr, nx, ok, fail; int n_ovr, n_up; char last[128];
     dnsd_info(&q, &fwd, &ovr, &nx, &n_ovr, &n_up, last, sizeof last);
     dcnow_info(&ok, &fail);
+    char idj[220]; dcnow_id_json(idj, sizeof idj);
     char le[260]; size_t ln = json_escape(le, sizeof le - 1, last, strlen(last)); le[ln] = 0;
     return (size_t)snprintf(out, cap,
         "{\"on\":%s,\"mode\":\"%s\",\"via\":\"%s\",\"up\":%s,\"calls\":%lu,\"dials\":%lu,\"stray_at\":%lu,"
         "\"frames\":%lu,\"ttl_fixed\":%lu,\"syn_dropped\":%lu,\"fcs_bad\":%lu,\"lwip_drop\":%lu,"
         "\"dns\":{\"tcp\":%s,\"queries\":%lu,\"forwarded\":%lu,\"overridden\":%lu,\"refused\":%lu,\"overrides\":%d,\"servers\":%d,\"last\":\"%s\"},"
-        "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu,\"id\":\"%s\"}}",
+        "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu,\"id\":%s}}",
         enabled ? "true" : "false", st == ST_PPP ? "ppp" : st == ST_DCNET ? "dcnet" : "command", carrier == 1 ? "USB modem" : "serial cable", up ? "true" : "false",
         (unsigned long)cnt.sessions, (unsigned long)cnt.dials, (unsigned long)cnt.stray,
         (unsigned long)flt.frames, (unsigned long)flt.ipf.ttl_fixed, (unsigned long)flt.ipf.syn_dropped,
         (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop,
         dnsd_tcp() ? "true" : "false", (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
-        dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail, dcnow_shared_id());
+        dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail, idj);
 }
 
 void ppp_srv_start(void) {

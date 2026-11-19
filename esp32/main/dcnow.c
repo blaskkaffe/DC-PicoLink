@@ -3,7 +3,8 @@
  *   POST https://dcnow-2016.appspot.com/api/update/<sha256 of the MAC>/
  *   body  dns_query=<sha256 of the newest domain the Dreamcast looked up>   (empty if none)
  * Rules for which domain: ../../firmware/dcnow_model.h. The ID is the SHA-256 of the box's
- * Wi-Fi MAC written as "AA:BB:CC:DD:EE:FF", like DreamPi hashes its Pi's MAC.
+ * Wi-Fi MAC written as "AA:BB:CC:DD:EE:FF", like DreamPi hashes its Pi's MAC; it can be swapped
+ * for a cloned DreamPi's ID (see dcnow_clone).
  * Can be switched off (kept in flash).
  */
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_http_server.h"
+#include "esp_netif.h"
 #include "mdns.h"
 #include "esp_crt_bundle.h"
 #include "nvs.h"
@@ -68,17 +70,46 @@ void dcnow_set_enabled(bool on) {
 
 void dcnow_info(uint32_t *ok, uint32_t *fail) { *ok = ok_n; *fail = fail_n; }
 
-/* the ID can be set to another device's (a DreamPi's), so dreamcast.online counts both as one:
-   64 hex characters, from that DreamPi's MAC address or its log line "MAC address: <id>" */
+/* The ID can be another device's (a DreamPi's): then dreamcast.online counts both as one.
+   It gets there by being typed (a MAC or a 64-hex ID; only before the box has joined a Wi-Fi
+   network the first time: DCNow! cannot remove entries, so typing must not be a way to make
+   up devices) or by cloning a DreamPi on the same network. use_other picks which one is sent. */
 static char shared_id[65];
+static bool use_other;
+static char clone_msg[100];
+static volatile bool cloning;
 static bool is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
-/* "" = this box's own; a MAC (any separators) or a 64-hex ID. false if it is neither. */
+
+static void save_other(void) {
+    nvs_handle_t h;
+    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, "dcnow_id", shared_id); nvs_set_u8(h, "dcnow_sel", use_other ? 1 : 0);
+        nvs_commit(h); nvs_close(h);
+    }
+}
+static void say_id(void) {
+    char m[120]; int k = use_other ? snprintf(m, sizeof m, "DCNow!: reporting as %.12s... (another device's ID, shared)", shared_id)
+                                   : snprintf(m, sizeof m, "DCNow!: reporting with this box's own ID");
+    log_add("esp32", m, (size_t)k);
+}
+static void set_other(const char *id, bool use) {
+    if (!strcmp(id, shared_id) && use == use_other) return;
+    memcpy(shared_id, id, 65);
+    use_other = use && shared_id[0];
+    save_other();
+    say_id();
+}
+
+/* typed: "" = back to this box's own; a MAC (any separators) or a 64-hex ID. false if it is
+   neither, or if the box has already been on a Wi-Fi network. */
 bool dcnow_set_id(const char *in) {
     char id[65] = "";
     char hx[65]; size_t n = 0;
     for (const char *p = in; *p && n < 64; p++) if (is_hex(*p)) hx[n++] = (char)(*p >= 'a' && *p <= 'f' ? *p - 32 : *p);
     for (const char *p = in; *p; p++) if (!is_hex(*p) && *p != ':' && *p != '-' && *p != '.' && *p != ' ') return false;
     hx[n] = 0;
+    if (n == 0) { set_other("", false); return true; }
+    if (wifi_joined_once()) return false;
     if (n == 12) {                                   /* a MAC: hashed as DreamPi does ("B8:27:EB:..") */
         char macs[18];
         snprintf(macs, sizeof macs, "%.2s:%.2s:%.2s:%.2s:%.2s:%.2s", hx, hx + 2, hx + 4, hx + 6, hx + 8, hx + 10);
@@ -86,25 +117,80 @@ bool dcnow_set_id(const char *in) {
     } else if (n == 64) {
         for (int i = 0; i < 64; i++) id[i] = (char)(hx[i] >= 'A' && hx[i] <= 'F' ? hx[i] + 32 : hx[i]);
         id[64] = 0;
-    } else if (n) return false;
-    if (!strcmp(id, shared_id)) return true;
-    memcpy(shared_id, id, sizeof shared_id);
-    nvs_handle_t h;
-    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_str(h, "dcnow_id", shared_id); nvs_commit(h); nvs_close(h); }
-    char m[140]; int k = snprintf(m, sizeof m, shared_id[0] ? "DCNow!: reporting as %.12s... (shared with another device)" : "DCNow!: reporting with this box's own ID%s", shared_id);
-    log_add("esp32", m, (size_t)k);
+    } else return false;
+    set_other(id, true);
     return true;
 }
 const char *dcnow_shared_id(void) { return shared_id; }
+void dcnow_use_other(bool on) { if (shared_id[0]) set_other(shared_id, on); }
 
-/* the box's ID at DCNow!: SHA-256 of the Wi-Fi MAC as text (or the shared one) */
-static void my_id(char *id) {
-    if (shared_id[0]) { memcpy(id, shared_id, 65); return; }
+/* this box's own ID at DCNow!: SHA-256 of the Wi-Fi MAC as text */
+static void own_id(char *id) {
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char macs[24];
     snprintf(macs, sizeof macs, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     sha_hex(macs, id);
+}
+static void my_id(char *id) {
+    if (use_other && shared_id[0]) memcpy(id, shared_id, 65); else own_id(id);
+}
+
+size_t dcnow_id_json(char *o, size_t cap) {
+    char own[65]; own_id(own);
+    return (size_t)snprintf(o, cap, "{\"own\":\"%.12s\",\"other\":\"%.12s\",\"use\":%s,\"locked\":%s,\"busy\":%s,\"msg\":\"%s\"}",
+        own, shared_id, use_other ? "true" : "false", wifi_joined_once() ? "true" : "false", cloning ? "true" : "false", clone_msg);
+}
+
+/* Clone a DreamPi: ask its settings service (port 1998, the one dreamcast.online uses) for its
+   ID. Without an address, "dreampi.local" is looked up; this box answers to that name too, so
+   an answer from itself does not count. */
+static char clone_ip[16];
+static void clone_task(void *arg) {
+    (void)arg;
+    esp_ip4_addr_t a = { 0 };
+    const char *why_not = NULL;
+    if (clone_ip[0]) {
+        a.addr = esp_ip4addr_aton(clone_ip);
+        if (!a.addr) why_not = "that is not an IPv4 address";
+    } else if (mdns_query_a("dreampi", 3000, &a) != ESP_OK || !a.addr) {
+        why_not = "no DreamPi answered on this network (type its address to try that)";
+    }
+    esp_netif_ip_info_t me = { 0 };
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!why_not && (!sta || esp_netif_get_ip_info(sta, &me) != ESP_OK || !me.ip.addr)) why_not = "this box is not on a Wi-Fi network";
+    if (!why_not && a.addr == me.ip.addr) why_not = "only this box answered, not a DreamPi (type the DreamPi's address)";
+    char buf[320] = "", id[65] = "";
+    if (!why_not) {
+        char url[48];
+        snprintf(url, sizeof url, "http://" IPSTR ":1998/", IP2STR(&a));
+        esp_http_client_config_t c = { .url = url, .timeout_ms = 4000 };
+        esp_http_client_handle_t h = esp_http_client_init(&c);
+        int n = -1;
+        if (h && esp_http_client_open(h, 0) == ESP_OK && esp_http_client_fetch_headers(h) >= 0) n = esp_http_client_read(h, buf, sizeof buf - 1);
+        if (h) { esp_http_client_close(h); esp_http_client_cleanup(h); }
+        if (n <= 0) why_not = "the DreamPi's settings service did not answer";
+        else { buf[n] = 0; if (!dcnow_parse_cfg(buf, id)) why_not = "the answer had no DCNow! ID in it"; }
+        if (!why_not) {
+            char own[65]; own_id(own);
+            if (!strcmp(own, id)) why_not = "that ID is this box's own";
+        }
+        if (!why_not) {
+            set_other(id, true);
+            snprintf(clone_msg, sizeof clone_msg, "cloned the DreamPi at " IPSTR " (%.12s...)", IP2STR(&a), id);
+        }
+    }
+    if (why_not) snprintf(clone_msg, sizeof clone_msg, "clone failed: %s", why_not);
+    log_add("esp32", clone_msg, strlen(clone_msg));
+    cloning = false;
+    vTaskDelete(NULL);
+}
+void dcnow_clone(const char *ip) {
+    if (cloning) return;
+    cloning = true;
+    snprintf(clone_ip, sizeof clone_ip, "%s", ip ? ip : "");
+    snprintf(clone_msg, sizeof clone_msg, "looking for a DreamPi...");
+    if (xTaskCreate(clone_task, "dclone", 5120, NULL, 3, NULL) != pdPASS) { cloning = false; snprintf(clone_msg, sizeof clone_msg, "clone failed: out of memory"); }
 }
 
 /* ---- DreamPi's configuration service (config_server.py): http://dreampi.local:1998 ----
@@ -220,8 +306,11 @@ void dcnow_start(void) {
     nvs_handle_t h; uint8_t v = 1;
     if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "dcnow", &v); nvs_close(h); }
     enabled = v != 0;
-    { nvs_handle_t n; size_t l = sizeof shared_id;
-      if (nvs_open("dcl", NVS_READONLY, &n) == ESP_OK) { if (nvs_get_str(n, "dcnow_id", shared_id, &l) != ESP_OK) shared_id[0] = 0; nvs_close(n); } }
+    { nvs_handle_t n; size_t l = sizeof shared_id; uint8_t sel = 1;     /* an ID saved by an older version is in use */
+      if (nvs_open("dcl", NVS_READONLY, &n) == ESP_OK) {
+          if (nvs_get_str(n, "dcnow_id", shared_id, &l) != ESP_OK) shared_id[0] = 0;
+          nvs_get_u8(n, "dcnow_sel", &sel); nvs_close(n); }
+      use_other = shared_id[0] && sel; }
     xTaskCreate(dcnow_task, "dcnow", 6144, NULL, 4, NULL);
     cfg_start();
     ESP_LOGI(TAG, "DCNow! reports %s", enabled ? "on" : "off");

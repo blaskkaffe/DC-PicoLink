@@ -1,6 +1,6 @@
 # Roadmap
 
-> Under development: nothing on the zero-stack has been tested on hardware yet (docs/TESTING.md).
+> Under development: the ESP32 side has been tested with a Dreamcast on a breadboard build (serial PPP, DNS, VPN, UPnP, DCNow!; Quake, Quake III, Unreal Tournament, Alien Front Online). The soldered stack and the parts listed in 1b are not tested yet (docs/TESTING.md).
 
 ## 1. Validate the current firmware (v0.8)
 
@@ -15,10 +15,12 @@
 
 ## 1b. RP2040-Zero + ESP32-S3 SuperMini stack (hardware/ESP32.md)
 
-* Written, builds, host-tested, **not on hardware yet**: Dreamcast on GPIO9-14, SPI link with
-  self-test, W5500 emulation, SD slot on SPI1 (GP26-29), ESP32: Wi-Fi/wired uplink, web page,
-  serial PPP, W5500 network, BBA port, USB modem, DCNet, Netlink/XBAND/Capcom, VPN with built-in
-  profiles and pushed routes, UPnP port forwarding, shared-IPv4 check, DCNow! + port 1998.
+* Works on a breadboard build with a Dreamcast: SPI link, serial PPP over Wi-Fi, DNS, VPN with
+  built-in profiles and pushed routes, UPnP port forwarding, DCNow! + port 1998, web page,
+  firmware update.
+* Written and host-tested, **not on hardware yet**: the soldered stack, W5500 emulation as a
+  network, SD slot on SPI1 (GP26-29), the wired uplink / BBA port, USB modem, DCNet,
+  Netlink/XBAND/Capcom, shared-IPv4 check.
 * Next: run docs/TESTING.md on hardware and fix what it finds.
 * Then: Netlink/XBAND over the serial cable; the ESP32 takes over the computer side of the
   cable's USB (all Dreamcast traffic over the link, a log port in every mode); per-game

@@ -5,7 +5,7 @@
  *   uplink  somebody on the wire answers DHCP (a router): the wired network becomes the way
  *           out, ahead of Wi-Fi.
  *   BBA     nobody answers within 10 s (a Dreamcast broadband adapter never does): this box
- *           is 192.168.98.1, hands out addresses and DNS, and routes the Dreamcast out through
+ *           is 192.168.97.1, hands out addresses and DNS, and routes the Dreamcast out through
  *           Wi-Fi with NAT, the same way as the cable's own network (dc_eth.c).
  * Safety: a DHCP server on somebody's home network is harmful, so in the BBA role every frame
  * from another DHCP server sends the port straight back to the uplink role for a minute.
@@ -31,7 +31,7 @@
 #include "esp_timer.h"
 #include "ipfilter_model.h"
 
-#define BBA_IP        0xC0A86201u                 /* 192.168.98.1 */
+#define BBA_IP        0xC0A86101u                 /* 192.168.97.1 */
 #define DETECT_US     (10 * 1000000LL)            /* no DHCP answer for this long: BBA role */
 #define HOLD_US       (60 * 1000000LL)            /* after seeing a foreign DHCP server */
 #define QUIET_US      (30 * 1000000LL)
@@ -137,7 +137,7 @@ static void up_off(void) {
 static void bba_on(void) {
     esp_netif_action_start(bba_if, NULL, 0, NULL);                 /* AUTOUP: also starts the DHCP server */
     esp_netif_dhcps_stop(bba_if);
-    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = ESP_IP4TOADDR(192, 168, 98, 1) } };
+    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = ESP_IP4TOADDR(192, 168, 97, 1) } };
     esp_netif_set_dns_info(bba_if, ESP_NETIF_DNS_MAIN, &dns);
     uint8_t offer = 1;                                             /* OFFER_DNS */
     esp_netif_dhcps_option(bba_if, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof offer);
@@ -192,8 +192,8 @@ static void manager(void *arg) {
                 if (t - said > 60000000LL) { said = t; say("wired port: several devices on this cable but no DHCP answer yet: a network, not a Dreamcast; still asking for an address"); }
             } else if (t - t_role > DETECT_US && t > hold_until) {
                 up_off(); bba_on(); role = R_BBA; cnt.to_bba++;
-                strlcpy(cnt.ip, "192.168.98.1", sizeof cnt.ip);
-                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.98.x");
+                strlcpy(cnt.ip, "192.168.97.1", sizeof cnt.ip);
+                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.97.x");
             }
             break;
         case R_UPLINK:
@@ -235,9 +235,9 @@ size_t wired_info_json(char *out, size_t cap) {
 
 static esp_netif_t *make_netif(bool server, const uint8_t mac[6]) {
     static const esp_netif_ip_info_t ipi = {
-        .ip      = { .addr = ESP_IP4TOADDR(192, 168, 98, 1) },
+        .ip      = { .addr = ESP_IP4TOADDR(192, 168, 97, 1) },
         .netmask = { .addr = ESP_IP4TOADDR(255, 255, 255, 0) },
-        .gw      = { .addr = ESP_IP4TOADDR(192, 168, 98, 1) },
+        .gw      = { .addr = ESP_IP4TOADDR(192, 168, 97, 1) },
     };
     static esp_netif_driver_ifconfig_t drv[2];
     esp_netif_driver_ifconfig_t *d = &drv[server];
