@@ -52,6 +52,7 @@ bool link_is_up(void) { return esp_timer_get_time() - last_rx_us < 3000000; }
 #define RING_SIZE   (1u << RING_BITS)
 static uint8_t ring[RING_SIZE];
 static uint32_t ring_wr, ring_rd;      /* free-running; guarded by tx_lock */
+static SemaphoreHandle_t room_sem;     /* given when a transaction takes bytes out of the ring */
 static uint8_t *lspi_txb[LSPI_NBUF], *lspi_rxb[LSPI_NBUF];
 static spi_slave_transaction_t lspi_tr[LSPI_NBUF];
 static uint16_t lspi_txn[LSPI_NBUF];   /* queued bytes in each loaded chunk */
@@ -99,7 +100,9 @@ static void lspi_load(int i) {
     lspi_txn[i] = (uint16_t)link_chunk_fill(ring, RING_SIZE - 1, &ring_rd, ring_wr, lspi_txb[i], LINK_SPI_CHUNK);
     lspi_loaded_bytes += lspi_txn[i];
     lspi_update_dr();
+    bool freed = lspi_txn[i] != 0;
     xSemaphoreGive(tx_lock);
+    if (freed) xSemaphoreGive(room_sem);
     lspi_tr[i].length = LINK_SPI_CHUNK * 8;
     lspi_tr[i].tx_buffer = lspi_txb[i];
     lspi_tr[i].rx_buffer = lspi_rxb[i];
@@ -129,6 +132,19 @@ bool link_send(uint8_t ch, const void *p, size_t n) {
 #endif
 
 bool link_dc1(const char *msg, size_t n) { return link_send(LINK_CH_API, msg, n); }
+
+/* free bytes in the queue to the cable */
+size_t link_room(void) {
+#if CONFIG_DCL_LINK_SPI
+    return RING_SIZE - (ring_wr - ring_rd);          /* a word read: a snapshot is enough */
+#else
+    size_t f = 0; uart_get_tx_buffer_free_size(LINK_PORT, &f); return f;
+#endif
+}
+/* wait until the cable has taken bytes (SPI) or at most ms; never from the link's reader task */
+void link_wait_room(int ms) {
+    xSemaphoreTake(room_sem, pdMS_TO_TICKS(ms) + 1);
+}
 
 void link_get_stats(link_stats_t *s) {
     *s = st;
@@ -202,7 +218,7 @@ static void deliver(void) {
         eth_from_dc(rx.payload, rx.n);        /* E-4: second network interface */
         break;
     case LINK_CH_TEST:                        /* the cable's self-test: straight back */
-        for (int i = 0; i < 100 && !link_send(LINK_CH_TEST, rx.payload, rx.n); i++) vTaskDelay(1);
+        link_send(LINK_CH_TEST, rx.payload, rx.n);   /* once: only this task frees room, so waiting here never helped */
         st.test_echo++;
         break;
     default:
@@ -266,6 +282,7 @@ static void hello_task(void *arg) {
 #if CONFIG_DCL_LINK_SPI
 void link_start(void) {
     tx_lock = xSemaphoreCreateMutex();
+    room_sem = xSemaphoreCreateBinary();
     info_lock = xSemaphoreCreateMutex();
     link_rx_init(&rx);
     gpio_config_t o = { .pin_bit_mask = (1ULL << CONFIG_DCL_LSPI_HS) | (1ULL << CONFIG_DCL_LSPI_DR),
@@ -301,6 +318,7 @@ void link_start(void) {
 #else
 void link_start(void) {
     tx_lock = xSemaphoreCreateMutex();
+    room_sem = xSemaphoreCreateBinary();
     info_lock = xSemaphoreCreateMutex();
     link_rx_init(&rx);
     uart_config_t c = {

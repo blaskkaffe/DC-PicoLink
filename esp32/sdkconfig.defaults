@@ -48,3 +48,4 @@ CONFIG_LWIP_TCPIP_CORE_LOCKING=y
 # updates from the web page: a new image that does not come up healthy is rolled back by the
 # bootloader (main.c marks it valid once Wi-Fi or the cable link has worked)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

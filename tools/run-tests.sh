@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/../firmware"
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 fail=0
-for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan; do
+for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_serq test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan; do
     if gcc -O1 -Wall -Wno-unused-variable -Wno-unused-function -I. "tests/$t.c" -lm -o "$out/$t" && "$out/$t" > "$out/$t.log"; then
         echo "PASS $t: $(tail -1 "$out/$t.log")"
     else

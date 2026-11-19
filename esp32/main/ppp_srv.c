@@ -30,6 +30,7 @@
 #include "hayes_model.h"
 #include "dcnet_model.h"
 #include "hdlc_model.h"
+#include "serq_model.h"
 #include "app.h"
 
 static const char *TAG = "ppp";
@@ -52,7 +53,7 @@ static int st = ST_CMD;
 static int carrier;                         /* who carries the call: 0 = the serial cable, 1 = the USB modem */
 static volatile bool up;
 static bool enabled = true;
-static struct { uint32_t sessions, dials, stray, lwip_drop; } cnt;
+static struct { uint32_t sessions, dials, stray, lwip_drop, q_drop; } cnt;
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void say(const char *fmt, ...) {
@@ -71,9 +72,9 @@ static size_t ser_out(const void *data, size_t len) {
     while (done < len) {
         size_t c = len - done; if (c > 1024) c = 1024;
         int tries = 0;
-        while (!link_send(LINK_CH_SER, d + done, c)) {
-            if (++tries > 100) return done;
-            vTaskDelay(1);
+        while (!link_send(LINK_CH_SER, d + done, c)) {     /* rare: packets are admitted only with room (serq_admit) */
+            if (++tries > 50) return done;
+            link_wait_room(20);
         }
         link_note_ser_out(c);
         done += c;
@@ -120,6 +121,7 @@ static void teardown_locked(void) {
 static ipf_t ipf_in;
 static netif_output_fn ppp_output_orig;
 static err_t ppp_output_to_dc(struct netif *nif, struct pbuf *p, const ip4_addr_t *dst) {
+    if (carrier == 0 && !serq_admit((uint32_t)link_room(), p->tot_len)) { cnt.q_drop++; return ERR_OK; }   /* the serial line is full: drop, don't stall lwIP */
     ipf_in.public_ip = pubip_get(); ipf_in.dnat = dnat_rules();
     if (p->len == p->tot_len) ipf_to_dc(&ipf_in, (uint8_t *)p->payload, p->len);
     return ppp_output_orig(nif, p, dst);
@@ -313,13 +315,13 @@ size_t net_info_json(char *out, size_t cap) {
     char le[260]; size_t ln = json_escape(le, sizeof le - 1, last, strlen(last)); le[ln] = 0;
     return (size_t)snprintf(out, cap,
         "{\"on\":%s,\"mode\":\"%s\",\"via\":\"%s\",\"up\":%s,\"calls\":%lu,\"dials\":%lu,\"stray_at\":%lu,"
-        "\"frames\":%lu,\"ttl_fixed\":%lu,\"syn_dropped\":%lu,\"fcs_bad\":%lu,\"lwip_drop\":%lu,"
+        "\"frames\":%lu,\"ttl_fixed\":%lu,\"syn_dropped\":%lu,\"fcs_bad\":%lu,\"lwip_drop\":%lu,\"queue_full\":%lu,"
         "\"dns\":{\"tcp\":%s,\"queries\":%lu,\"forwarded\":%lu,\"overridden\":%lu,\"refused\":%lu,\"overrides\":%d,\"servers\":%d,\"last\":\"%s\"},"
         "\"dcnow\":{\"on\":%s,\"ok\":%lu,\"failed\":%lu,\"id\":%s}}",
         enabled ? "true" : "false", st == ST_PPP ? "ppp" : st == ST_DCNET ? "dcnet" : "command", carrier == 1 ? "USB modem" : "serial cable", up ? "true" : "false",
         (unsigned long)cnt.sessions, (unsigned long)cnt.dials, (unsigned long)cnt.stray,
         (unsigned long)flt.frames, (unsigned long)flt.ipf.ttl_fixed, (unsigned long)flt.ipf.syn_dropped,
-        (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop,
+        (unsigned long)flt.fcs_bad, (unsigned long)cnt.lwip_drop, (unsigned long)cnt.q_drop,
         dnsd_tcp() ? "true" : "false", (unsigned long)q, (unsigned long)fwd, (unsigned long)ovr, (unsigned long)nx, n_ovr, n_up, le,
         dcnow_enabled() ? "true" : "false", (unsigned long)ok, (unsigned long)fail, idj);
 }

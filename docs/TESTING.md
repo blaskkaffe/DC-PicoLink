@@ -42,6 +42,7 @@ that fails.
       `home network: the Dreamcast is 192.168.x.98 there; this box answers for it (proxy ARP), no NAT`.
 - [ ] The router's device list shows .98 (with this box's MAC); from a computer at home, `ping 192.168.x.98` answers while the Dreamcast is online (if the game answers pings).
 - [ ] Web browser loads pages; DNS line counts questions.
+- [ ] During a big download over serial, `queue_full` in `/api/status` (ppp) may count up, but other traffic (the page, the VPN, a second game) keeps answering at normal speed.
 - [ ] Phantasy Star Online connects; Quake III master list loads.
 - [ ] DCNow!: the box shows up as online while the game is connected.
 - [ ] DCNow! ID on a new box (before any Wi-Fi was saved): typing a MAC works; after the first

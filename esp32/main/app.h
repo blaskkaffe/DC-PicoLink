@@ -8,6 +8,8 @@
 void link_start(void);
 bool link_send(uint8_t ch, const void *p, size_t n);   /* false if the queue is full */
 bool link_is_up(void);
+size_t link_room(void);                              /* free bytes in the queue to the cable */
+void link_wait_room(int ms);                         /* until the cable takes bytes, at most ms (not from the link task) */
 
 typedef struct {
     uint32_t good, crc_bad, broken, lost;     /* from the cable */

@@ -44,7 +44,7 @@ static esp_err_t tx_cb(void *h, void *buf, size_t len) {
     ipf_ether_to_dc(&ipf_in, buf, len);         /* dc2k2 / dcvoip rules (ipfilter_model.h) */
     for (int i = 0; i < 20; i++) {
         if (link_send(LINK_CH_ETH, buf, len)) { cnt.tx++; return ESP_OK; }
-        vTaskDelay(1);
+        link_wait_room(10);           /* back as soon as the cable takes bytes (was a fixed 10 ms tick) */
     }
     cnt.tx_drop++;
     return ESP_OK;                    /* ARP / TCP try again */
