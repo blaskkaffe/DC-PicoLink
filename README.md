@@ -1,5 +1,7 @@
 # DC-PicoLink
 
+> **Part of the DC- Dreamcast family** (branch `unified`): [DC-DreamDash](https://github.com/blaskkaffe/DC-DreamDash/tree/unified) · [DC-PicoLink](https://github.com/blaskkaffe/DC-PicoLink/tree/unified) · [DC-iBlueControlMod](https://github.com/blaskkaffe/DC-iBlueControlMod/tree/unified) · [DC-BlueRetro](https://github.com/blaskkaffe/DC-BlueRetro/tree/unified) · [DC-openMenu-Virtual-Folder-Bundle](https://github.com/blaskkaffe/DC-openMenu-Virtual-Folder-Bundle/tree/unified) · [DC-Pico2Maple](https://github.com/blaskkaffe/DC-Pico2Maple/tree/unified). They work alone and together. The shared plan, feature list, vocabulary and licenses overview are in [docs/unified/](docs/unified/README.md).
+
 > ⚠️ **Under development. No guarantee that anything here works.**
 > Use it at your own risk, on hardware you can afford to lose: wiring mistakes or firmware
 > bugs can damage a Dreamcast, a modem or the boards. Tried on hardware: the RP2040 cable with
@@ -278,3 +280,10 @@ MIT, see [LICENSE](LICENSE). Built on the work of others:
 * Dreamcast Live (Shuouma): the VPN servers and the client profiles in `esp32/vpn/`, used here
   with their okay.
 * Espressif `mdns` and `usb_host_cdc_acm` components (Apache-2.0), vendored in `esp32/components/`.
+* **Raspberry Pi Pico SDK 2.1.1** (BSD-3-Clause, Raspberry Pi (Trading) Ltd) and its **TinyUSB** (MIT): the
+  firmware is built against them, not copied; `firmware/pico_sdk_import.cmake` is the SDK's own file and keeps its header.
+* **KallistiOS**: the Dreamcast test program `tools/dctest` is built against it in CI (fetched at build time;
+  BSD-style license, see its repository).
+
+The documents in [docs/unified/](docs/unified/README.md) are covered by the same MIT license. For the licenses of
+the other repositories in the family see the table there.
