@@ -101,9 +101,10 @@ bool dcnow_enabled(void);
 void dcnow_info(uint32_t *ok, uint32_t *fail);
 bool dcnow_set_id(const char *mac_or_id);              /* typed: "" = back to this box's own; a DreamPi's MAC or ID. Refused once the box has joined a Wi-Fi network (wifi_joined_once) */
 const char *dcnow_shared_id(void);                         /* the other device's ID (typed or cloned), "" if none */
-void dcnow_use_other(bool on);                             /* report as that device (true) or with this box's own ID (false) */
+void dcnow_set_mode(int m);                                /* 0 = this box's own ID, 1 = the other device's, 2 = the other device's only while it is not on the network */
+void dcnow_presence_poll(void);                            /* every 30 s from the DCNow! task: is that device on the network? */
 void dcnow_clone(const char *ip);                          /* copy the ID of a DreamPi on this network (ip "" = find dreampi.local); runs in its own task */
-size_t dcnow_id_json(char *o, size_t cap);                 /* {"own","other","use","locked","busy","msg"} for the status page */
+size_t dcnow_id_json(char *o, size_t cap);                 /* {"own","other","mode","use","here","locked","busy","msg"} */
 
 /* ---- VPN to Dreamcast Live (vpn.c, E-7) ---- */
 void vpn_start(void);

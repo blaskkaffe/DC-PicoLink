@@ -49,6 +49,9 @@ that fails.
 - [ ] *Clone DreamPi* with a real DreamPi on the network (empty address, then its address):
       `cloned the DreamPi at ...`; *DCNow! ID* switches between this box and the clone; with this
       box's own `dreampi.local` answering only, the clone says `only this box answered`.
+- [ ] Mode *only while it is away*: with the cloned DreamPi on, the box reports with its own ID
+      (`reporting with this box's own ID`); power the DreamPi off: after ~90 s and no running
+      session `reporting as ... (the other device's ID)`; power it on: back to the own ID.
 - [ ] Peer-to-peer game (ChuChu Rocket!, Planet Ring): with the VPN on a shared IPv4.
 - [ ] DCNet: ISP password `password`, dial with `*69` in front: `DCNet: connected to <AP>`.
 - [ ] Hang up and dial again (no restart needed).

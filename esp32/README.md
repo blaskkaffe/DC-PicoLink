@@ -81,7 +81,14 @@ So the ID cannot be made up freely:
 * **Clone DreamPi** (page: *Clone a DreamPi on this network*): reads the ID from a DreamPi's
   settings service (port 1998) on the same network, found as `dreampi.local` or by its address.
   Both devices then count as one player at DCNow!, with the stats together. The page's *DCNow! ID*
-  menu switches between this box and the cloned one at any time.
+  menu has three choices: this box; the other device always; or (the default after a clone) the
+  other device **only while it is away**. In that mode the box looks for the cloned device every
+  30 s (its port 1998, at the address it was cloned from, or as `dreampi.local`): while it is on
+  the network this box reports with its own ID, so two devices never report as one at the same
+  time; 3 misses in a row (about 90 s) and it takes the cloned ID, and the cloned device's
+  return switches it back. The ID changes only while no session is running. One limit: the
+  look-up by name finds only one `dreampi.local`, so with several DreamPis on the network the
+  remembered address is what counts.
 * **Typing** a MAC or ID is possible only until the box has been on a Wi-Fi network once
   (the field disappears after that). The way to unlock it again is flashing the merged image.
 
