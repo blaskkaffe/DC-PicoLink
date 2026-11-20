@@ -205,6 +205,8 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
 1. The cable must not be mounted by a computer (no USB host) and the ESP32 must be linked (page: link up).
 2. Start a Dreamcast program that uses the network adapter driver (DHCP). Or set a static address:
    IP 192.168.99.60, mask 255.255.255.0, gateway and DNS 192.168.99.1.
+   Gateway and DNS must be 192.168.99.1 here: 0.0.0.0 works over the modem (PPP fills them in)
+   but not on this network (the DNS answers are thrown away, nothing leaves the network).
 3. **Expect** in *Status lines*: `Ethernet: the Dreamcast is sending`, then
    `Ethernet: the Dreamcast got 192.168.99.x by DHCP`. In the card: *cable network (W5500)* counts
    frames in and out, `DNS:` counts questions, `DCNow!: ... sent` goes up every 15 s.

@@ -25,6 +25,7 @@
 #include "link_model.h"
 #include "ipfilter_model.h"
 #include "app.h"
+#include "ethsrc_model.h"
 
 static const char *TAG = "dc_eth";
 #define ETH_IP   0xC0A86301u          /* 192.168.99.1 */
@@ -35,6 +36,7 @@ static ipf_t ipf;                     /* only used from the link's reader task *
 static ipf_t ipf_in;                  /* packets to the Dreamcast (lwIP's task): DreamPi helper rules */
 static volatile int64_t last_dc_us = -QUIET_US * 2;
 static volatile bool active;
+static uint32_t lease_ip;              /* the Dreamcast's address: DHCP lease, or learnt from its frames */
 static struct { uint32_t rx, tx, tx_drop, rx_drop, leases; char last_ip[16]; } cnt;
 
 static esp_err_t tx_cb(void *h, void *buf, size_t len) {
@@ -60,12 +62,21 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     memcpy(c, p, n);
     ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
     if (!ipf_ether(&ipf, c, n, (uint32_t)(esp_timer_get_time() / 1000))) { free(c); return; }
-    if (!link_eth_is_computer()) last_dc_us = esp_timer_get_time();   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
+    if (!link_eth_is_computer()) {
+        last_dc_us = esp_timer_get_time();   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
+        /* a Dreamcast with a fixed address never asks DHCP: learn it from its frames */
+        uint32_t a = ethsrc_dc_ip(c, n, lwip_htonl(ETH_IP), lwip_htonl(0xFFFFFF00u));
+        if (a && a != lease_ip) {
+            lease_ip = a;
+            esp_ip4_addr_t ip = { .addr = a };
+            snprintf(cnt.last_ip, sizeof cnt.last_ip, IPSTR, IP2STR(&ip));
+            say_line("Ethernet: the Dreamcast uses " IPSTR " (a fixed address; gateway and DNS must be 192.168.99.1)", IP2STR(&ip));
+        }
+    }
     cnt.rx++;
     esp_netif_receive(eth_if, c, n, c);       /* lwIP frees it through free_cb */
 }
 
-static uint32_t lease_ip;
 uint32_t dc_eth_dc_ip(void) { return active ? lease_ip : 0; }
 struct netif *dc_eth_netif(void) { return eth_if ? (struct netif *)esp_netif_get_netif_impl(eth_if) : NULL; }
 
