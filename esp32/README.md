@@ -83,9 +83,12 @@ at a time, also through a hub (`main/usbport.c`):
   one is reported in the log. While an ESP32 is its USB host, the cable does not count it as a
   computer, so the Dreamcast's traffic goes to the ESP32.
 
-Through a hub, a modem and a cable do not fit together: the ESP32-S3's USB host has 8 channels
-and every open endpoint keeps one (hub 2, modem 4, cable 3). The cable wins: an open modem is
-closed when a cable arrives, and opened again when the cable is unplugged (both logged).
+Through a hub, a modem and a cable can stay plugged in together, and the Dreamcast picks: dialling
+the modem, using the serial cable, or using the W5500 all reach the same box. The ESP32-S3's USB
+host has 8 channels and every open endpoint keeps one (hub 2, cable 3, modem 4), so next to a
+cable the modem opens without its status endpoint (3): the end of a call is then seen from the
+modem's NO CARRIER and from PPP, not from its carrier line. A modem already open when the cable
+arrives closes and opens again that way (logged).
 
 Next: USB Ethernet adapters (CDC-ECM/NCM) on the same socket.
 

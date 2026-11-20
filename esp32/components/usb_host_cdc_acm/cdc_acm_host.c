@@ -643,6 +643,7 @@ esp_err_t cdc_acm_host_open_v1_dispatch(uint16_t vid, uint16_t pid, uint8_t inte
         .event_cb = dev_config->event_cb,
         .data_cb = dev_config->data_cb,
         .user_arg = dev_config->user_arg,
+        .no_notification = dev_config->no_notification,
     };
     return cdc_acm_host_open_v2(&cfg, cdc_hdl_ret);
 }
@@ -699,7 +700,7 @@ esp_err_t cdc_acm_host_open_v2(const cdc_acm_host_open_config_t *open_config, cd
 
     // Allocate USB transfers, claim CDC interfaces and return CDC-ACM handle
     ESP_GOTO_ON_ERROR(
-        cdc_acm_transfers_allocate(cdc_dev, cdc_info.notif_ep, cdc_info.in_ep, in_buf_size, cdc_info.out_ep, open_config->out_buffer_size),
+        cdc_acm_transfers_allocate(cdc_dev, open_config->no_notification ? NULL : cdc_info.notif_ep, cdc_info.in_ep, in_buf_size, cdc_info.out_ep, open_config->out_buffer_size),
         err, TAG,);
     ESP_GOTO_ON_ERROR(cdc_acm_start(cdc_dev, open_config->event_cb, open_config->data_cb, open_config->user_arg), err, TAG,);
     *cdc_hdl_ret = (cdc_acm_dev_hdl_t)cdc_dev;
@@ -756,7 +757,7 @@ esp_err_t cdc_acm_host_close(cdc_acm_dev_hdl_t cdc_hdl)
 
     // Release all interfaces
     ESP_ERROR_CHECK(usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->data.intf_desc->bInterfaceNumber));
-    if ((cdc_dev->notif.intf_desc != NULL) && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {
+    if ((cdc_dev->notif.xfer != NULL) && (cdc_dev->notif.intf_desc != NULL) && (cdc_dev->notif.intf_desc != cdc_dev->data.intf_desc)) {   /* DC-PicoLink: only if it was claimed */
         ESP_ERROR_CHECK(usb_host_interface_release(p_cdc_acm_obj->cdc_acm_client_hdl, cdc_dev->dev_hdl, cdc_dev->notif.intf_desc->bInterfaceNumber));
     }
 

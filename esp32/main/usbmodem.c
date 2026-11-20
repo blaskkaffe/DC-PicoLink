@@ -336,7 +336,7 @@ static void one_call(void) {
 
 static void modem_task(void *arg) {
     (void)arg;
-    const cdc_acm_host_device_config_t cfg = {
+    cdc_acm_host_device_config_t cfg = {
         .connection_timeout_ms = 3000, .out_buffer_size = 1024, .in_buffer_size = 1024,
         .event_cb = event_cb, .data_cb = data_cb,
     };
@@ -347,11 +347,10 @@ static void modem_task(void *arg) {
            open the cable's own serial interface as a modem */
         if (!usbport_next_other(&vid, &pid, UINT32_MAX)) continue;
         snprintf(usb_id, sizeof usb_id, "%04x:%04x", vid, pid);
-        if (usbport_cable()) {
-            say("USB: device %s is plugged in too, but the DC-PicoLink cable has the USB port (the ESP32's USB host has 8 channels; through a hub, cable and modem need 9). It is used once the cable is unplugged", usb_id);
-            state = "waiting: the DC-PicoLink cable has the USB port";
-            continue;
-        }
+        /* with a cable on the port too (through a hub) the modem's status endpoint stays closed: the
+           ESP32's USB host has 8 channels, hub 2 + cable 3 + modem 3 without it. The end of a call
+           is then seen from NO CARRIER and PPP, not the carrier line. */
+        cfg.no_notification = usbport_cable();
         if (cdc_acm_host_open(vid, pid, 0, &cfg, &h) != ESP_OK) {
             say("USB: device %s is plugged in but is not a modem this firmware can use (it needs a USB CDC-ACM modem)", usb_id);
             state = "a USB device is plugged in, but not a usable modem";
@@ -361,15 +360,15 @@ static void modem_task(void *arg) {
         cdc_acm_host_set_control_line_state(h, true, true);
         present = true; gone = false;
         xQueueReset(evq);
-        say("USB modem %s plugged in", usb_id);
+        say("USB modem %s plugged in%s", usb_id, cfg.no_notification ? " (next to the DC-PicoLink cable: without its status endpoint, to fit the USB host's 8 channels)" : "");
         while (!gone) one_call();
         present = false;
         ppp_modem_call_end();
         xSemaphoreTake(devlk, portMAX_DELAY); dev = NULL; xSemaphoreGive(devlk);
         cdc_acm_host_close(h);
         if (yielding) {
-            say("USB modem: closed so the DC-PicoLink cable can use the USB port (the ESP32's USB host has 8 channels; through a hub, cable and modem need 9). It is used again once the cable is unplugged");
-            state = "waiting: the DC-PicoLink cable has the USB port";
+            say("USB modem: closed for a moment so the DC-PicoLink cable fits next to it (8 USB host channels); it opens again without its status endpoint");
+            state = "reopening next to the cable";
             yielding = false;
         } else {
             say("USB modem unplugged");

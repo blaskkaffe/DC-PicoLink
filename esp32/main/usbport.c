@@ -3,7 +3,10 @@
  *   - a DC-PicoLink cable (CAFE:4DC5): the link over USB, the same packets as over SPI or UART
  *     (its interface with the bulk endpoints 0x07/0x87, see ../../firmware/usb_descriptors.c);
  *   - anything else: offered to the modem driver (usbmodem.c) by its VID:PID.
- * One device at a time is the plan; a hub in between works (CONFIG_USB_HOST_HUBS_SUPPORTED).
+ * A hub works (CONFIG_USB_HOST_HUBS_SUPPORTED), also with a modem and a cable on it together: the
+ * S3's USB host has 8 channels (one per open endpoint): hub 2 + cable 3 + modem 3, the modem then
+ * without its status endpoint (usbmodem.c). A modem already open when the cable comes closes and
+ * opens again that way.
  *
  * The cable's bytes go to a task of their own (link_usb_rx), so the USB client task that finishes
  * transfers never waits on the PPP server or the web page's SD requests.
@@ -45,6 +48,8 @@ static volatile uint32_t uwr, urd;        /* free-running; uwr under the link's 
 static SemaphoreHandle_t kick_lk;
 static uint32_t rx_lost;
 static usb_device_handle_t want;          /* a cable waiting for the modem to free its channels */
+static bool modem_moved;                  /* the modem closed for the cable: offer it again after */
+static void look_at(uint8_t addr);
 static int64_t want_until;
 bool usbmodem_yield(void);
 
@@ -128,7 +133,7 @@ static void take_cable(usb_device_handle_t d) {
         /* the host has 8 channels for all open endpoints: with a hub and a modem open there is no
            room for the cable. The cable wins: the modem closes, and the claim is tried again. */
         if (want != d && usbmodem_yield()) {
-            want = d; want_until = esp_timer_get_time() + 3000000;
+            want = d; want_until = esp_timer_get_time() + 3000000; modem_moved = true;
             return;
         }
         if (want == d && esp_timer_get_time() < want_until) return;       /* tried again in client_task */
@@ -159,6 +164,15 @@ static void take_cable(usb_device_handle_t d) {
     in_busy = true;
     if (usb_host_transfer_submit(tin) != ESP_OK) in_busy = false;
     say_line("USB: DC-PicoLink cable plugged in; the link runs over USB");
+    /* a modem that closed to make room: offer it again (it opens without its status endpoint) */
+    if (modem_moved) {
+        modem_moved = false;
+        uint8_t a[8], ca = 0; int k = 0;
+        usb_device_info_t inf;
+        if (usb_host_device_info(d, &inf) == ESP_OK) ca = inf.dev_addr;
+        if (usb_host_device_addr_list_fill(sizeof a, a, &k) == ESP_OK)
+            for (int i = 0; i < k; i++) if (a[i] != ca) look_at(a[i]);
+    }
 }
 
 static void drop_cable(void) {
@@ -205,13 +219,7 @@ static void client_task(void *arg) {
     for (;;) {
         usb_host_client_handle_events(client, pdMS_TO_TICKS(50));
         if (want && !active) take_cable(want);                      /* the modem is closing: again */
-        if (gone && active) {
-            drop_cable();
-            /* the devices still there (a modem waiting behind the cable): offer them again */
-            uint8_t a[8]; int k = 0;
-            if (usb_host_device_addr_list_fill(sizeof a, a, &k) == ESP_OK)
-                for (int i = 0; i < k; i++) look_at(a[i]);
-        }
+        if (gone && active) drop_cable();              /* a modem next to it stays open as it is */
     }
 }
 

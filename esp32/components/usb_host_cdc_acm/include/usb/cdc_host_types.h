@@ -92,6 +92,8 @@ typedef struct {
     cdc_acm_host_dev_callback_t event_cb; /*!< Device event callback. Can be NULL. */
     cdc_acm_data_callback_t data_cb;      /*!< Data RX callback. Can be NULL for write-only devices. */
     void *user_arg;                       /*!< User argument passed to both callbacks. */
+    bool no_notification;                 /*!< DC-PicoLink: leave the notification (interrupt IN) endpoint and its
+                                               interface closed: one USB host channel less (no serial state events) */
 } cdc_acm_host_device_config_t;
 
 /**
@@ -111,4 +113,5 @@ typedef struct {
     cdc_acm_host_dev_callback_t event_cb; /*!< Device event callback. Can be NULL. */
     cdc_acm_data_callback_t data_cb;      /*!< Data RX callback. Can be NULL for write-only devices. */
     void *user_arg;                       /*!< User argument passed to both callbacks. */
+    bool no_notification;                 /*!< DC-PicoLink: see cdc_acm_host_device_config_t */
 } cdc_acm_host_open_config_t;
