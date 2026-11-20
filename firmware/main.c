@@ -1629,11 +1629,11 @@ xport_done:
     static bool said_up;
     if (link_up && !said_up) {
         status("esp32 link: up (%s %lu); serial goes to %s, network to %s",
-               DC_LINK_SPI ? "SPI, Hz" : "UART, baud",
+               usb_link ? "USB, full speed" : DC_LINK_SPI ? "SPI, Hz" : "UART, baud",
 #if DC_LINK_SPI
-               (unsigned long)lspi_hz,
+               usb_link ? 12000000ul : (unsigned long)lspi_hz,
 #else
-               (unsigned long)LINK_BAUD,
+               usb_link ? 12000000ul : (unsigned long)LINK_BAUD,
 #endif
                ser_to_link() ? "the ESP32" : "USB (a program has the port open)",
                eth_bridge() ? "the ESP32 (no Dreamcast: USB network <-> ESP32)" : eth_to_link() ? "the ESP32" : "USB (mounted)");
