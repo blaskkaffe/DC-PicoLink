@@ -1,7 +1,9 @@
 /*
  * The box's IP plan (ESP32), in one place. Host byte order.
  *
- *   192.168.220.0/24  setup Wi-Fi; the box (and the web page) is .1
+ *   192.168.4.0/24    setup Wi-Fi; the box (and the web page) is .1 (the usual ESP32 address; not
+ *                     192.168.0/1.x: the box is on the home network at the same time, and most
+ *                     home networks use those)
  *   192.168.98.0/24   the Dreamcast network (98: the Dreamcast's launch year in Japan; easy to
  *                     remember next to its .98 on the home network): however it connects (the cable's W5500,
  *                     the BBA socket on the W5500 module, a PPP call without its home address),
@@ -17,8 +19,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define IPP_SETUP        0xC0A8DC01u    /* 192.168.220.1 */
-#define IPP_SETUP_TEXT   "192.168.220.1"
+#define IPP_SETUP        0xC0A80401u    /* 192.168.4.1 */
+#define IPP_SETUP_TEXT   "192.168.4.1"
 #define IPP_DCNET        0xC0A86200u    /* 192.168.98.0 */
 #define IPP_MASK         0xFFFFFF00u
 #define IPP_BOX          0xC0A86201u    /* 192.168.98.1: gateway and DNS for the Dreamcast */

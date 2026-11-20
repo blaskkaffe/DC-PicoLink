@@ -196,7 +196,7 @@ static void ota_check(void *arg) {
     esp_timer_handle_t t = ota_t;
     esp_ota_img_states_t stt;
     if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &stt) != ESP_OK || stt != ESP_OTA_IMG_PENDING_VERIFY) { esp_timer_stop(t); return; }
-    ok_for = (wifi_sta_up() || link_is_up()) ? ok_for + 5 : 0;
+    ok_for = (inet_up() || link_is_up()) ? ok_for + 5 : 0;      /* Wi-Fi or the wired uplink, or the cable */
     if (ok_for < 30) return;
     esp_ota_mark_app_valid_cancel_rollback();
     const char *m = "ESP32 update: the new firmware works; kept";

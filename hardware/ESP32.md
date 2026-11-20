@@ -140,7 +140,7 @@ the SPI link (about 300 on the UART link).
 1. Flash the cable with the **USB bridge test build** (`-DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1`)
    and the ESP32 with the zero-stack configuration.
 2. Plug only the Zero into a computer (it powers the ESP32 through the stack).
-3. Join **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.220.1: expect "link: up"
+3. Join **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.4.1: expect "link: up"
    and the cable's first line with `[TEST BUILD: USB network bridged to the ESP32]` and
    `esp32 link: up (SPI, Hz 15625000)`.
 4. Save your home Wi-Fi on the page and turn **DCNow! off** (or the computer shows up as a
@@ -177,7 +177,7 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
 ## First test
 
 1. Flash the cable with this firmware (UF2) and the ESP32 (see [../esp32/README.md](../esp32/README.md)).
-2. Join the Wi-Fi network **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.220.1.
+2. Join the Wi-Fi network **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.4.1.
 3. **Expect:** "link: up" at the top, and under *Cable* the lines `hello.kind cable`,
    `hello.name DC-PicoLink`, `hello.version <git describe>`, `link.mode ...`.
    *Status lines* shows the cable's first line (`DC-PicoLink firmware ... ready`).

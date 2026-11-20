@@ -40,7 +40,6 @@ static SemaphoreHandle_t room_sem;     /* SPI: given when a transaction takes by
 static uint8_t tx_seq;
 static link_rx_t rx;
 static link_rx_t urx;                 /* the cable on the USB port (usbport.c) */
-static volatile bool usb_on;          /* a DC-PicoLink cable is on the USB port: the link runs there */
 #if CONFIG_DCL_USB_MODEM
 size_t usbl_room(void);
 size_t usbl_backlog(void);
@@ -62,6 +61,13 @@ static uint32_t answer_seq;
 static uint16_t next_id = 1;
 
 bool link_is_up(void) { return esp_timer_get_time() - last_rx_us < 3000000; }
+static volatile bool usb_on;          /* a DC-PicoLink cable is on the USB port: the link runs there */
+#ifdef CONFIG_DCL_LINK_SPI
+#define WIRE_NAME "spi"
+#else
+#define WIRE_NAME "uart"
+#endif
+const char *link_via(void) { return usb_on ? "usb" : WIRE_NAME; }
 
 #if CONFIG_DCL_LINK_SPI
 #define LSPI_HOST   SPI3_HOST          /* SPI2 (FSPI, IO-MUX pins 10-13) stays free for a W5500 */

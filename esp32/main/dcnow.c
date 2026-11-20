@@ -72,9 +72,8 @@ void dcnow_set_enabled(bool on) {
 void dcnow_info(uint32_t *ok, uint32_t *fail) { *ok = ok_n; *fail = fail_n; }
 
 /* The ID can be another device's (a DreamPi's): then dreamcast.online counts both as one.
-   It gets there by being typed (a MAC or a 64-hex ID; only before the box has joined a Wi-Fi
-   network the first time: DCNow! cannot remove entries, so typing must not be a way to make
-   up devices) or by cloning a DreamPi on the same network.
+   It gets there only by cloning a DreamPi on the same network (DCNow! cannot remove entries, so
+   there is no way to type one in and make up devices).
    sel: 0 = this box's own ID, 1 = the other device's always, 2 = the other device's only while
    it is not on the network (two devices must not report as one at the same time). The box
    looks for it every 30 s (its settings service on port 1998, at the address it was cloned
@@ -89,7 +88,6 @@ static uint32_t src_ip;                      /* where it was cloned from (networ
 static char clone_msg[100];
 static volatile bool cloning;
 static int64_t next_probe_us;
-static bool is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
 static void save_other(void) {
     nvs_handle_t h;
@@ -119,28 +117,6 @@ static void set_other(const char *id, uint8_t mode) {
     refresh_eff(true);
 }
 
-/* typed: "" = back to this box's own; a MAC (any separators) or a 64-hex ID. false if it is
-   neither, or if the box has already been on a Wi-Fi network. */
-bool dcnow_set_id(const char *in) {
-    char id[65] = "";
-    char hx[65]; size_t n = 0;
-    for (const char *p = in; *p && n < 64; p++) if (is_hex(*p)) hx[n++] = (char)(*p >= 'a' && *p <= 'f' ? *p - 32 : *p);
-    for (const char *p = in; *p; p++) if (!is_hex(*p) && *p != ':' && *p != '-' && *p != '.' && *p != ' ') return false;
-    hx[n] = 0;
-    if (n == 0) { src_ip = 0; set_other("", 0); return true; }
-    if (wifi_joined_once()) return false;
-    if (n == 12) {                                   /* a MAC: hashed as DreamPi does ("B8:27:EB:..") */
-        char macs[18];
-        snprintf(macs, sizeof macs, "%.2s:%.2s:%.2s:%.2s:%.2s:%.2s", hx, hx + 2, hx + 4, hx + 6, hx + 8, hx + 10);
-        sha_hex(macs, id);
-    } else if (n == 64) {
-        for (int i = 0; i < 64; i++) id[i] = (char)(hx[i] >= 'A' && hx[i] <= 'F' ? hx[i] + 32 : hx[i]);
-        id[64] = 0;
-    } else return false;
-    src_ip = 0;
-    set_other(id, 1);
-    return true;
-}
 const char *dcnow_shared_id(void) { return shared_id; }
 void dcnow_set_mode(int m) { if (shared_id[0] && m >= 0 && m <= 2) set_other(shared_id, (uint8_t)m); }
 
@@ -158,14 +134,14 @@ static void my_id(char *id) {
 
 size_t dcnow_id_json(char *o, size_t cap) {
     char own[65]; own_id(own);
-    return (size_t)snprintf(o, cap, "{\"own\":\"%.12s\",\"other\":\"%.12s\",\"mode\":%u,\"use\":%s,\"here\":%s,\"locked\":%s,\"busy\":%s,\"msg\":\"%s\"}",
+    return (size_t)snprintf(o, cap, "{\"own\":\"%.12s\",\"other\":\"%.12s\",\"mode\":%u,\"use\":%s,\"here\":%s,\"busy\":%s,\"msg\":\"%s\"}",
         own, shared_id, (unsigned)sel, use_other ? "true" : "false", owner_here ? "true" : "false",
-        wifi_joined_once() ? "true" : "false", cloning ? "true" : "false", clone_msg);
+        cloning ? "true" : "false", clone_msg);
 }
 
 static uint32_t my_ip(void) {
     esp_netif_ip_info_t me = { 0 };
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_t *sta = esp_netif_get_default_netif();          /* the uplink: Wi-Fi or the wired port */
     if (!sta || esp_netif_get_ip_info(sta, &me) != ESP_OK) return 0;
     return me.ip.addr;
 }
@@ -222,7 +198,7 @@ static void clone_task(void *arg) {
         why_not = "no DreamPi answered on this network (type its address to try that)";
     }
     uint32_t me = my_ip();
-    if (!why_not && !me) why_not = "this box is not on a Wi-Fi network";
+    if (!why_not && !me) why_not = "this box is not on a home network";
     if (!why_not && a.addr == me) why_not = "only this box answered, not a DreamPi (type the DreamPi's address)";
     char id[65] = "";
     if (!why_not) why_not = probe(a.addr, 4000, id);

@@ -39,7 +39,7 @@ app `.bin` or the merged one) and `idf.py flash` keep everything.
 ## Use
 
 Join **DC-PicoLink-XXXX** (password `dreamcast`, change it in menuconfig) and open
-http://192.168.220.1 (the setup network is a /24 of its own, 192.168.220.0; a home network with
+http://192.168.4.1 (the setup network is a /24 of its own, 192.168.4.0; a home network with
 that range would clash with it; the whole plan: [IP plan](../README.md#ip-plan)). Save your home network under *Wi-Fi*; the page is then also on the address
 shown there. The page shows the link to the cable, status lines from both boards, the serial
 monitor, and the settings: Internet over serial, DCNow!, VPN, DCNet, port forwarding, VPN
@@ -107,7 +107,8 @@ So the ID cannot be made up freely:
 
 * **This box** (the default): the ID of this box's own Wi-Fi MAC. The ESP32-S3 has one base MAC;
   Wi-Fi station = base, setup network = base+1, the W5500 wired port and the cable's Ethernet
-  side = base+3. DCNow! and the VPN use the Wi-Fi station one, whichever way the traffic goes.
+  side = base+3. DCNow! and the VPN use the Wi-Fi station one, whichever way the traffic goes (Wi-Fi or the
+  wired uplink).
 * **Clone DreamPi** (page: *Clone a DreamPi on this network*): reads the ID from a DreamPi's
   settings service (port 1998) on the same network, found as `dreampi.local` or by its address.
   Both devices then count as one player at DCNow!, with the stats together. The page's *DCNow! ID*
@@ -119,8 +120,8 @@ So the ID cannot be made up freely:
   return switches it back. The ID changes only while no session is running. One limit: the
   look-up by name finds only one `dreampi.local`, so with several DreamPis on the network the
   remembered address is what counts.
-* **Typing** a MAC or ID is possible only until the box has been on a Wi-Fi network once
-  (the field disappears after that). The way to unlock it again is flashing the merged image.
+* There is no field to type a MAC or an ID: cloning a DreamPi that answers on the network is
+  the only way to take another device's ID, so no made-up devices can reach DCNow!.
 
 ### VPN
 

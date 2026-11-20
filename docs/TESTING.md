@@ -2,7 +2,7 @@
 
 Firmware: Zero `dc-picolink-zero-stack-250mhz.uf2` (release; the `-debug` one logs more),
 ESP32 `dc-picolink-esp32-zero-stack-modem-merged.bin` (USB modem port) or `-nomodem-`
-(USB socket stays the ESP32's console). Everything is read on the page (`http://192.168.220.1`
+(USB socket stays the ESP32's console). Everything is read on the page (`http://192.168.4.1`
 on the setup network, or the box's home-network address). Send the status lines of anything
 that fails.
 

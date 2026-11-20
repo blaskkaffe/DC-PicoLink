@@ -208,7 +208,7 @@ Dreamcast's launch year in Japan, and its usual last number on the home network.
 
 | Network | The box (or Pi) | The Dreamcast |
 |---|---|---|
-| Setup Wi-Fi `DC-PicoLink-XXXX` (ESP32) | 192.168.220.1: the web page (also `http://dreampi.local`) | – |
+| Setup Wi-Fi `DC-PicoLink-XXXX` (ESP32) | 192.168.4.1: the web page (also `http://dreampi.local`) | – |
 | **The Dreamcast network**: the W5500 (cable), the BBA socket (W5500 module), a PPP call without its home address | 192.168.98.1: gateway and DNS | DHCP .2–.99 (a PPP call gets .2); a fixed address at **.100** or above, mask 255.255.255.0, gateway and DNS 192.168.98.1 |
 | Modem / serial PPP with its home address (default) | home network, usually .99 | home network, usually .98 (no NAT; port forwarding points there). Picked as DreamPi does: counting down from .99, the first free address is the box's end of the link, the next the Dreamcast's |
 | VPN (Dreamcast Live) | the address the server gives | that address + 1 (only the server's game networks go through the tunnel) |
@@ -217,6 +217,18 @@ Dreamcast's launch year in Japan, and its usual last number on the home network.
 The Dreamcast uses one way to connect at a time, so they share one network: the box answers on
 the interface the Dreamcast was last heard on. On the W5500, gateway and DNS must be set to
 192.168.98.1 (0.0.0.0 only works over the modem, where PPP fills them in).
+
+Which address where (the ESP32 box):
+
+| Dreamcast joined by | Internet over | The Dreamcast gets |
+|---|---|---|
+| The cable's emulated W5500 (RP2040) | Wi-Fi or the wired uplink | 192.168.98.x (DHCP), NAT to the uplink |
+| BBA into the W5500 module (BBA role) | Wi-Fi only: the module's one port is the Dreamcast's | 192.168.98.x (DHCP), NAT to Wi-Fi |
+| Modem (USB) or the cable's serial port | Wi-Fi or the wired uplink | home network .98 (or 192.168.98.2 when no home address is free) |
+
+The W5500 module picks its role by itself: if a router answers DHCP on its cable it is the way to
+the Internet (the router's address, ahead of Wi-Fi), if nothing answers in 10 s it is the BBA
+socket. A USB Ethernet adapter is not supported yet.
 
 ## Quick start (DreamPi)
 

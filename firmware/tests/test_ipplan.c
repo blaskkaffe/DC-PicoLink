@@ -7,7 +7,7 @@ static int bad;
 #define A(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
 
 int main(void) {
-    CHECK(IPP_SETUP == A(192, 168, 220, 1));
+    CHECK(IPP_SETUP == A(192, 168, 4, 1));
     CHECK(IPP_BOX == A(192, 168, 98, 1) && IPP_PPP_DC == A(192, 168, 98, 2));
     CHECK(IPP_DHCP_FIRST == A(192, 168, 98, 2) && IPP_DHCP_LAST == A(192, 168, 98, 99));
     CHECK(ipp_dc_host(A(192, 168, 98, 2)) && ipp_dc_host(A(192, 168, 98, 100)) && ipp_dc_host(A(192, 168, 98, 254)));
