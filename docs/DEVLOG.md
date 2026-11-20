@@ -402,3 +402,10 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   raced (the modem opened with its status endpoint just before the cable took its channels). The
   modem driver now reads the cable state on every try, retries the open, closes a modem that was
   opened too early, and the cable gives the modem back if its own open fails in the end.
+- **openMenu could not find the serial cable on the ESP32 (Nov 2026).** openMenu (unified branch)
+  opens the serial port at 115200 (111607 on the SCIF) and sends "AT" twice, 600 ms each. The cable
+  starts at 57600 (dcload's rate) and only the computer on its USB ever set another, so with the
+  ESP32 as the host the line stayed at 57600, and returned there after every W5500/SD session; the
+  two probes were over before auto-baud could follow. The ESP32 now sets link.serial.baud 115200
+  whenever the cable routes serial to it (as DreamPi's serial port is set), and auto-baud follows
+  111607 or 120192 from there.

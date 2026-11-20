@@ -213,6 +213,15 @@ size_t link_last_answer(char *out, size_t cap, uint32_t *seq) {
 
 static volatile uint32_t wire_baud;    /* the serial line's rate (the cable's hello, every second) */
 uint32_t link_wire_baud(void) { return wire_baud; }
+/* The cable's serial line starts at 57600 (dcload's rate, for a computer on its USB). With this
+   box as the serial host the Dreamcast speaks PPP as to a DreamPi 2.0+, at 115200 (111607 or 120192
+   on its SCIF): the cable is set to that, as DreamPi's serial port is, and follows the exact rate
+   from there. At 57600 a short probe ("AT" twice, openMenu) was over before the cable caught up. */
+#define SER_HOST_BAUD 115200
+#define STR_(x) #x
+#define STR(x) STR_(x)
+static volatile uint32_t cable_host_baud;    /* link.serial.baud the cable reports */
+static volatile bool cable_ser_here;          /* link.route serial=esp32 */
 
 /* an answer from the cable: keep it; "ok hello.* / ok link.*" lines also go to cable_info */
 static void on_api(const char *p, size_t n) {
@@ -230,6 +239,8 @@ static void on_api(const char *p, size_t n) {
             if (strncmp(rest, "hello.kind", 10) == 0) is_info = true;
             size_t rl = len - (size_t)(rest - line);
             if (rl > 17 && strncmp(rest, "link.serial.wire ", 17) == 0) wire_baud = (uint32_t)strtoul(rest + 17, NULL, 10);
+            if (rl > 17 && strncmp(rest, "link.serial.baud ", 17) == 0) cable_host_baud = (uint32_t)strtoul(rest + 17, NULL, 10);
+            if (rl > 11 && strncmp(rest, "link.route ", 11) == 0) cable_ser_here = memmem(rest, rl, "serial=esp32", 12) != NULL;
             if (o + rl + 2 < sizeof info) { memcpy(info + o, rest, rl); o += rl; info[o++] = '\n'; }
         }
     }
@@ -336,8 +347,11 @@ static void rx_task(void *arg) {
 static void hello_task(void *arg) {
     (void)arg;
     for (;;) {
-        char m[64];
-        int k = snprintf(m, sizeof m, "dc1\nid %u\nget hello\nget link.*\n", (unsigned)next_id++);
+        char m[96];
+        uint32_t hb = cable_host_baud;
+        bool set = cable_ser_here && hb && hb != SER_HOST_BAUD;   /* also after the cable restarts */
+        int k = snprintf(m, sizeof m, "dc1\nid %u\n%sget hello\nget link.*\n", (unsigned)next_id++,
+                         set ? "set link.serial.baud " STR(SER_HOST_BAUD) "\n" : "");
         link_send(LINK_CH_API, m, (size_t)k);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
