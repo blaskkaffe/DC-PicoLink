@@ -8,7 +8,7 @@
  * without its status endpoint (usbmodem.c). A modem already open when the cable comes closes and
  * opens again that way.
  *
- * The cable's bytes go to a task of their own (link_usb_rx), so the USB client task that finishes
+ * The cable's bytes go to link.c's reader task (usbl_read), so the USB client task that finishes
  * transfers never waits on the PPP server or the web page's SD requests.
  */
 #include <string.h>
@@ -30,8 +30,10 @@
 #define PL_PID      0x4DC5
 #define PL_EP_OUT   0x07
 #define PL_EP_IN    0x87
-#define URING       (8u * 1024u)          /* wire bytes to the cable, as the SPI link's ring */
-#define XFER        1024u                 /* bytes per bulk transfer (a multiple of 64) */
+#define URING_OWN   (4u * 1024u)          /* wire bytes to the cable when there is no SPI ring to borrow */
+#define XFER        1024u                 /* bytes per bulk OUT transfer (a multiple of 64) */
+#define XFER_IN     512u                  /* bytes per bulk IN transfer */
+#define RXS         2048u                 /* cable -> parser task */
 
 static usb_host_client_handle_t client;
 static QueueHandle_t otherq;              /* VID:PID of devices that are not a cable -> usbmodem.c */
@@ -44,6 +46,8 @@ static volatile bool active, gone;
 static usb_transfer_t *tin, *tout;
 static volatile bool in_busy, out_busy;
 static uint8_t *uring;
+static uint32_t URING;                    /* a power of two */
+uint8_t *link_spare_ring(size_t *size);
 static volatile uint32_t uwr, urd;        /* free-running; uwr under the link's tx lock */
 static SemaphoreHandle_t kick_lk;
 static uint32_t rx_lost;
@@ -92,16 +96,12 @@ static void in_cb(usb_transfer_t *t) {
     }
     if (gone || (t->status != USB_TRANSFER_STATUS_COMPLETED && t->status != USB_TRANSFER_STATUS_TIMED_OUT)) { in_busy = false; return; }
     /* room for a whole transfer first: the parser task catches up, nothing is lost */
-    while (xStreamBufferSpacesAvailable(rxs) < XFER && !gone) vTaskDelay(1);
+    while (xStreamBufferSpacesAvailable(rxs) < XFER_IN && !gone) vTaskDelay(1);
     if (gone || usb_host_transfer_submit(t) != ESP_OK) in_busy = false;
 }
-static void rx_task(void *arg) {
-    (void)arg;
-    static uint8_t b[512];
-    for (;;) {
-        size_t n = xStreamBufferReceive(rxs, b, sizeof b, portMAX_DELAY);
-        if (n) link_usb_rx(b, n);
-    }
+/* link.c's reader task takes the bytes (it has nothing else to do while the cable is on USB) */
+size_t usbl_read(uint8_t *b, size_t cap, uint32_t wait_ms) {
+    return rxs ? xStreamBufferReceive(rxs, b, cap, pdMS_TO_TICKS(wait_ms)) : 0;
 }
 
 /* the cable's link interface: a vendor-class interface with the endpoint 0x07 */
@@ -144,8 +144,12 @@ static void take_cable(usb_device_handle_t d) {
         return;
     }
     want = NULL;
-    if (!uring) uring = malloc(URING);
-    if (!tin) usb_host_transfer_alloc(XFER, 0, &tin);
+    if (!uring) {
+        size_t sz = 0;
+        uring = link_spare_ring(&sz);                  /* the SPI link's ring is idle now */
+        if (uring) URING = (uint32_t)sz; else { URING = URING_OWN; uring = malloc(URING); }
+    }
+    if (!tin) usb_host_transfer_alloc(XFER_IN, 0, &tin);
     if (!tout) usb_host_transfer_alloc(XFER, 0, &tout);
     if (!uring || !tin || !tout) {
         say_line("USB: no memory for the cable's link");
@@ -157,7 +161,7 @@ static void take_cable(usb_device_handle_t d) {
     uwr = urd = 0;
     xStreamBufferReset(rxs);
     tin->device_handle = tout->device_handle = d;
-    tin->bEndpointAddress = PL_EP_IN; tin->num_bytes = XFER; tin->callback = in_cb; tin->timeout_ms = 0;
+    tin->bEndpointAddress = PL_EP_IN; tin->num_bytes = XFER_IN; tin->callback = in_cb; tin->timeout_ms = 0;
     tout->bEndpointAddress = PL_EP_OUT; tout->callback = out_cb; tout->timeout_ms = 1000;
     active = true;
     link_usb_set(true);
@@ -244,7 +248,7 @@ bool usbport_cable(void) { return active; }
 /* the USB host and this client; false = the port is off */
 bool usbport_start(char *why, size_t cap) {
     otherq = xQueueCreate(4, sizeof(uint32_t));
-    rxs = xStreamBufferCreate(4096, 1);
+    rxs = xStreamBufferCreate(RXS, 1);
     kick_lk = xSemaphoreCreateMutex();
     const usb_host_config_t hc = { .skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1 };
     esp_err_t he = ESP_FAIL;
@@ -259,8 +263,7 @@ bool usbport_start(char *why, size_t cap) {
     const usb_host_client_config_t cc = { .is_synchronous = false, .max_num_event_msg = 8,
                                           .async = { .client_event_callback = client_cb, .callback_arg = NULL } };
     if (usb_host_client_register(&cc, &client) != ESP_OK) { snprintf(why, cap, "the USB port client could not start"); return false; }
-    xTaskCreate(client_task, "usb_port", 4096, NULL, 9, NULL);
-    xTaskCreate(rx_task, "usb_link_rx", 4096, NULL, 10, NULL);
+    xTaskCreate(client_task, "usb_port", 3072, NULL, 9, NULL);
     return true;
 }
 #endif

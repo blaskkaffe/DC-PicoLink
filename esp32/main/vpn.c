@@ -513,7 +513,15 @@ static void session_conf(int i, ovpn_conf_t *cf) {
         xSemaphoreGive(lk);
         drain_out();
         if (locked && (s >= OVPN_KEYS || s == OVPN_FAILED || now_ms() - lock_t > 15000)) { tls_unlock(); locked = false; }
-        if (s == OVPN_FAILED) { snprintf(st.err, sizeof st.err, "%s", ovpn_error(vo)); st.fails++; note("VPN: %s", st.err); break; }
+        if (s == OVPN_FAILED) {
+            snprintf(st.err, sizeof st.err, "%s", ovpn_error(vo)); st.fails++;
+            if (strstr(st.err, "alloc") || strstr(st.err, "memory"))    /* how short it was: for the next fix */
+                note("VPN: %s (RAM: %u bytes free now, lowest since start %u, largest block %u)", st.err,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            else note("VPN: %s", st.err);
+            break;
+        }
         if (s == OVPN_UP && !announced) {
             const ovpn_info_t *in = ovpn_info(vo);
             fmt_ip(st.ip, sizeof st.ip, in->ip);

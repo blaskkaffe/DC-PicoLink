@@ -46,11 +46,13 @@ size_t usbl_room(void);
 size_t usbl_backlog(void);
 void usbl_put(const uint8_t *w, size_t k);
 void usbl_kick(void);
+size_t usbl_read(uint8_t *b, size_t cap, uint32_t wait_ms);
 #else
 static size_t usbl_room(void) { return 0; }
 static size_t usbl_backlog(void) { return 0; }
 static void usbl_put(const uint8_t *w, size_t k) { (void)w; (void)k; }
 static void usbl_kick(void) { }
+static size_t usbl_read(uint8_t *b, size_t cap, uint32_t wait_ms) { (void)b; (void)cap; vTaskDelay(pdMS_TO_TICKS(wait_ms)); return 0; }
 #endif
 static volatile int64_t last_rx_us = -10000000;
 static link_stats_t st;
@@ -135,6 +137,18 @@ bool link_send(uint8_t ch, const void *p, size_t n) {
 }
 
 bool link_dc1(const char *msg, size_t n) { return link_send(LINK_CH_API, msg, n); }
+
+/* the SPI link's ring, idle while the cable runs over USB: usbport.c uses its memory (8 KB less
+   RAM; the VPN's TLS handshake needs every KB). NULL without the SPI link. */
+uint8_t *link_spare_ring(size_t *size) {
+#if CONFIG_DCL_LINK_SPI
+    *size = RING_SIZE;
+    return ring;
+#else
+    *size = 0;
+    return NULL;
+#endif
+}
 
 /* free bytes in the queue to the cable; and bytes still waiting for it (ring + loaded chunks) */
 size_t link_room(void) {
@@ -273,6 +287,13 @@ static void rx_task(void *arg) {
     bool was_up = false;
     for (int i = 0; i < LSPI_NBUF; i++) lspi_load(i);
     for (;;) {
+        if (usb_on) {                         /* the cable is on USB: its bytes, here */
+            static uint8_t ub[256];
+            size_t un = usbl_read(ub, sizeof ub, 20);
+            if (un) link_usb_rx(ub, un);
+            note_up_down(&was_up);
+            continue;
+        }
         spi_slave_transaction_t *t;
         if (spi_slave_get_trans_result(LSPI_HOST, &t, pdMS_TO_TICKS(20)) == ESP_OK) {
             int i = (int)(intptr_t)t->user;
@@ -292,6 +313,12 @@ static void rx_task(void *arg) {
     static uint8_t buf[512];
     bool was_up = false;
     for (;;) {
+        if (usb_on) {                         /* the cable is on USB: its bytes, here */
+            size_t un = usbl_read(buf, sizeof buf, 20);
+            if (un) link_usb_rx(buf, un);
+            note_up_down(&was_up);
+            continue;
+        }
         int n = uart_read_bytes(LINK_PORT, buf, sizeof buf, pdMS_TO_TICKS(20));
         for (int i = 0; i < n; i++)
             if (!usb_on && link_rx_byte(&rx, buf[i])) { last_rx_us = esp_timer_get_time(); deliver(&rx); }
