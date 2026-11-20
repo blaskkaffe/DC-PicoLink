@@ -38,8 +38,10 @@ int main(void) {
     u = f + 34; u[1] = 68; u[3] = 67;
     uint8_t *opt = u + 8 + 240; opt[0] = 53; opt[1] = 1; opt[2] = 1; opt[3] = 255;
     expect(f, 34 + 8 + 248, "DHCP DISCOVER 0.0.0.0 > 255.255.255.255");
+    if (!ethtrace_is_discover(f, 34 + 8 + 248)) { printf("FAIL discover not seen\n"); fails++; }
     opt[2] = 5;
     expect(f, 34 + 8 + 248, "DHCP ACK 0.0.0.0 > 255.255.255.255");
+    if (ethtrace_is_discover(f, 34 + 8 + 248)) { printf("FAIL ack taken for a discover\n"); fails++; }
     /* TCP SYN, ICMP, other */
     memset(f, 0, sizeof f); ip_hdr(f, 6, 44, dc, far);
     uint8_t *t = f + 34; t[0] = 0x10; t[1] = 0x00; t[3] = 80; t[13] = 0x02;

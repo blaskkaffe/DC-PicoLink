@@ -398,10 +398,10 @@ static void task(void *arg) {
         while (seen_logged < seen_n) {                /* where the Dreamcast goes (first few per call) */
             int i = seen_logged++;
             char a[16]; uint32_t ip = seen[i].ip; bool own = false;
-            uint32_t t_ = lan_this; own = ip == t_;
+            uint32_t t_ = lan_this; own = ip == t_ || is_own_addr(ip);   /* 192.168.98.1 on the Dreamcast network is this box too */
             const char *pr = seen[i].proto == 6 ? "TCP" : seen[i].proto == 17 ? "UDP" : seen[i].proto == 1 ? "ICMP" : "IP";
             if (seen[i].port) say("home network: the Dreamcast talks to %s:%u (%s)%s", ips(ip, a), (unsigned)seen[i].port, pr,
-                                  seen[i].port == 53 && !own && ip != inside + 1 ? ": a DNS server of its own settings, not this box" : "");
+                                  seen[i].port == 53 && !own ? ": a DNS server of its own settings, not this box" : "");
             else say("home network: the Dreamcast talks to %s (%s)", ips(ip, a), pr);
         }
     }

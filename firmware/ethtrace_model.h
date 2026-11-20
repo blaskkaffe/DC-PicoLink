@@ -11,6 +11,21 @@ static inline int ett_ip(char *o, size_t cap, const uint8_t *p) {
     return snprintf(o, cap, "%u.%u.%u.%u", p[0], p[1], p[2], p[3]);
 }
 
+/* a DHCP DISCOVER from the Dreamcast: a program (re)connecting, the trace starts again */
+static inline int ethtrace_is_discover(const uint8_t *f, size_t n) {
+    if (n < 14 + 20 + 8 + 240 + 3 || ett_be16(f + 12) != 0x0800 || f[14 + 9] != 17) return 0;
+    size_t hl = (size_t)(f[14] & 15) * 4;
+    const uint8_t *u = f + 14 + hl;
+    if (n < 14 + hl + 8 + 240 + 3 || ett_be16(u + 2) != 67) return 0;
+    const uint8_t *o = u + 8 + 240; size_t ol = n - (size_t)(o - f);
+    for (size_t i = 0; i + 2 < ol && o[i] != 255;) {
+        if (o[i] == 0) { i++; continue; }
+        if (o[i] == 53) return o[i + 1] >= 1 && o[i + 2] == 1;
+        i += 2u + o[i + 1];
+    }
+    return 0;
+}
+
 static size_t ethtrace_line(const uint8_t *f, size_t n, char *o, size_t cap) {
     if (!cap) return 0;
     o[0] = 0;

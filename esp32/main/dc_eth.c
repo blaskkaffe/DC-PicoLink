@@ -113,7 +113,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     if (!ipf_ether(&ipf, c, n, (uint32_t)(esp_timer_get_time() / 1000))) { free(c); return; }
     if (!link_eth_is_computer()) {
         int64_t t = esp_timer_get_time();
-        if (t - last_dc_us >= QUIET_US) trace_in = trace_out = 0;    /* a new session: trace it */
+        if (t - last_dc_us >= QUIET_US || ethtrace_is_discover(c, n)) trace_in = trace_out = 0;   /* a new session or program: trace it */
         trace(true, c, n);
         last_dc_us = t;   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
         /* a Dreamcast with a fixed address never asks DHCP: learn it from its frames */
