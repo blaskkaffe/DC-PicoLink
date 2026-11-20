@@ -1004,10 +1004,9 @@ static void pins_offline_task(void) {
 
 static void autobaud_task(void) {
     static uint32_t win[32], wn;
-    static float cand;
-    static uint32_t cand_n;
+    static abc_t abc;
     static bool reported;
-    static uint32_t fe_count, fe_last_report, fe_reported, fe_mark;
+    static uint32_t fe_count, fe_last_report, fe_reported;
     static int last_mode = -1;
     uint32_t now = time_us_32();
 
@@ -1029,7 +1028,7 @@ static void autobaud_task(void) {
                       (last_mode == MODE_W5500 && seen_mode == MODE_SERIAL && now - spi_since > 1000000u);
         if (seen_mode == MODE_W5500) spi_since = now;
         last_mode = seen_mode;
-        wn = 0; cand = 0; reported = false;
+        wn = 0; abc.cand = 0; abc.n = 0; reported = false;
         if (auto_baud != 0 && forget) {
             auto_baud = 0;
             set_wire_baud(dc_effective_baud(cur_baud));
@@ -1094,20 +1093,14 @@ static void autobaud_task(void) {
              (a mis-measured window can't re-tune a working link).
            At 4% off (115200 vs the DC's 120192) most bytes still decode, but ~1%
            are damaged: enough to lose most large PPP frames. */
-        float off = fabsf(rate / wire_baud - 1.0f);
-        if (off < 0.025f || rate > 400000.0f || wire_baud > 400000.0f) { cand = 0; cand_n = 0; continue; }
+        if (rate > 400000.0f || wire_baud > 400000.0f) { abc.cand = 0; abc.n = 0; continue; }
         if ((int32_t)(now - baud_holdoff_until) < 0) continue;
         bool clean = cnt >= 8;                         /* >= 25% single-bit pulses */
         /* framing errors are counted from the first window of this candidate on,
-           so slow traffic (a game retrying "AT" once a second) still adds up */
-        if (cand == 0 || fabsf(rate / cand - 1.0f) > 0.015f) { cand = rate; cand_n = 1; fe_mark = fe_count; continue; }
-        cand_n++;
-        bool errors = fe_count != fe_mark;
-        if (ab_fraction(wire_baud, rate) && cand_n < 16) continue;     /* 1/2, 1/3 ... of the wire rate: be sure first */
-        if (!(errors && cand_n >= 2) && !(clean && cand_n >= 4)) continue;
+           so slow traffic (a game retrying "AT" once a second) still adds up (baud_model.h) */
+        if (!abc_step(&abc, rate, wire_baud, clean, fe_count)) continue;
         auto_baud = snapped;
         set_wire_baud(snapped);
-        cand = 0; cand_n = 0;
         status("serial: following the DC at %.0f baud (host asked %lu)", (double)snapped, (unsigned long)cur_baud);
 #endif
     }

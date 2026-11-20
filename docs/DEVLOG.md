@@ -390,3 +390,15 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   download in the simulation, which did not model the upstream at all. Now the ESP32 paces by
   time (serq_pace_t, the line rate from the cable's hello) and the cable takes what fits; the
   simulation measures the upstream and fails if it ever waits.
+- **Serial never followed a game at 115200 (Nov 2026).** The game sent short bursts at 111607 baud
+  to a wire at 57600; the cable measured 111186 once and then never followed, with framing errors
+  piling up and the ESP32 echoing garbage. A meter window without 1-bit pulses reads half the rate
+  (55800), 3 % off the wire, so it started a new candidate and reset the real one, every other
+  window. The follow decision is now `abc_step` in baud_model.h: a window at a whole fraction of
+  the candidate is ignored (a window can only read too slow), a faster one whose fraction the
+  candidate is replaces it; test_baud covers the alternating case.
+- **USB modem lost next to the cable (Nov 2026).** With both on a hub the modem was closed for the
+  cable and its reopen failed at once ("not a modem this firmware can use"); at start the two
+  raced (the modem opened with its status endpoint just before the cable took its channels). The
+  modem driver now reads the cable state on every try, retries the open, closes a modem that was
+  opened too early, and the cable gives the modem back if its own open fails in the end.

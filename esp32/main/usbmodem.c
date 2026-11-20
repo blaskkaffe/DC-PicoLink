@@ -56,6 +56,7 @@ static uint8_t tone[USBM_TONE_N];
 static const char *state = "no modem plugged in";
 static volatile bool present;
 static volatile bool yielding;               /* closed so the cable can have the USB channels (usbport.c) */
+static volatile bool opening;                /* a modem is being opened (not present yet) */
 static char usb_id[12] = "";
 static struct { uint32_t calls, answered, failed, bytes_in, bytes_out; char dial[24]; } cnt;
 static volatile bool via_dcnet;              /* this call goes to DCNet, not our PPP server */
@@ -129,8 +130,8 @@ size_t usbmodem_write(const void *data, size_t len) {
 void usbmodem_call_over(void) { push(EV_CALL_OVER, 0); }
 /* usbport.c: the cable needs the modem's USB host channels (8 in all; hub + modem + cable need 9) */
 bool usbmodem_yield(void) {
-    if (!present) return false;
-    if (!yielding) { yielding = true; push(EV_GONE, 0); }
+    if (!present && !opening) return false;
+    if (!yielding) { yielding = true; if (present) push(EV_GONE, 0); }   /* an open in progress closes right after */
     return true;
 }
 
@@ -350,10 +351,33 @@ static void modem_task(void *arg) {
         /* with a cable on the port too (through a hub) the modem's status endpoint stays closed: the
            ESP32's USB host has 8 channels, hub 2 + cable 3 + modem 3 without it. The end of a call
            is then seen from NO CARRIER and PPP, not the carrier line. */
-        cfg.no_notification = usbport_cable();
-        if (cdc_acm_host_open(vid, pid, 0, &cfg, &h) != ESP_OK) {
-            say("USB: device %s is plugged in but is not a modem this firmware can use (it needs a USB CDC-ACM modem)", usb_id);
-            state = "a USB device is plugged in, but not a usable modem";
+        /* The cable can turn up while this runs (both plugged in at start): the cable flag is read
+           again for every try, and a modem opened with its status endpoint just before the cable
+           took its channels is closed and opened again without it. */
+        esp_err_t oe = ESP_FAIL;
+        opening = true;
+        for (int t = 0; t < 4; t++) {
+            if (t) pause_ms(700);
+            cfg.no_notification = usbport_cable();
+            oe = cdc_acm_host_open(vid, pid, 0, &cfg, &h);
+            if (oe != ESP_OK) continue;
+            if (yielding) { cdc_acm_host_close(h); h = NULL; break; }        /* the cable needs the channels: offered again after it */
+            if (!cfg.no_notification && usbport_cable()) { cdc_acm_host_close(h); h = NULL; oe = ESP_FAIL; continue; }
+            break;
+        }
+        opening = false;
+        if (yielding && !h) {
+            yielding = false;
+            say("USB modem %s: waits until the DC-PicoLink cable is open, then opens next to it", usb_id);
+            state = "reopening next to the cable";
+            continue;
+        }
+        if (oe != ESP_OK || !h) {
+            if (usbport_cable())
+                say("USB: modem %s could not be opened next to the DC-PicoLink cable (%s): the ESP32's USB host has 8 channels; hub 2 + cable 3 + modem 3 fill them, so nothing else may be on the hub", usb_id, esp_err_to_name(oe));
+            else
+                say("USB: device %s is plugged in but is not a modem this firmware can use (%s; it needs a USB CDC-ACM modem)", usb_id, esp_err_to_name(oe));
+            state = usbport_cable() ? "plugged in, but no USB channels left next to the cable" : "a USB device is plugged in, but not a usable modem";
             continue;
         }
         xSemaphoreTake(devlk, portMAX_DELAY); dev = h; xSemaphoreGive(devlk);
@@ -382,7 +406,7 @@ size_t usbmodem_info_json(char *out, size_t cap) {
     return (size_t)snprintf(out, cap,
         "{\"built\":true,\"present\":%s,\"id\":\"%s\",\"state\":\"%s\",\"calls\":%lu,\"answered\":%lu,\"failed\":%lu,"
         "\"bytes_in\":%lu,\"bytes_out\":%lu,\"dialled\":\"%s\",\"dcnet\":%s}",
-        present ? "true" : "false", present ? usb_id : "", usbport_cable() ? "a DC-PicoLink cable is on the USB port (the link runs there)" : state, (unsigned long)cnt.calls, (unsigned long)cnt.answered,
+        present ? "true" : "false", present ? usb_id : "", state, (unsigned long)cnt.calls, (unsigned long)cnt.answered,
         (unsigned long)cnt.failed, (unsigned long)cnt.bytes_in, (unsigned long)cnt.bytes_out, cnt.dial, via_dcnet ? "true" : "false");
 }
 

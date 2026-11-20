@@ -40,3 +40,26 @@ static bool ab_fraction(float wire, float rate) {
     float d = k > r ? k - r : r - k;
     return d < 0.06f * r;
 }
+
+/* The follow decision for one usable window measured at `rate` (autobaud_task). A window can only
+   come out too slow, never too fast (a window without 1-bit pulses reads 1/2, 1/3 ... of the rate),
+   so a window at a whole fraction of the candidate is ignored instead of starting a new candidate,
+   and a faster window whose fraction the candidate is replaces it. Without that a game that sends
+   short bursts at 115200 to a wire at 57600 gave windows at ~111600 and ~55800 in turn: each reset
+   the other, and the cable never followed (serial over the cable, Nov 2026). */
+typedef struct { float cand; uint32_t n, fe_mark; } abc_t;
+static bool abc_step(abc_t *c, float rate, float wire, bool clean, uint32_t fe_count) {
+    bool below = c->cand != 0 && rate < c->cand && ab_fraction(c->cand, rate);
+    if (below) return false;                                    /* a slow-looking window of the same DC */
+    float off = rate / wire - 1.0f; if (off < 0) off = -off;
+    if (off < 0.025f) { c->cand = 0; c->n = 0; return false; }  /* the wire is right */
+    if (c->cand != 0 && rate > c->cand && ab_fraction(rate, c->cand)) { c->cand = rate; c->n = 1; return false; }
+    float d = c->cand != 0 ? rate / c->cand - 1.0f : 1.0f; if (d < 0) d = -d;
+    if (d > 0.015f) { c->cand = rate; c->n = 1; c->fe_mark = fe_count; return false; }
+    c->n++;
+    bool errors = fe_count != c->fe_mark;
+    if (ab_fraction(wire, rate) && c->n < 16) return false;    /* 1/2, 1/3 ... of the wire rate: be sure first */
+    if (!(errors && c->n >= 2) && !(clean && c->n >= 4)) return false;
+    c->cand = 0; c->n = 0;
+    return true;
+}

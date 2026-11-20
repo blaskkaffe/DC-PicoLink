@@ -49,6 +49,35 @@ int main(void) {
         printf("%s auto-baud is slow to follow a rate that is a whole fraction of the wire rate\n", ok ? "PASS" : "FAIL");
         fails += !ok;
     }
+    {   /* follow decision: a game at 111607 (115200 asked) on a 57600 wire, bursts whose windows
+           alternate between the true rate and half of it (no 1-bit pulses), framing errors now and then */
+        abc_t c = {0}; uint32_t fe = 0; int followed = -1;
+        for (int i = 0; i < 20 && followed < 0; i++) {
+            float r = i % 2 ? 55800.0f : 111186.0f;
+            if (i % 3 == 2) fe++;
+            if (abc_step(&c, r, 57600, false, fe)) followed = i;
+        }
+        bool ok = followed >= 0 && followed < 6;
+        /* the same with half-rate windows first */
+        abc_t c2 = {0}; fe = 0; int f2 = -1;
+        for (int i = 0; i < 20 && f2 < 0; i++) { if (i % 3 == 2) fe++; if (abc_step(&c2, i % 2 ? 111186.0f : 55800.0f, 57600, false, fe)) f2 = i; }
+        ok = ok && f2 >= 0 && f2 < 7;
+        /* DC at exactly twice the wire: its half-rate windows read as the wire rate and must not reset it */
+        abc_t c3 = {0}; fe = 0; int f3 = -1;
+        for (int i = 0; i < 20 && f3 < 0; i++) { if (i % 3 == 2) fe++; if (abc_step(&c3, i % 2 ? 57600.0f : 115200.0f, 57600, false, fe)) f3 = i; }
+        ok = ok && f3 >= 0 && f3 < 7;
+        /* a DC at the wire rate is never followed, whatever single odd windows say */
+        abc_t c4 = {0}; bool any = false;
+        for (int i = 0; i < 40; i++) any |= abc_step(&c4, i % 7 == 3 ? 28800.0f : 57600.0f, 57600, true, (uint32_t)i);
+        ok = ok && !any;
+        /* one clean mis-measured window cannot retune a working link (needs 4 agreeing) */
+        abc_t c5 = {0}; int f5 = -1;
+        for (int i = 0; i < 4 && f5 < 0; i++) if (abc_step(&c5, 120192, 115200, true, 0)) f5 = i;
+        ok = ok && f5 == 3;
+        printf("%s auto-baud follows a DC whose windows alternate with half its rate (followed after %d/%d/%d windows)\n",
+               ok ? "PASS" : "FAIL", followed + 1, f2 + 1, f3 + 1);
+        fails += !ok;
+    }
     dc_effective_baud(115200);
     if (baud_wrapped) { printf("FAIL wrap flag stuck\n"); fails++; }
     printf(fails ? "FAILED: %u\n" : "OK: %u requests match dcload's DC rate\n", fails ? fails : n);

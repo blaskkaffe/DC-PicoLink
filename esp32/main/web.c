@@ -58,7 +58,7 @@ static const char PAGE[] =
 "async function tick(){try{const r=await fetch('/api/status?log='+ln+'&ser='+sn);const j=await r.json();"
 "$('lk').className=j.link.up?'up':'';$('lkt').textContent='link: '+(j.link.up?'up':'down');"
 "{const dv=['cable: '+(j.link.up?({usb:'USB',spi:'pins',uart:'UART'})[j.link.via]:'none')];const wd=j.wired||{};"
-"if(j.modem&&j.modem.built)dv.push('modem: '+(j.modem.present?j.modem.id:'none'));"
+"if(j.modem&&j.modem.built)dv.push('modem: '+(j.modem.present?j.modem.id:/^(plugged|reopening|a USB device)/.test(j.modem.state)?'not open ('+j.modem.state+')':'none'));"
 "dv.push('wired port: '+(!wd.present?'no module':wd.role=='uplink'?'Internet':wd.role=='bba'?'BBA socket':wd.role=='detect'?'checking':'no cable'));"
 "dv.push('Internet: '+(wd.role=='uplink'?'wired':j.wifi.up?'Wi-Fi':'none'));"
 "const n=j.net||{};dv.push('Dreamcast: '+(n.up?(n.via||'PPP'):j.eth&&j.eth.active?'W5500 (cable)':wd.role=='bba'&&wd.frames_in?'BBA':'offline'));"

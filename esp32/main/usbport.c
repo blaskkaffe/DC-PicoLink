@@ -51,9 +51,11 @@ uint8_t *link_spare_ring(size_t *size);
 static volatile uint32_t uwr, urd;        /* free-running; uwr under the link's tx lock */
 static SemaphoreHandle_t kick_lk;
 static uint32_t rx_lost;
+static void look_at(uint8_t addr);
+static void reoffer_modem(usb_device_handle_t d);
 static usb_device_handle_t want;          /* a cable waiting for the modem to free its channels */
 static bool modem_moved;                  /* the modem closed for the cable: offer it again after */
-static void look_at(uint8_t addr);
+
 static int64_t want_until;
 bool usbmodem_yield(void);
 
@@ -138,8 +140,8 @@ static void take_cable(usb_device_handle_t d) {
         }
         if (want == d && esp_timer_get_time() < want_until) return;       /* tried again in client_task */
         want = NULL;
-        say_line("USB: the DC-PicoLink cable's link interface could not be opened%s",
-                 usbmodem_yield() ? "" : " (with a hub: unplug other USB devices; the ESP32's USB host has 8 channels)");
+        say_line("USB: the DC-PicoLink cable's link interface could not be opened (with a hub: unplug other USB devices; the ESP32's USB host has 8 channels)");
+        reoffer_modem(d);                                                 /* the modem gets its place back */
         usb_host_device_close(client, d);
         return;
     }
@@ -168,15 +170,18 @@ static void take_cable(usb_device_handle_t d) {
     in_busy = true;
     if (usb_host_transfer_submit(tin) != ESP_OK) in_busy = false;
     say_line("USB: DC-PicoLink cable plugged in; the link runs over USB");
-    /* a modem that closed to make room: offer it again (it opens without its status endpoint) */
-    if (modem_moved) {
-        modem_moved = false;
-        uint8_t a[8], ca = 0; int k = 0;
-        usb_device_info_t inf;
-        if (usb_host_device_info(d, &inf) == ESP_OK) ca = inf.dev_addr;
-        if (usb_host_device_addr_list_fill(sizeof a, a, &k) == ESP_OK)
-            for (int i = 0; i < k; i++) if (a[i] != ca) look_at(a[i]);
-    }
+    reoffer_modem(d);                              /* it opens without its status endpoint now */
+}
+
+/* a modem that closed to make room for cable d: offer it to the modem driver again */
+static void reoffer_modem(usb_device_handle_t d) {
+    if (!modem_moved) return;
+    modem_moved = false;
+    uint8_t a[8], ca = 0; int k = 0;
+    usb_device_info_t inf;
+    if (usb_host_device_info(d, &inf) == ESP_OK) ca = inf.dev_addr;
+    if (usb_host_device_addr_list_fill(sizeof a, a, &k) == ESP_OK)
+        for (int i = 0; i < k; i++) if (a[i] != ca) look_at(a[i]);
 }
 
 static void drop_cable(void) {
