@@ -29,6 +29,7 @@
 #include "ipplan_model.h"
 #include "lwip/netif.h"
 #include "dhcpserver/dhcpserver.h"
+#include "ethtrace_model.h"
 #include "lwip/lwip_napt.h"
 #include "lwip/tcpip.h"
 
@@ -44,8 +45,22 @@ static volatile bool active;
 static uint32_t lease_ip;              /* the Dreamcast's address: DHCP lease, or learnt from its frames */
 static struct { uint32_t rx, tx, tx_drop, rx_drop, leases; char last_ip[16]; } cnt;
 
+/* the first frames of each Dreamcast session, both ways, one line each in the log: shows where a
+   game stops (no DNS question, an ARP without answer, a SYN without SYN-ACK) */
+#define TRACE_N 12
+static volatile int trace_in, trace_out;
+static void trace(bool from_dc, const uint8_t *f, size_t n) {
+    volatile int *c = from_dc ? &trace_in : &trace_out;
+    if (*c >= TRACE_N) return;
+    (*c)++;
+    char l[120];
+    ethtrace_line(f, n, l, sizeof l);
+    say_line("Ethernet %s %s", from_dc ? "DC>" : ">DC", l);
+}
+
 static esp_err_t tx_cb(void *h, void *buf, size_t len) {
     (void)h;
+    if (esp_timer_get_time() - last_dc_us < QUIET_US) trace(false, buf, len);
     if (!link_is_up() || len > 1514) { cnt.tx_drop++; return ESP_OK; }
     ipf_in.public_ip = pubip_get(); ipf_in.dnat = dnat_rules();
     ipf_ether_to_dc(&ipf_in, buf, len);         /* dc2k2 / dcvoip rules (ipfilter_model.h) */
@@ -97,7 +112,10 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
     if (!ipf_ether(&ipf, c, n, (uint32_t)(esp_timer_get_time() / 1000))) { free(c); return; }
     if (!link_eth_is_computer()) {
-        last_dc_us = esp_timer_get_time();   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
+        int64_t t = esp_timer_get_time();
+        if (t - last_dc_us >= QUIET_US) trace_in = trace_out = 0;    /* a new session: trace it */
+        trace(true, c, n);
+        last_dc_us = t;   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
         /* a Dreamcast with a fixed address never asks DHCP: learn it from its frames */
         dcside_heard(dc_eth_netif());          /* replies for the Dreamcast network go here now */
         uint32_t a = ethsrc_dc_ip(c, n, lwip_htonl(ETH_IP), lwip_htonl(IPP_MASK));

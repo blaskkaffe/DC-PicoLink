@@ -373,8 +373,12 @@ static void modem_task(void *arg) {
             continue;
         }
         if (oe != ESP_OK || !h) {
-            if (usbport_cable())
-                say("USB: modem %s could not be opened next to the DC-PicoLink cable (%s): the ESP32's USB host has 8 channels; hub 2 + cable 3 + modem 3 fill them, so nothing else may be on the hub", usb_id, esp_err_to_name(oe));
+            if (usbport_cable()) {
+                char bus[80];
+                usbport_bus_text(bus, sizeof bus);
+                say("USB: modem %s does not fit next to the DC-PicoLink cable (%s): the ESP32's USB host has 8 channels, each hub takes 2, the cable 3, the modem 3. On the bus: %s", usb_id,
+                    oe == ESP_ERR_NOT_SUPPORTED ? "no channel left" : esp_err_to_name(oe), bus);
+            }
             else
                 say("USB: device %s is plugged in but is not a modem this firmware can use (%s; it needs a USB CDC-ACM modem)", usb_id, esp_err_to_name(oe));
             state = usbport_cable() ? "plugged in, but no USB channels left next to the cable" : "a USB device is plugged in, but not a usable modem";

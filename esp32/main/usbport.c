@@ -250,6 +250,27 @@ bool usbport_next_other(uint16_t *vid, uint16_t *pid, uint32_t wait_ms) {
 }
 bool usbport_cable(void) { return active; }
 
+/* what is on the bus, for the log when the host's 8 channels run out: "hub, hub, cable, 0572:1324"
+   (a 7-port hub is often two hub chips: 2 channels each) */
+size_t usbport_bus_text(char *o, size_t cap) {
+    uint8_t a[12]; int k = 0; size_t w = 0;
+    if (!cap) return 0;
+    o[0] = 0;
+    if (usb_host_device_addr_list_fill(sizeof a, a, &k) != ESP_OK) return 0;
+    for (int i = 0; i < k && w + 16 < cap; i++) {
+        usb_device_handle_t d; const usb_device_desc_t *dd;
+        if (usb_host_device_open(client, a[i], &d) != ESP_OK) continue;
+        if (usb_host_get_device_descriptor(d, &dd) == ESP_OK) {
+            const char *sep = w ? ", " : "";
+            if (dd->bDeviceClass == USB_CLASS_HUB) w += (size_t)snprintf(o + w, cap - w, "%shub", sep);
+            else if (dd->idVendor == PL_VID && dd->idProduct == PL_PID) w += (size_t)snprintf(o + w, cap - w, "%scable", sep);
+            else w += (size_t)snprintf(o + w, cap - w, "%s%04x:%04x", sep, dd->idVendor, dd->idProduct);
+        }
+        usb_host_device_close(client, d);
+    }
+    return w;
+}
+
 /* the USB host and this client; false = the port is off */
 bool usbport_start(char *why, size_t cap) {
     otherq = xQueueCreate(4, sizeof(uint32_t));
