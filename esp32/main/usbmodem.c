@@ -55,6 +55,7 @@ static uint8_t tone[USBM_TONE_N];
 
 static const char *state = "no modem plugged in";
 static volatile bool present;
+static volatile bool yielding;               /* closed so the cable can have the USB channels (usbport.c) */
 static char usb_id[12] = "";
 static struct { uint32_t calls, answered, failed, bytes_in, bytes_out; char dial[24]; } cnt;
 static volatile bool via_dcnet;              /* this call goes to DCNet, not our PPP server */
@@ -126,6 +127,12 @@ size_t usbmodem_write(const void *data, size_t len) {
 }
 
 void usbmodem_call_over(void) { push(EV_CALL_OVER, 0); }
+/* usbport.c: the cable needs the modem's USB host channels (8 in all; hub + modem + cable need 9) */
+bool usbmodem_yield(void) {
+    if (!present) return false;
+    if (!yielding) { yielding = true; push(EV_GONE, 0); }
+    return true;
+}
 
 /* wait for an event; false = time is up */
 static bool wait_ev(ev_t *e, int ms) { return xQueueReceive(evq, e, pdMS_TO_TICKS(ms) + 1) == pdTRUE; }
@@ -340,6 +347,11 @@ static void modem_task(void *arg) {
            open the cable's own serial interface as a modem */
         if (!usbport_next_other(&vid, &pid, UINT32_MAX)) continue;
         snprintf(usb_id, sizeof usb_id, "%04x:%04x", vid, pid);
+        if (usbport_cable()) {
+            say("USB: device %s is plugged in too, but the DC-PicoLink cable has the USB port (the ESP32's USB host has 8 channels; through a hub, cable and modem need 9). It is used once the cable is unplugged", usb_id);
+            state = "waiting: the DC-PicoLink cable has the USB port";
+            continue;
+        }
         if (cdc_acm_host_open(vid, pid, 0, &cfg, &h) != ESP_OK) {
             say("USB: device %s is plugged in but is not a modem this firmware can use (it needs a USB CDC-ACM modem)", usb_id);
             state = "a USB device is plugged in, but not a usable modem";
@@ -355,8 +367,14 @@ static void modem_task(void *arg) {
         ppp_modem_call_end();
         xSemaphoreTake(devlk, portMAX_DELAY); dev = NULL; xSemaphoreGive(devlk);
         cdc_acm_host_close(h);
-        say("USB modem unplugged");
-        state = "no modem plugged in";
+        if (yielding) {
+            say("USB modem: closed so the DC-PicoLink cable can use the USB port (the ESP32's USB host has 8 channels; through a hub, cable and modem need 9). It is used again once the cable is unplugged");
+            state = "waiting: the DC-PicoLink cable has the USB port";
+            yielding = false;
+        } else {
+            say("USB modem unplugged");
+            state = "no modem plugged in";
+        }
     }
 }
 

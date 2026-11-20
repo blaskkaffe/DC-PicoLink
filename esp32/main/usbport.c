@@ -20,6 +20,7 @@
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "usb/usb_host.h"
 
 #define PL_VID      0xCAFE
@@ -43,6 +44,9 @@ static uint8_t *uring;
 static volatile uint32_t uwr, urd;        /* free-running; uwr under the link's tx lock */
 static SemaphoreHandle_t kick_lk;
 static uint32_t rx_lost;
+static usb_device_handle_t want;          /* a cable waiting for the modem to free its channels */
+static int64_t want_until;
+bool usbmodem_yield(void);
 
 /* ---- to the cable ---- */
 size_t usbl_room(void) { return URING - (uwr - urd); }
@@ -121,10 +125,20 @@ static void take_cable(usb_device_handle_t d) {
         return;
     }
     if (usb_host_interface_claim(client, d, (uint8_t)itf, 0) != ESP_OK) {
-        say_line("USB: the DC-PicoLink cable's link interface could not be opened");
+        /* the host has 8 channels for all open endpoints: with a hub and a modem open there is no
+           room for the cable. The cable wins: the modem closes, and the claim is tried again. */
+        if (want != d && usbmodem_yield()) {
+            want = d; want_until = esp_timer_get_time() + 3000000;
+            return;
+        }
+        if (want == d && esp_timer_get_time() < want_until) return;       /* tried again in client_task */
+        want = NULL;
+        say_line("USB: the DC-PicoLink cable's link interface could not be opened%s",
+                 usbmodem_yield() ? "" : " (with a hub: unplug other USB devices; the ESP32's USB host has 8 channels)");
         usb_host_device_close(client, d);
         return;
     }
+    want = NULL;
     if (!uring) uring = malloc(URING);
     if (!tin) usb_host_transfer_alloc(XFER, 0, &tin);
     if (!tout) usb_host_transfer_alloc(XFER, 0, &tout);
@@ -176,7 +190,10 @@ static void look_at(uint8_t addr) {
 static void client_cb(const usb_host_client_event_msg_t *m, void *arg) {
     (void)arg;
     if (m->event == USB_HOST_CLIENT_EVENT_NEW_DEV) look_at(m->new_dev.address);
-    else if (m->event == USB_HOST_CLIENT_EVENT_DEV_GONE && active && m->dev_gone.dev_hdl == cdev) gone = true;
+    else if (m->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
+        if (active && m->dev_gone.dev_hdl == cdev) gone = true;
+        if (want && m->dev_gone.dev_hdl == want) { usb_host_device_close(client, want); want = NULL; }
+    }
 }
 
 static void client_task(void *arg) {
@@ -187,7 +204,14 @@ static void client_task(void *arg) {
         for (int i = 0; i < n; i++) look_at(addrs[i]);
     for (;;) {
         usb_host_client_handle_events(client, pdMS_TO_TICKS(50));
-        if (gone && active) drop_cable();
+        if (want && !active) take_cable(want);                      /* the modem is closing: again */
+        if (gone && active) {
+            drop_cable();
+            /* the devices still there (a modem waiting behind the cable): offer them again */
+            uint8_t a[8]; int k = 0;
+            if (usb_host_device_addr_list_fill(sizeof a, a, &k) == ESP_OK)
+                for (int i = 0; i < k; i++) look_at(a[i]);
+        }
     }
 }
 
