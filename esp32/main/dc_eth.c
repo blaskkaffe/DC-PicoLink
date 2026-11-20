@@ -2,9 +2,9 @@
  * Internet for the Dreamcast over the cable's W5500 network (E-4).
  *
  * The cable emulates the W5500; its Ethernet frames come in channel ETH (the same frames a
- * Pi sees on USB). Here they are the "wire" of a second network interface, 192.168.221.1/24 (the Dreamcast network, shared with the BBA socket and PPP: ipplan_model.h)
+ * Pi sees on USB). Here they are the "wire" of a second network interface, 192.168.98.1/24 (the Dreamcast network, shared with the BBA socket and PPP: ipplan_model.h)
  * (the same address a DreamPi uses on the cable), with a DHCP server (the Dreamcast gets
- * 192.168.221.2-.99), this box as gateway and DNS (dnsd.c), and NAT out through the Wi-Fi.
+ * 192.168.98.2-.99), this box as gateway and DNS (dnsd.c), and NAT out through the Wi-Fi.
  * The TTL / PowerSmash rules (ipfilter_model.h) are applied to what the Dreamcast sends.
  * DCNow! reports run while the Dreamcast has sent frames in the last 30 seconds.
  *
@@ -33,7 +33,7 @@
 #include "lwip/tcpip.h"
 
 static const char *TAG = "dc_eth";
-#define ETH_IP   IPP_BOX               /* 192.168.221.1 (ipplan_model.h) */
+#define ETH_IP   IPP_BOX               /* 192.168.98.1 (ipplan_model.h) */
 #define QUIET_US (30 * 1000000LL)
 
 static esp_netif_t *eth_if;
@@ -60,7 +60,7 @@ static esp_err_t tx_cb(void *h, void *buf, size_t len) {
 static void free_cb(void *h, void *buf) { (void)h; free(buf); }
 
 /* ---- the Dreamcast network (ipplan_model.h): the W5500 here, the BBA socket (wired.c) and a PPP
-   call without its home address (ppp_srv.c) share 192.168.221.0/24; one Dreamcast uses one at a
+   call without its home address (ppp_srv.c) share 192.168.98.0/24; one Dreamcast uses one at a
    time, so what goes to an address there goes to the interface it was last heard on. ---- */
 static struct netif *volatile dc_heard_nif;
 void dcside_heard(struct netif *n) { if (n) dc_heard_nif = n; }
@@ -105,7 +105,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
             lease_ip = a;
             esp_ip4_addr_t ip = { .addr = a };
             snprintf(cnt.last_ip, sizeof cnt.last_ip, IPSTR, IP2STR(&ip));
-            say_line("Ethernet: the Dreamcast uses " IPSTR " (a fixed address; gateway and DNS must be 192.168.221.1)", IP2STR(&ip));
+            say_line("Ethernet: the Dreamcast uses " IPSTR " (a fixed address; gateway and DNS must be 192.168.98.1)", IP2STR(&ip));
         }
     }
     cnt.rx++;
@@ -184,5 +184,5 @@ void dc_eth_start(void) {
     dcside_nat_on(eth_if);                                /* NAT out through the Wi-Fi */
     dnsd_set_listen(1, true, ETH_IP);
     xTaskCreate(watch_task, "dc_eth", 2048, NULL, 4, NULL);
-    ESP_LOGI(TAG, "Ethernet side up: 192.168.221.1/24, DHCP, NAT");
+    ESP_LOGI(TAG, "Ethernet side up: 192.168.98.1/24, DHCP, NAT");
 }

@@ -5,7 +5,7 @@
  *   uplink  somebody on the wire answers DHCP (a router): the wired network becomes the way
  *           out, ahead of Wi-Fi.
  *   BBA     nobody answers within 10 s (a Dreamcast broadband adapter never does): this box
- *           is 192.168.221.1 (the Dreamcast network, shared with the cable: ipplan_model.h), hands out addresses and DNS, and routes the Dreamcast out through
+ *           is 192.168.98.1 (the Dreamcast network, shared with the cable: ipplan_model.h), hands out addresses and DNS, and routes the Dreamcast out through
  *           Wi-Fi with NAT, the same way as the cable's own network (dc_eth.c).
  * Safety: a DHCP server on somebody's home network is harmful, so in the BBA role every frame
  * from another DHCP server sends the port straight back to the uplink role for a minute.
@@ -32,7 +32,7 @@
 #include "esp_timer.h"
 #include "ipfilter_model.h"
 
-#define BBA_IP        IPP_BOX                     /* 192.168.221.1: the Dreamcast network, shared with the cable (ipplan_model.h) */
+#define BBA_IP        IPP_BOX                     /* 192.168.98.1: the Dreamcast network, shared with the cable (ipplan_model.h) */
 #define DETECT_US     (10 * 1000000LL)            /* no DHCP answer for this long: BBA role */
 #define HOLD_US       (60 * 1000000LL)            /* after seeing a foreign DHCP server */
 #define QUIET_US      (30 * 1000000LL)
@@ -193,8 +193,8 @@ static void manager(void *arg) {
                 if (t - said > 60000000LL) { said = t; say("wired port: several devices on this cable but no DHCP answer yet: a network, not a Dreamcast; still asking for an address"); }
             } else if (t - t_role > DETECT_US && t > hold_until) {
                 up_off(); bba_on(); role = R_BBA; cnt.to_bba++;
-                strlcpy(cnt.ip, "192.168.221.1", sizeof cnt.ip);
-                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.221.2-.99");
+                strlcpy(cnt.ip, "192.168.98.1", sizeof cnt.ip);
+                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.98.2-.99");
             }
             break;
         case R_UPLINK:

@@ -4,7 +4,7 @@
  * The cable passes the Dreamcast's serial bytes in channel SER. They first meet a Hayes modem
  * stub (hayes_model.h): AT -> OK, ATD -> CONNECT. After CONNECT the bytes are PPP. They go
  * through the frame filter (hdlc_model.h: TTL 64, PowerSmash double SYN) into lwIP's PPP server.
- * Without its home address the Dreamcast gets 192.168.221.2, we are 192.168.221.1 (also its DNS: dnsd.c; the Dreamcast network, ipplan_model.h). lwIP's NAPT
+ * Without its home address the Dreamcast gets 192.168.98.2, we are 192.168.98.1 (also its DNS: dnsd.c; the Dreamcast network, ipplan_model.h). lwIP's NAPT
  * (outgoing side = the Wi-Fi) is switched on for the PPP interface, as iptables MASQUERADE
  * is on a DreamPi. The call ends when the Dreamcast closes PPP, or when "AT" shows up again.
  *

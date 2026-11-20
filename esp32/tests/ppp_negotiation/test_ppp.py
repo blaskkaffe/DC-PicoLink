@@ -150,15 +150,15 @@ def main():
     mine = dict(my_ip)
     ip = lambda b: '.'.join(map(str, b))
     print('IPCP open: our address %s, gateway %s, DNS %s' % (ip(mine[3]), ip(their_ip), ip(mine[0x81])))
-    check(ip(mine[3]) == '192.168.221.2', 'Dreamcast address')
-    check(ip(their_ip) == '192.168.221.1', 'gateway address')
-    check(ip(mine[0x81]) == '192.168.221.1', 'DNS address handed out')
+    check(ip(mine[3]) == '192.168.98.2', 'Dreamcast address')
+    check(ip(their_ip) == '192.168.98.1', 'gateway address')
+    check(ip(mine[0x81]) == '192.168.98.1', 'DNS address handed out')
     t0 = time.time()
-    while b'UP our=192.168.221.1 his=192.168.221.2' not in err and time.time() - t0 < 2: pump()
-    check(b'UP our=192.168.221.1 his=192.168.221.2' in err, 'lwIP did not report the link up')
+    while b'UP our=192.168.98.1 his=192.168.98.2' not in err and time.time() - t0 < 2: pump()
+    check(b'UP our=192.168.98.1 his=192.168.98.2' in err, 'lwIP did not report the link up')
 
     # ---- ping the server with TTL 30; the filter sets it to 65 ----
-    pkt = icmp_echo((192, 168, 221, 2), (192, 168, 221, 1), 30)
+    pkt = icmp_echo((192, 168, 98, 2), (192, 168, 98, 1), 30)
     send(encode(b'\xff\x03\x00\x21' + pkt))
     reply = None; t0 = time.time()
     while reply is None and time.time() - t0 < 3:
@@ -166,12 +166,12 @@ def main():
             proto, rest = parse(f)
             if proto == 0x0021 and rest[9] == 1 and rest[20] == 0: reply = rest
     check(reply is not None, 'no ping answer')
-    check(reply[12:16] == bytes((192, 168, 221, 1)) and reply[16:20] == bytes((192, 168, 221, 2)), 'ping answer addresses')
+    check(reply[12:16] == bytes((192, 168, 98, 1)) and reply[16:20] == bytes((192, 168, 98, 2)), 'ping answer addresses')
     check(reply[20 + 8:] == b'dreamcast', 'ping answer payload')
     print('ping answered (answer TTL %d)' % reply[8])
 
     # ---- a ping to somewhere else gets forwarded? (no uplink in this test: expect nothing, no crash) ----
-    send(encode(b'\xff\x03\x00\x21' + icmp_echo((192, 168, 221, 2), (8, 8, 8, 8), 30, seq=2)))
+    send(encode(b'\xff\x03\x00\x21' + icmp_echo((192, 168, 98, 2), (8, 8, 8, 8), 30, seq=2)))
     pump(0.3)
 
     # ---- hang up with LCP Terminate-Request; the server answers and reports ----

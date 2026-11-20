@@ -99,7 +99,7 @@ the ESP32's own pins, all on the row next to 3V3 and GND:
 The firmware finds the module by itself ("wired port: W5500 module found", or "no W5500 module
 found ... off"). With a cable plugged in, the port is the **uplink** when a router answers DHCP
 (the wired network then is the way out, ahead of Wi-Fi), or the socket for the **Dreamcast's
-broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.221.x, DNS and
+broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.98.x, DNS and
 NAT like on the cable's own network). In the stack GPIO10-13 sit over the Zero's GP26-29 (not joined, wired from the
 outside), GPIO9 under GP15 (the soldered strength pin, unused), and INT goes to GPIO7 (under the
 Zero's unused GP8, not joined).
@@ -145,8 +145,8 @@ the SPI link (about 300 on the UART link).
    `esp32 link: up (SPI, Hz 15625000)`.
 4. Save your home Wi-Fi on the page and turn **DCNow! off** (or the computer shows up as a
    Dreamcast online).
-5. The computer gets a USB network adapter with an address 192.168.221.x from the ESP32.
-   `ping 192.168.221.1`, then e.g. `curl --interface <adapter> http://example.com` (give the
+5. The computer gets a USB network adapter with an address 192.168.98.x from the ESP32.
+   `ping 192.168.98.1`, then e.g. `curl --interface <adapter> http://example.com` (give the
    adapter a low priority so the computer doesn't send everything through it). A large
    download through it is a good soak test.
 6. Every 10 s the cable reports `esp32 link (SPI): ... transactions, ... probes, ... timeouts`
@@ -194,7 +194,7 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
 2. On the Dreamcast start a program that dials with the serial cable as its modem (a game's
    online setup, any serial-PPP test). Any phone number works, no login is checked.
 3. **Expect** on the page: *Status lines* `Dreamcast dialled; starting PPP`, then
-   `PPP is up: Dreamcast 192.168.221.2, DNS and gateway 192.168.221.1`; the card says `online`, DNS
+   `PPP is up: Dreamcast 192.168.98.2, DNS and gateway 192.168.98.1`; the card says `online`, DNS
    questions count up and `last:` shows the newest name, `DCNow!: session started` and
    `DCNow!: domain sent: ...`. The Dreamcast shows up on the DCNow! page after about 15 s.
 4. If the call does not come up, copy the *Status lines* and the *Serial port* box (it shows the
@@ -204,11 +204,11 @@ The cable logs `esp32 link: up ...` with where each kind of traffic goes, and
 
 1. The cable must not be mounted by a computer (no USB host) and the ESP32 must be linked (page: link up).
 2. Start a Dreamcast program that uses the network adapter driver (DHCP). Or set a static address:
-   IP 192.168.221.100, mask 255.255.255.0, gateway and DNS 192.168.221.1.
-   Gateway and DNS must be 192.168.221.1 here: 0.0.0.0 works over the modem (PPP fills them in)
+   IP 192.168.98.100, mask 255.255.255.0, gateway and DNS 192.168.98.1.
+   Gateway and DNS must be 192.168.98.1 here: 0.0.0.0 works over the modem (PPP fills them in)
    but not on this network (the DNS answers are thrown away, nothing leaves the network).
 3. **Expect** in *Status lines*: `Ethernet: the Dreamcast is sending`, then
-   `Ethernet: the Dreamcast got 192.168.221.x by DHCP`. In the card: *cable network (W5500)* counts
+   `Ethernet: the Dreamcast got 192.168.98.x by DHCP`. In the card: *cable network (W5500)* counts
    frames in and out, `DNS:` counts questions, `DCNow!: ... sent` goes up every 15 s.
 4. Try a web page or a game server. If frames come in but nothing goes out (or reverse), send the card's text.
 
@@ -232,7 +232,7 @@ Needs a firmware built with the profiles in `esp32/vpn/` (the image you were giv
 While no Dreamcast is on (the cable says "offline") and the ESP32 link is up, the Zero's USB port is
 bridged to the ESP32: the serial port (open it with `screen`, then `ATD...` / PPP like a Dreamcast
 would) goes to the ESP32's modem and PPP, and the USB network interface gets the ESP32's Dreamcast
-network (DHCP 192.168.221.x, DNS, NAT out through Wi-Fi). The moment a Dreamcast is on, the usual
+network (DHCP 192.168.98.x, DNS, NAT out through Wi-Fi). The moment a Dreamcast is on, the usual
 routes apply again. `link.route` in the cable's hello shows which one is active.
 
 ## The cable over USB (instead of link wires)

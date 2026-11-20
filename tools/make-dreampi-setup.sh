@@ -11,7 +11,7 @@ mkdir -p "$(dirname "$out")"
 cat <<'HDR'
 #!/bin/bash
 # DC-PicoLink: installs the DreamPi side (serial /dev/dccable, W5500 network dcusb0
-# = 192.168.221.1 with DHCP + NAT + Dreamcast Live VPN address, SD card server dcsd).
+# = 192.168.98.1 with DHCP + NAT + Dreamcast Live VPN address, SD card server dcsd).
 # Self-contained: copy this one file to the Pi and run
 #     sudo bash dc-picolink-dreampi-setup.sh
 # Safe to run again (updates the files; keeps your own /etc/dcusb0.conf and /etc/dcsd.conf).

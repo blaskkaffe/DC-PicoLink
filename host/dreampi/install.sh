@@ -34,9 +34,10 @@ need conntrack conntrack || true    # dcusb0-vpn: clear old connections when the
 
 echo "== files"
 install -m 644 70-dc-cable.rules /etc/udev/rules.d/70-dc-cable.rules
-# network settings: keep the user's own, but replace an untouched old default (192.168.50.x, 192.168.99.x)
-if [ ! -f /etc/dcusb0.conf ] || grep -q '^PI_ADDR=192\.168\.50\.1$' /etc/dcusb0.conf || \
-   { grep -q '^PI_ADDR=192\.168\.99\.1$' /etc/dcusb0.conf && grep -q '^DHCP_START=192\.168\.99\.10$' /etc/dcusb0.conf && grep -q '^DHCP_END=192\.168\.99\.50$' /etc/dcusb0.conf; }; then
+# network settings: keep the user's own, but replace an untouched old default (192.168.50.x,
+# 192.168.99.x, 192.168.221.x); the default is now 192.168.98.x, as on the ESP32 box
+old_default() { grep -q "^PI_ADDR=192\.168\.$1\.1$" /etc/dcusb0.conf && grep -q "^DHCP_START=192\.168\.$1\.10$" /etc/dcusb0.conf && grep -q "^DHCP_END=192\.168\.$1\.50$" /etc/dcusb0.conf; }
+if [ ! -f /etc/dcusb0.conf ] || grep -q '^PI_ADDR=192\.168\.50\.1$' /etc/dcusb0.conf || old_default 99 || old_default 221; then
     install -m 644 dcusb0.conf /etc/dcusb0.conf
 fi
 install -m 755 dcusb0-up.sh /usr/local/sbin/dcusb0-up.sh

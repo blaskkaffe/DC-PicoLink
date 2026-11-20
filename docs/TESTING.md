@@ -66,7 +66,7 @@ that fails.
 ## 3. W5500 emulation and SD card on the Dreamcast's serial port (Zero)
 
 - [ ] A W5500-capable program (KOS/dcload-ip build for the serial-port W5500): `mode: ... SPI`,
-      DHCP lease (cable network line: `DHCP leases 1 (192.168.221.x)`), pings / page loads.
+      DHCP lease (cable network line: `DHCP leases 1 (192.168.98.x)`), pings / page loads.
 - [ ] Long transfer: no `spi: ... short/aborted frames` error line appears.
 - [ ] DCNow! session starts with Ethernet traffic.
 - [ ] SD card in the slot at power-up: `SD card: N MB SDHC/SDXC in the slot`.
@@ -98,10 +98,10 @@ that fails.
 ## 5. BBA over the W5500 module (real Broadband Adapter -> Ethernet -> W5500 on the ESP32)
 
 - [ ] Cable from the Dreamcast's BBA: after ~10 s the wired line shows `BBA`, DHCP lease
-      `192.168.221.x` to the Dreamcast.
+      `192.168.98.x` to the Dreamcast.
 - [ ] BBA games (PSO, Quake III, browser with BBA): Internet through Wi-Fi.
 - [ ] DCNow! session with BBA traffic.
-- [ ] `home network: the Dreamcast (192.168.221.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
+- [ ] `home network: the Dreamcast (192.168.98.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
 - [ ] Swap the cable to the router: the role changes to `uplink` without a restart.
 
 ## ESP32 USB socket (modem build)

@@ -16,7 +16,7 @@ int dclan_ip4_input(struct pbuf *p, struct netif *inp);     /* esp32/main/dclan.
 static inline struct netif *dcl_route_src(const ip4_addr_t *src, const ip4_addr_t *dest) {
     struct netif *n = dclan_route(dest);                    /* first: its home address is inside the uplink's subnet */
     if (n) return n;
-    n = dcside_route(dest);                                 /* 192.168.221.x: W5500, BBA socket and PPP share it */
+    n = dcside_route(dest);                                 /* 192.168.98.x: W5500, BBA socket and PPP share it */
     if (n) return n;
     n = ip4_route_src_hook(src, dest);
     return n ? n : vpn_route(dest);

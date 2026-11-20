@@ -39,7 +39,7 @@ def subnet_prefix():
         for line in open("/etc/dcusb0.conf"):
             if line.startswith("PI_ADDR="): return line.split("=", 1)[1].strip().strip('"').rsplit(".", 1)[0] + "."
     except OSError: pass
-    return "192.168.221."
+    return "192.168.98."
 
 def newest_domain(since, prefix, sent_shared):
     """Newest A query from the Dreamcast in the journal since `since`; rules as dcnow.py."""
