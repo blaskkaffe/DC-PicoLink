@@ -29,6 +29,28 @@ static bool abw_usable(const uint32_t *w, int n) {
     return n > 0 && hi * 2u >= lo * 3u;
 }
 
+/* One window of 32 low-pulse widths (system clocks) -> the DC's rate. false: not usable (equal pulses,
+   too few 1-bit pulses, or the pulses are not whole bit counts). clean: >= 25% of them are 1-bit. */
+static bool abw_measure(const uint32_t *win, float clk_hz, float *rate, bool *clean) {
+    if (!abw_usable(win, 32)) return false;        /* all pulses equal: a run of zero bytes looks like a slow DC */
+    uint32_t m = 0xFFFFFFFFu;
+    for (int i = 0; i < 32; i++) if (win[i] < m) m = win[i];
+    uint64_t sum = 0; uint32_t cnt = 0;
+    for (int i = 0; i < 32; i++) if (win[i] <= m + m / 3) { sum += win[i]; cnt++; }
+    if (cnt < 4) return false;
+    float bit = (float)sum / (float)cnt;
+    uint32_t fit = 0;                              /* pulses ~ whole bit counts? */
+    for (int i = 0; i < 32; i++) {
+        float q = (float)win[i] / bit, f = q - (float)(int)(q + 0.5f);
+        if (f < 0) f = -f;
+        if (f < 0.2f) fit++;
+    }
+    if (fit < 26) return false;
+    *rate = clk_hz / bit;
+    *clean = cnt >= 8;
+    return true;
+}
+
 /* A measured rate that is (nearly) a whole fraction of the current wire rate (1/2, 1/3, ... 1/12 ...) is
    usually a window without 1-bit pulses (the meter only sees LOW periods), not a Dreamcast that changed
    speed: the cable follows such a candidate only after many agreeing windows. 115200 vs 120192, 1.5 Mbaud
@@ -62,4 +84,20 @@ static bool abc_step(abc_t *c, float rate, float wire, bool clean, uint32_t fe_c
     if (!(errors && c->n >= 2) && !(clean && c->n >= 4)) return false;
     c->cand = 0; c->n = 0;
     return true;
+}
+
+/* The nearest rate the Dreamcast's SCIF can make (Pclk/(32 * 4^n * (N+1)), Pclk 50 MHz), within 2 %. */
+static float snap_dc_rate(float r) {
+    float best = r, err = 0.02f;
+    for (int n = 0; n < 4; n++) {
+        float base = 50e6f / (32.0f * (float)(1 << (2 * n)));
+        int k = (int)(base / r + 0.5f);
+        for (int kk = k - 1; kk <= k + 1; kk++) {
+            if (kk < 1 || kk > 256) continue;
+            float c = base / (float)kk, e = (c - r) / r;
+            if (e < 0) e = -e;
+            if (e < err) { err = e; best = c; }
+        }
+    }
+    return best;
 }

@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/../firmware"
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 fail=0
-for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_serq test_ethsrc test_ipplan test_serq_sim test_vpnpick test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan test_ethtrace; do
+for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_serq test_ethsrc test_ipplan test_serq_sim test_vpnpick test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan test_ethtrace test_serial_sim; do
     if gcc -O1 -Wall -Wno-unused-variable -Wno-unused-function -I. "tests/$t.c" -lm -o "$out/$t" && "$out/$t" > "$out/$t.log"; then
         echo "PASS $t: $(tail -1 "$out/$t.log")"
     else
@@ -45,6 +45,10 @@ if [ -n "${IDF_PATH:-}" ] && [ -f "$IDF_PATH/components/fatfs/src/ff.c" ]; then
     if gcc -O1 -Wall -I. -I"$ff" -Itests/sdlink_stub tests/test_sdlink.c "$ff/ff.c" "$ff/ffunicode.c" -o "$out/test_sdlink" 2> "$out/sdlink.cc" && "$out/test_sdlink" > "$out/sdlink.log"; then
         echo "PASS test_sdlink: $(tail -1 "$out/sdlink.log")"; else echo "FAIL test_sdlink"; cat "$out/sdlink.cc"; tail "$out/sdlink.log"; fail=1; fi
 else echo "SKIP test_sdlink (set IDF_PATH for ESP-IDF's FatFs)"; fi
+# the ESP32's Dreamcast network (dc_eth.c) on ESP-IDF's own lwIP, NAPT and DHCP server: needs IDF_PATH
+if [ -n "${IDF_PATH:-}" ] && [ -f "$IDF_PATH/components/lwip/apps/dhcpserver/dhcpserver.c" ]; then
+    if "$here/../esp32/tests/run-dcside-test.sh" > "$out/dcside.log" 2>&1; then echo "PASS dcside network: $(tail -1 "$out/dcside.log")"; else echo "FAIL dcside network"; tail -20 "$out/dcside.log"; fail=1; fi
+else echo "SKIP dcside network (set IDF_PATH for ESP-IDF's lwIP)"; fi
 # the ESP32 web page's script must parse (a bad escape leaves the page at "link: ?")
 "$here/check-web-page.sh" || fail=1
 exit $fail

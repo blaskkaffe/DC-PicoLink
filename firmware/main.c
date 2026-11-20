@@ -98,7 +98,10 @@ static inline uint8_t sdc_xfer(uint8_t b) { uint8_t r; spi_write_read_blocking(S
 #ifndef DC_BAUD_MATCH
 #define DC_BAUD_MATCH     1   /* round baud the same way the Dreamcast does */
 #endif
-#define DEFAULT_BAUD      57600
+/* The line's rate until a host sets one: 115200, what the Dreamcast uses for PPP over serial
+   (openMenu, the browsers, patched games: 111607 or 120192 on its SCIF, both within the UART's
+   reach of 115200). A computer running dcload sets its own rate when it opens the port. */
+#define DEFAULT_BAUD      115200
 
 #define RX_BITS           14                       /* ring size in bytes (DMA ring) */
 #define RX_WORDS          (1u << (RX_BITS - 2))    /* 4096 characters, 1 word each */
@@ -943,19 +946,6 @@ static void spi_report(void) {
 #define DC_AUTOBAUD 1
 #endif
 
-static float snap_dc_rate(float r) {          /* SCIF: Pclk/(32 * 4^n * (N+1)) */
-    float best = r, err = 0.02f;
-    for (int n = 0; n < 4; n++) {
-        float base = 50e6f / (32.0f * (float)(1 << (2 * n)));
-        int k = (int)(base / r + 0.5f);
-        for (int kk = k - 1; kk <= k + 1; kk++) {
-            if (kk < 1 || kk > 256) continue;
-            float c = base / (float)kk, e = fabsf(c - r) / r;
-            if (e < err) { err = e; best = c; }
-        }
-    }
-    return best;
-}
 
 /* ---- DC 3.3 V sense wire: found by itself ---------------------------------
    The wire (GPIO DC_POWER_PIN -> 10k -> SD adapter VDD) is optional. Once GPIO7
@@ -1066,20 +1056,8 @@ static void autobaud_task(void) {
         win[wn++] = cyc;
         if (wn < 32) continue;
         wn = 0;
-        if (!abw_usable(win, 32)) continue;            /* all pulses equal: a run of zero bytes looks like a slow DC */
-        uint32_t m = 0xFFFFFFFFu;
-        for (int i = 0; i < 32; i++) if (win[i] < m) m = win[i];
-        uint64_t sum = 0; uint32_t cnt = 0;
-        for (int i = 0; i < 32; i++) if (win[i] <= m + m / 3) { sum += win[i]; cnt++; }
-        if (cnt < 4) continue;
-        float bit = (float)sum / (float)cnt;
-        uint32_t fit = 0;                              /* pulses ~ whole bit counts? */
-        for (int i = 0; i < 32; i++) {
-            float q = (float)win[i] / bit, f = q - (float)(int)(q + 0.5f);
-            if (fabsf(f) < 0.2f) fit++;
-        }
-        if (fit < 26) continue;
-        float rate = (float)clock_get_hz(clk_sys) / bit;
+        float rate; bool clean;
+        if (!abw_measure(win, (float)clock_get_hz(clk_sys), &rate, &clean)) continue;   /* baud_model.h */
         float snapped = snap_dc_rate(rate);
         if (!reported) {
             status("serial: DC transmits at ~%.0f baud (nearest SCIF rate %.0f); wire %.0f, host asked %lu",
@@ -1095,7 +1073,6 @@ static void autobaud_task(void) {
            are damaged: enough to lose most large PPP frames. */
         if (rate > 400000.0f || wire_baud > 400000.0f) { abc.cand = 0; abc.n = 0; continue; }
         if ((int32_t)(now - baud_holdoff_until) < 0) continue;
-        bool clean = cnt >= 8;                         /* >= 25% single-bit pulses */
         /* framing errors are counted from the first window of this candidate on,
            so slow traffic (a game retrying "AT" once a second) still adds up (baud_model.h) */
         if (!abc_step(&abc, rate, wire_baud, clean, fe_count)) continue;

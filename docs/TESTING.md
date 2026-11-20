@@ -6,6 +6,15 @@ ESP32 `dc-picolink-esp32-zero-stack-modem-merged.bin` (USB modem port) or `-nomo
 on the setup network, or the box's home-network address). Send the status lines of anything
 that fails.
 
+Before hardware: `IDF_PATH=... tools/run-tests.sh <zero-build>` also runs two end-to-end
+simulations. `test_serial_sim` is the serial line bit by bit (the Dreamcast's SCIF at 111607 or
+120192, the cable's PIO receiver and auto-baud, the ESP32's Hayes stub and PPP framing, and back):
+openMenu's "AT" probe, a loader then a game after an SD session, a Quake III-like PPP load.
+`esp32/tests/run-dcside-test.sh` is the ESP32's Dreamcast network on ESP-IDF's own lwIP, NAPT and
+DHCP server between a KOS-like Dreamcast and a home router: DHCP (both broadcast flags), DNS,
+a master-server query, hang up and reconnect, twelve Quake III starts with new MACs, a fixed
+address (`-v` prints every frame).
+
 ## 0. The stack itself
 
 - [ ] Power from the ESP32's USB only (Zero fed through the 5V pin, no USB on the Zero): page

@@ -409,3 +409,10 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   two probes were over before auto-baud could follow. The ESP32 now sets link.serial.baud 115200
   whenever the cable routes serial to it (as DreamPi's serial port is set), and auto-baud follows
   111607 or 120192 from there.
+- **Cable start rate 115200 (Nov 2026).** The serial line now starts at 115200 instead of 57600:
+  what the Dreamcast uses for PPP over serial. A computer running dcload sets its rate when it
+  opens the port, as before. test_serial_sim reproduces the old failure (openMenu's probe at 57600)
+  and checks 111607/120192 against the PIO receiver's real sample points. The network simulation
+  (esp32/tests/run-dcside-test.sh, ESP-IDF's own DHCP server and NAPT) gives DHCP leases with DNS
+  192.168.98.1 and answers DNS for both broadcast-flag kinds, after a reconnect and for twelve
+  new MACs: the "no DNS question after DHCP" seen on the console is not on the ESP32's side.

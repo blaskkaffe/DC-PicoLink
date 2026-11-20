@@ -213,10 +213,10 @@ size_t link_last_answer(char *out, size_t cap, uint32_t *seq) {
 
 static volatile uint32_t wire_baud;    /* the serial line's rate (the cable's hello, every second) */
 uint32_t link_wire_baud(void) { return wire_baud; }
-/* The cable's serial line starts at 57600 (dcload's rate, for a computer on its USB). With this
-   box as the serial host the Dreamcast speaks PPP as to a DreamPi 2.0+, at 115200 (111607 or 120192
-   on its SCIF): the cable is set to that, as DreamPi's serial port is, and follows the exact rate
-   from there. At 57600 a short probe ("AT" twice, openMenu) was over before the cable caught up. */
+/* With this box as the serial host the Dreamcast speaks PPP as to a DreamPi 2.0+, at 115200
+   (111607 or 120192 on its SCIF): the cable is set to that, as DreamPi's serial port is, and
+   follows the exact rate from there. Cables before 28f4e08 started at 57600, where a short probe
+   ("AT" twice, openMenu) was over before the cable caught up; newer ones start at 115200. */
 #define SER_HOST_BAUD 115200
 #define STR_(x) #x
 #define STR(x) STR_(x)
