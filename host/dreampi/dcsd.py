@@ -223,6 +223,9 @@ def _rd(path):
         return f.read().strip()
 
 
+LINK_EP_OUT = 0x07   # the cable's ESP32 link interface (usb_descriptors.c); dcsd uses the other one
+
+
 class UsbLink:
     """Bulk endpoints of the cable's vendor interface via /dev/bus/usb (stdlib only)."""
 
@@ -232,7 +235,7 @@ class UsbLink:
             try:
                 if _rd(d + "/idVendor") != VID or _rd(d + "/idProduct") != PID:
                     continue
-                for itf in glob.glob(d + ":*"):
+                for itf in sorted(glob.glob(d + ":*")):
                     if _rd(itf + "/bInterfaceClass") != "ff":
                         continue
                     ep_in = ep_out = None
@@ -244,6 +247,8 @@ class UsbLink:
                             ep_in = addr
                         else:
                             ep_out = addr
+                    if ep_out == LINK_EP_OUT:
+                        continue      # the ESP32 link interface (firmware with USB link), not the SD one
                     if ep_in is not None and ep_out is not None:
                         node = "/dev/bus/usb/%03d/%03d" % (int(_rd(d + "/busnum")), int(_rd(d + "/devnum")))
                         return node, int(_rd(itf + "/bInterfaceNumber"), 16), ep_in, ep_out

@@ -233,6 +233,16 @@ would) goes to the ESP32's modem and PPP, and the USB network interface gets the
 network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi). The moment a Dreamcast is on, the usual
 routes apply again. `link.route` in the cable's hello shows which one is active.
 
+## The cable over USB (instead of link wires)
+
+In the modem build the ESP32's USB-C socket also takes a DC-PicoLink cable: plug the Zero's (or
+a Pico's) USB into it with a USB cable or an OTG adapter, and the link runs over USB with the
+same packets as over SPI or UART. No link wires, any pin layout on the cable. The ESP32 supplies
+the cable's 5 V over the USB cable, so power the ESP32 board well (its own USB is now the host
+socket: feed its 5V pin). Log lines: `USB: DC-PicoLink cable plugged in; the link runs over USB`
+on the ESP32, `esp32 link: over USB` on the cable. One device on the socket at a time (a modem
+or a cable); a hub in between works.
+
 ## USB modem on the ESP32's USB socket
 
 Build with `sdkconfig.modem` (image `...-modem-merged.bin`). The Dreamcast's own modem is joined

@@ -10,6 +10,12 @@ bool link_send(uint8_t ch, const void *p, size_t n);   /* false if the queue is 
 bool link_is_up(void);
 size_t link_room(void);                              /* free bytes in the queue to the cable */
 size_t link_backlog(void);
+void link_usb_set(bool on);                          /* usbport.c: a DC-PicoLink cable is on the USB port (or gone) */
+void link_usb_rx(const uint8_t *p, size_t n);        /* usbport.c: bytes from that cable */
+void link_tx_freed(void);                            /* usbport.c: a transfer took bytes to the cable */
+bool usbport_start(char *why, size_t cap);           /* the USB host on this board's socket (modem builds) */
+bool usbport_next_other(uint16_t *vid, uint16_t *pid, uint32_t wait_ms);   /* a device that is not a cable */
+bool usbport_cable(void);                            /* a DC-PicoLink cable is on the USB port */
 uint32_t link_wire_baud(void);                       /* the Dreamcast serial line's rate, 0 = not known yet */                           /* bytes still waiting for the cable */
 void ppp_serial_room(void);
 void sdfs_from_cable(const uint8_t *p, size_t n);   /* LINK_CH_SD answers (sdfs.c) */                          /* from the link: the cable took bytes (serial queue, ppp_srv.c) */

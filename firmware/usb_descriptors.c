@@ -1,4 +1,5 @@
-/* Composite device: CDC-ACM serial (coder's cable), vendor bulk SD block link, CDC-NCM (W5500) */
+/* Composite device: CDC-ACM serial (coder's cable), vendor bulk SD block link, CDC-NCM (W5500),
+   vendor bulk ESP32 link (the link packets of link_model.h, when an ESP32-S3 is the USB host) */
 #include "tusb.h"
 #include "pico/unique_id.h"
 #include <string.h>
@@ -22,22 +23,23 @@ static const tusb_desc_device_t desc_device = {
 };
 uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&desc_device; }
 
-enum { ITF_CDC = 0, ITF_CDC_DATA, ITF_SD, ITF_NCM, ITF_NCM_DATA, ITF_TOTAL };
-enum { STR_LANG, STR_MANUF, STR_PRODUCT, STR_SERIAL, STR_CDC, STR_NCM, STR_MAC, STR_SD };
+enum { ITF_CDC = 0, ITF_CDC_DATA, ITF_SD, ITF_NCM, ITF_NCM_DATA, ITF_LINK, ITF_TOTAL };   /* new ones only at the end: the Pi finds the others by number */
+enum { STR_LANG, STR_MANUF, STR_PRODUCT, STR_SERIAL, STR_CDC, STR_NCM, STR_MAC, STR_SD, STR_LINK };
 
-#define CONFIG_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_CDC_NCM_DESC_LEN)
+#define CONFIG_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_CDC_NCM_DESC_LEN + TUD_VENDOR_DESC_LEN)
 static const uint8_t desc_config[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_TOTAL, 0, CONFIG_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_CDC, STR_CDC, 0x81, 8, 0x02, 0x82, 64),
     TUD_VENDOR_DESCRIPTOR(ITF_SD, STR_SD, 0x04, 0x84, 64),
     TUD_CDC_NCM_DESCRIPTOR(ITF_NCM, STR_NCM, STR_MAC, 0x85, 64, 0x06, 0x86,
                            CFG_TUD_NET_ENDPOINT_SIZE, CFG_TUD_NET_MTU),
+    TUD_VENDOR_DESCRIPTOR(ITF_LINK, STR_LINK, 0x07, 0x87, 64),   /* the ESP32 looks for OUT 0x07 */
 };
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) { (void)index; return desc_config; }
 
 static const char *strings[] = {
     [STR_MANUF] = "DIY", [STR_PRODUCT] = "Dreamcast Coder's Cable + W5500 (RP2040)",
-    [STR_CDC] = "DC Serial", [STR_NCM] = "DC W5500 Ethernet", [STR_SD] = "DC SD Card Link",
+    [STR_CDC] = "DC Serial", [STR_NCM] = "DC W5500 Ethernet", [STR_SD] = "DC SD Card Link", [STR_LINK] = "DC PicoLink ESP32 Link",
 };
 static uint16_t desc_str[48];
 

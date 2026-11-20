@@ -1,6 +1,8 @@
 # USB modem on the ESP32's USB socket (add after sdkconfig.zero-stack):
 #   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack;sdkconfig.modem" build
 CONFIG_DCL_USB_MODEM=y
+# the socket takes a modem or a DC-PicoLink cable (usbport.c), also through a hub
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
 # the USB socket is the modem's now: console on UART0 (GPIO43 TX / GPIO44 RX)
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

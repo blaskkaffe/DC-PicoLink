@@ -103,3 +103,13 @@ that fails.
 - [ ] DCNow! session with BBA traffic.
 - [ ] `home network: the Dreamcast (192.168.97.x here) is 192.168.x.98 at home` while the BBA is in use; the router's UPnP list still points at .98.
 - [ ] Swap the cable to the router: the role changes to `uplink` without a restart.
+
+## ESP32 USB socket (modem build)
+
+- [ ] Cable over USB: a Zero (or Pico) with the new firmware into the ESP32's USB-C: ESP32
+      `USB: DC-PicoLink cable plugged in; the link runs over USB`, cable `esp32 link: over USB`,
+      `link to the cable: up`, the link self-test PASS; a serial game connects as over SPI.
+- [ ] The same through a USB hub.
+- [ ] A cable with older firmware: `USB: a DC-PicoLink cable without the link interface ...`.
+- [ ] The USB modem still answers a call (plugged in alone, then through the hub).
+- [ ] DreamPi with the new cable firmware: dcsd still finds the SD interface (not the link one).

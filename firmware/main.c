@@ -170,13 +170,16 @@ static void request_baud(uint32_t b, uint32_t queued_bytes);
 #ifndef DC_USB_BRIDGE
 #define DC_USB_BRIDGE 0
 #endif
+static bool usb_link;                            /* the USB host is an ESP32 using the link interface (vendor 1) */
+/* a computer or Pi on USB (it gets the traffic): mounted, and not an ESP32 using the link */
+static inline bool usb_pc(void) { return tud_mounted() && !usb_link; }
 static inline bool ser_to_link(void) { return link_up && !tud_cdc_connected(); }
-static inline bool eth_to_link(void) { return link_up && !tud_mounted(); }
+static inline bool eth_to_link(void) { return link_up && !usb_pc(); }
 /* No Dreamcast (cable offline), ESP32 linked, computer on USB: the computer takes the Dreamcast's
    place, so the modem/PPP and the Dreamcast network on the ESP32 can be tested from a terminal
    or the computer's network interface. As soon as a Dreamcast is on, the normal routes apply. */
 static inline bool ser_bridge(void) { return link_up && dc_mode == MODE_OFFLINE && tud_cdc_connected(); }
-static inline bool eth_bridge(void) { return DC_USB_BRIDGE || (link_up && dc_mode == MODE_OFFLINE && tud_mounted()); }
+static inline bool eth_bridge(void) { return DC_USB_BRIDGE || (link_up && dc_mode == MODE_OFFLINE && usb_pc()); }
 /* Test build (cmake -DDC_USB_BRIDGE=1): the computer's USB network interface is wired straight
    to the ESP32 (channel ETH, both ways) instead of to the W5500 emulation, so the link and the
    ESP32's Dreamcast network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi) can be tested with
@@ -641,7 +644,7 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
 void tud_network_init_cb(void) { }
 
 static void net_task(void) {
-    w5.link_up = tud_mounted() || link_up;
+    w5.link_up = usb_pc() || link_up;
     w5_txd_t *d = w5_net_tx_peek();
     if (eth_bridge()) {
         if (d) w5_net_tx_pop();                       /* the W5500 emulation isn't wired to anything */
@@ -659,7 +662,7 @@ static void net_task(void) {
                 net_out++;
             }
         }
-        else if (!tud_mounted()) w5_net_tx_pop();     /* nobody to send to */
+        else if (!usb_pc()) w5_net_tx_pop();          /* nobody to send to */
         else if (tud_network_can_xmit(d->len)) tud_network_xmit(d, 0);
     }
     if (net_rx_retry) {
@@ -883,7 +886,7 @@ static void spi_report(void) {
         if (net_due && (spi_stats.w5_frames || net_out)) {       /* only once a W5500 session has existed */
             net_sig = ns; net_last = now; last = now;
             status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
-                   tud_mounted() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
+                   usb_pc() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
                    (unsigned long)net_in_drop, (unsigned long)net_in_full);
         }
         return;
@@ -946,7 +949,7 @@ static void spi_report(void) {
     if (ns != net_sig) {
         net_sig = ns; net_last = now;
         status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
-               tud_mounted() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
+               usb_pc() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
                (unsigned long)net_in_drop, (unsigned long)net_in_full);
     }
 }
@@ -1377,7 +1380,7 @@ static bool link_deliver(void) {
         return true;
     case LINK_CH_ETH:
         if (eth_bridge()) {
-            if (!tud_mounted() || n > 1514) { link_eth_drop++; return true; }
+            if (!usb_pc() || n > 1514) { link_eth_drop++; return true; }
             if (!tud_network_can_xmit((uint16_t)n)) return false;
             tud_network_xmit((void *)p, (uint16_t)n);
             return true;
@@ -1405,6 +1408,53 @@ static bool link_on_packet(uint32_t now) {
         link_up_at = now; link_test_due = true;
     }
     return link_deliver();
+}
+
+/* The link over USB: an ESP32-S3 as the USB host opens the link interface (vendor 1) and sends
+   the same byte stream as over the UART. From its first bytes on, the link runs there and SPI /
+   UART rest; the USB port then counts as no computer (usb_pc). */
+static bool usb_link_task(uint32_t now) {
+    static uint8_t ub[64];
+    static uint32_t ub_n, ub_p;
+    if (!tud_mounted()) {
+        if (usb_link) { usb_link = false; ub_n = ub_p = 0; link_pending = false; status("esp32 link: the USB host is gone"); }
+        return false;
+    }
+    if (!usb_link) {
+        if (!tud_vendor_n_available(1)) return false;
+        usb_link = true;
+        ub_n = ub_p = 0;
+        link_tx_rd = link_tx_wr;
+        memset(&link_rx, 0, sizeof link_rx);
+        link_pending = false;
+        status("esp32 link: over USB (an ESP32 is the USB host)");
+    }
+    /* to the ESP32 */
+    while (link_tx_rd != link_tx_wr) {
+        uint32_t room = tud_vendor_n_write_available(1);
+        if (!room) break;
+        uint32_t at = link_tx_rd & (LINK_TX_SIZE - 1), n = link_tx_wr - link_tx_rd;
+        if (n > LINK_TX_SIZE - at) n = LINK_TX_SIZE - at;   /* up to the ring's end */
+        if (n > room) n = room;
+        n = tud_vendor_n_write(1, link_txr + at, n);
+        if (!n) break;
+        link_tx_rd += n;
+    }
+    tud_vendor_n_write_flush(1);
+    /* from the ESP32: a packet the cable cannot take yet stays (the host waits on its transfer) */
+    if (link_pending) {
+        if (!link_deliver()) return true;
+        link_pending = false;
+    }
+    for (int budget = 512; budget > 0; ) {
+        if (ub_p == ub_n) {
+            ub_n = tud_vendor_n_read(1, ub, sizeof ub); ub_p = 0;
+            if (!ub_n) break;
+            budget -= (int)ub_n;
+        }
+        if (link_rx_byte(&link_rx, ub[ub_p++]) && !link_on_packet(now)) { link_pending = true; break; }
+    }
+    return true;
 }
 
 #if DC_LINK_SPI
@@ -1514,6 +1564,7 @@ static void link_task(void) {
         busy_wait_ms(100);
         reset_usb_boot(0, 0);
     }
+    if (usb_link_task(now)) goto xport_done;       /* an ESP32 as the USB host: the link runs there */
 #if DC_LINK_SPI
     if (link_pending) {
         if (link_deliver()) link_pending = false;
@@ -1537,6 +1588,7 @@ static void link_task(void) {
     }
 done:
 #endif
+xport_done:
     if (link_up && link_test_due && now - link_up_at > 3000000u) {
         link_test_due = false;
         link_test_start(&link_test, now);

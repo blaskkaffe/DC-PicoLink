@@ -56,7 +56,6 @@ static uint8_t tone[USBM_TONE_N];
 static const char *state = "no modem plugged in";
 static volatile bool present;
 static char usb_id[12] = "";
-static volatile bool other_dev;              /* something is plugged in that we could not open */
 static struct { uint32_t calls, answered, failed, bytes_in, bytes_out; char dial[24]; } cnt;
 static volatile bool via_dcnet;              /* this call goes to DCNet, not our PPP server */
 static volatile bool to_stream;              /* the data goes to netlink.c (um_read) */
@@ -110,13 +109,6 @@ static void event_cb(const cdc_acm_host_dev_event_data_t *ev, void *arg) {
         if (c) dcd_seen = true;
         if (dcd_seen) { if (dcd && !c && phase == PH_DATA) carrier = false; dcd = c; }
     }
-}
-
-static void new_dev_cb(usb_device_handle_t h) {
-    const usb_device_desc_t *dd;
-    if (usb_host_get_device_descriptor(h, &dd) == ESP_OK)
-        snprintf(usb_id, sizeof usb_id, "%04x:%04x", dd->idVendor, dd->idProduct);
-    other_dev = true;
 }
 
 /* ---- to the modem ---- */
@@ -343,14 +335,14 @@ static void modem_task(void *arg) {
     };
     for (;;) {
         cdc_acm_dev_hdl_t h = NULL;
-        other_dev = false;
-        if (cdc_acm_host_open(CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, 0, &cfg, &h) != ESP_OK) {
-            static bool said;
-            if (other_dev && !said) {
-                say("USB: device %s is plugged in but is not a modem this firmware can use (it needs a USB CDC-ACM modem)", usb_id);
-                state = "a USB device is plugged in, but not a usable modem";
-                said = true;
-            } else if (!other_dev) { said = false; state = "no modem plugged in"; }
+        uint16_t vid, pid;
+        /* only devices that are not a DC-PicoLink cable (usbport.c takes those): "any" would
+           open the cable's own serial interface as a modem */
+        if (!usbport_next_other(&vid, &pid, UINT32_MAX)) continue;
+        snprintf(usb_id, sizeof usb_id, "%04x:%04x", vid, pid);
+        if (cdc_acm_host_open(vid, pid, 0, &cfg, &h) != ESP_OK) {
+            say("USB: device %s is plugged in but is not a modem this firmware can use (it needs a USB CDC-ACM modem)", usb_id);
+            state = "a USB device is plugged in, but not a usable modem";
             continue;
         }
         xSemaphoreTake(devlk, portMAX_DELAY); dev = h; xSemaphoreGive(devlk);
@@ -368,20 +360,12 @@ static void modem_task(void *arg) {
     }
 }
 
-static void usb_lib_task(void *arg) {
-    (void)arg;
-    for (;;) {
-        uint32_t f;
-        usb_host_lib_handle_events(portMAX_DELAY, &f);
-        if (f & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) usb_host_device_free_all();
-    }
-}
 
 size_t usbmodem_info_json(char *out, size_t cap) {
     return (size_t)snprintf(out, cap,
         "{\"built\":true,\"present\":%s,\"id\":\"%s\",\"state\":\"%s\",\"calls\":%lu,\"answered\":%lu,\"failed\":%lu,"
         "\"bytes_in\":%lu,\"bytes_out\":%lu,\"dialled\":\"%s\",\"dcnet\":%s}",
-        present ? "true" : "false", present ? usb_id : "", state, (unsigned long)cnt.calls, (unsigned long)cnt.answered,
+        present ? "true" : "false", present ? usb_id : "", usbport_cable() ? "a DC-PicoLink cable is on the USB port (the link runs there)" : state, (unsigned long)cnt.calls, (unsigned long)cnt.answered,
         (unsigned long)cnt.failed, (unsigned long)cnt.bytes_in, (unsigned long)cnt.bytes_out, cnt.dial, via_dcnet ? "true" : "false");
 }
 
@@ -395,20 +379,13 @@ void usbmodem_start(void) {
         int v = 128 + (a * 40 + b * 40) / 32767;
         tone[i] = (uint8_t)(v == USBM_DLE ? USBM_DLE + 1 : v);
     }
-    const usb_host_config_t hc = { .skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1 };
-    /* started first thing (main.c), while internal DMA memory is still free; a few tries anyway */
-    esp_err_t he = ESP_FAIL;
-    for (int t = 0; t < 5 && (he = usb_host_install(&hc)) != ESP_OK; t++) vTaskDelay(pdMS_TO_TICKS(300));
-    if (he != ESP_OK) {
-        say("USB modem port: the USB host could not start (%s; free %u bytes, largest block %u); port off", esp_err_to_name(he),
-            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
-        state = "USB host failed to start"; return;
-    }
-    xTaskCreate(usb_lib_task, "usb_lib", 4096, NULL, 10, NULL);
-    const cdc_acm_host_driver_config_t dc = { .driver_task_stack_size = 6144, .driver_task_priority = 9, .xCoreID = 0, .new_dev_cb = new_dev_cb };
+    char why[120];
+    /* started first thing (main.c), while internal DMA memory is still free */
+    if (!usbport_start(why, sizeof why)) { say("USB port: %s; port off", why); state = "USB host failed to start"; return; }
+    const cdc_acm_host_driver_config_t dc = { .driver_task_stack_size = 6144, .driver_task_priority = 9, .xCoreID = 0 };
     if (cdc_acm_host_install(&dc) != ESP_OK) { say("USB modem port: the modem driver could not start; port off"); state = "modem driver failed to start"; return; }
     xTaskCreate(modem_task, "usbmodem", 4096, NULL, 5, NULL);
-    say("USB modem port: on (this board's USB socket is now for a modem; its console is on UART0)");
+    say("USB port: on (a modem or a DC-PicoLink cable can be plugged in, also through a hub; the console is on UART0)");
     ESP_LOGI(TAG, "USB host started");
 }
 

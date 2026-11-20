@@ -8,8 +8,9 @@
 #define CFG_TUD_MSC             0
 #define CFG_TUD_HID             0
 #define CFG_TUD_MIDI            0
-#define CFG_TUD_VENDOR          1   /* SD block link (raw USB, not a tty: modem
-                                       probes like wvdialconf can't touch it) */
+#define CFG_TUD_VENDOR          2   /* 0: SD block link (raw USB, not a tty: modem
+                                       probes like wvdialconf can't touch it);
+                                       1: the ESP32 link when an ESP32 is the USB host */
 #define CFG_TUD_VENDOR_RX_BUFSIZE 2048
 #define CFG_TUD_VENDOR_TX_BUFSIZE 2048
 #define CFG_TUD_VENDOR_EPSIZE     64

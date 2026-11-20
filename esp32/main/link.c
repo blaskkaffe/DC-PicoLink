@@ -39,6 +39,19 @@ static SemaphoreHandle_t tx_lock, info_lock;
 static SemaphoreHandle_t room_sem;     /* SPI: given when a transaction takes bytes out of the ring */
 static uint8_t tx_seq;
 static link_rx_t rx;
+static link_rx_t urx;                 /* the cable on the USB port (usbport.c) */
+static volatile bool usb_on;          /* a DC-PicoLink cable is on the USB port: the link runs there */
+#if CONFIG_DCL_USB_MODEM
+size_t usbl_room(void);
+size_t usbl_backlog(void);
+void usbl_put(const uint8_t *w, size_t k);
+void usbl_kick(void);
+#else
+static size_t usbl_room(void) { return 0; }
+static size_t usbl_backlog(void) { return 0; }
+static void usbl_put(const uint8_t *w, size_t k) { (void)w; (void)k; }
+static void usbl_kick(void) { }
+#endif
 static volatile int64_t last_rx_us = -10000000;
 static link_stats_t st;
 static char cable_info[512];          /* "key value" lines from the last hello answer */
@@ -110,12 +123,14 @@ bool link_send(uint8_t ch, const void *p, size_t n) {
     static uint8_t w[LINK_MAX_WIRE];
     bool ok = false;
     xSemaphoreTake(tx_lock, portMAX_DELAY);
+    bool usb = usb_on;
     if (link_room() >= LINK_MAX_WIRE) {
         size_t k = link_build(ch, tx_seq, p, n, w);
-        if (k) { tx_seq++; wire_put(w, k); st.sent++; ok = true; }
+        if (k) { tx_seq++; if (usb) usbl_put(w, k); else wire_put(w, k); st.sent++; ok = true; }
     }
     if (!ok) st.send_full++;
     xSemaphoreGive(tx_lock);
+    if (usb && ok) usbl_kick();
     return ok;
 }
 
@@ -123,6 +138,7 @@ bool link_dc1(const char *msg, size_t n) { return link_send(LINK_CH_API, msg, n)
 
 /* free bytes in the queue to the cable; and bytes still waiting for it (ring + loaded chunks) */
 size_t link_room(void) {
+    if (usb_on) return usbl_room();
 #if CONFIG_DCL_LINK_SPI
     return RING_SIZE - (ring_wr - ring_rd);          /* a word read: a snapshot is enough */
 #else
@@ -130,6 +146,7 @@ size_t link_room(void) {
 #endif
 }
 size_t link_backlog(void) {
+    if (usb_on) return usbl_backlog();
 #if CONFIG_DCL_LINK_SPI
     return (ring_wr - ring_rd) + lspi_loaded_bytes;
 #else
@@ -200,33 +217,47 @@ static void on_api(const char *p, size_t n) {
     xSemaphoreGive(info_lock);
 }
 
-static void deliver(void) {
-    switch (rx.ch) {
+static void deliver(const link_rx_t *r) {
+    switch (r->ch) {
     case LINK_CH_STAT:
-        log_add("cable", (const char *)rx.payload, rx.n);
+        log_add("cable", (const char *)r->payload, r->n);
         break;
     case LINK_CH_API:
-        on_api((const char *)rx.payload, rx.n);
+        on_api((const char *)r->payload, r->n);
         break;
     case LINK_CH_SER:
-        st.ser_in += rx.n;
-        ser_from_dc(rx.payload, rx.n);        /* E-3: Hayes stub + PPP server (also feeds the monitor) */
+        st.ser_in += r->n;
+        ser_from_dc(r->payload, r->n);        /* E-3: Hayes stub + PPP server (also feeds the monitor) */
         break;
     case LINK_CH_ETH:
         st.eth_in++;
-        eth_from_dc(rx.payload, rx.n);        /* E-4: second network interface */
+        eth_from_dc(r->payload, r->n);        /* E-4: second network interface */
         break;
     case LINK_CH_SD:                          /* the slot card for the web page (sdfs.c) */
-        sdfs_from_cable(rx.payload, rx.n);
+        sdfs_from_cable(r->payload, r->n);
         break;
     case LINK_CH_TEST:                        /* the cable's self-test: straight back */
-        link_send(LINK_CH_TEST, rx.payload, rx.n);   /* once: only this task frees room, so waiting here never helped */
+        link_send(LINK_CH_TEST, r->payload, r->n);   /* once: only this task frees room, so waiting here never helped */
         st.test_echo++;
         break;
     default:
         break;
     }
 }
+
+/* ---- the link over USB (usbport.c, modem builds) ---- */
+void link_usb_set(bool on) {
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
+    memset(&urx, 0, sizeof urx);
+    usb_on = on;
+    xSemaphoreGive(tx_lock);
+}
+void link_usb_rx(const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        if (link_rx_byte(&urx, p[i])) { last_rx_us = esp_timer_get_time(); deliver(&urx); }
+}
+/* a transfer took bytes to the cable */
+void link_tx_freed(void) { xSemaphoreGive(room_sem); ppp_serial_room(); }
 
 static void note_up_down(bool *was_up) {
     bool up = link_is_up();
@@ -249,7 +280,7 @@ static void rx_task(void *arg) {
             lspi_xfers++;
             if (n != LINK_SPI_CHUNK) lspi_short++;
             for (size_t k = 0; k < n; k++)
-                if (link_rx_byte(&rx, lspi_rxb[i][k])) { last_rx_us = esp_timer_get_time(); deliver(); }
+                if (!usb_on && link_rx_byte(&rx, lspi_rxb[i][k])) { last_rx_us = esp_timer_get_time(); deliver(&rx); }
             lspi_load(i);
         }
         note_up_down(&was_up);
@@ -263,7 +294,7 @@ static void rx_task(void *arg) {
     for (;;) {
         int n = uart_read_bytes(LINK_PORT, buf, sizeof buf, pdMS_TO_TICKS(20));
         for (int i = 0; i < n; i++)
-            if (link_rx_byte(&rx, buf[i])) { last_rx_us = esp_timer_get_time(); deliver(); }
+            if (!usb_on && link_rx_byte(&rx, buf[i])) { last_rx_us = esp_timer_get_time(); deliver(&rx); }
         note_up_down(&was_up);
     }
 }

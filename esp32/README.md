@@ -70,6 +70,21 @@ profile upload.
 | OpenVPN to Dreamcast Live, Dreamcast on tunnel address + 1, input rules on tun0 | `ovpn.c`, `vpn.c`; routes pushed by the server go into the tunnel (`../hooks/dcl_lwip_hooks.h`) |
 | UPnP port forwarding (optional) | `portfwd.c`: as DreamPi's port_forwarding.py, each mapping deleted, then DreamPi's game ports straight to the Dreamcast's home address; nothing else (not the Netlink ports); on by default |
 
+### The USB socket (modem builds)
+
+In the modem build the ESP32's USB-C socket is a USB host for whatever is plugged in, one device
+at a time, also through a hub (`main/usbport.c`):
+
+* **a USB modem** (CDC-ACM): the Dreamcast dials it over a phone cord, as with a DreamPi;
+* **a DC-PicoLink cable** (RP2040-Zero or Pico, any pin layout): the link between the two runs
+  over USB instead of the soldered SPI pins or UART wires, the same packets either way. Any
+  RP2040 cable then works with any ESP32-S3 board through a plain USB cable. The cable needs
+  firmware with the link interface (its fourth USB interface, endpoints 0x07/0x87); an older
+  one is reported in the log. While an ESP32 is its USB host, the cable does not count it as a
+  computer, so the Dreamcast's traffic goes to the ESP32.
+
+Next: USB Ethernet adapters (CDC-ECM/NCM) on the same socket.
+
 ### SD card files
 
 The page's *SD card* section copies files (VMU saves, openMenu's folders) between the card in the
@@ -137,60 +152,6 @@ on average and 0.17 s at worst now (0.19 / 0.32 s at 57600), with the line just 
 Dreamcast's own packets never wait. What is left is mostly the TCP segment the update has to
 wait behind (1500 bytes = 0.13 s at 115200).
 
-### DCNow! ID
-
-DCNow! knows a device only by the SHA-256 of its Wi-Fi MAC address, and cannot remove entries.
-So the ID cannot be made up freely:
-
-* **This box** (the default): the ID of this box's own Wi-Fi MAC. The ESP32-S3 has one base MAC;
-  Wi-Fi station = base, setup network = base+1, the W5500 wired port and the cable's Ethernet
-  side = base+3. DCNow! and the VPN use the Wi-Fi station one, whichever way the traffic goes.
-* **Clone DreamPi** (page: *Clone a DreamPi on this network*): reads the ID from a DreamPi's
-  settings service (port 1998) on the same network, found as `dreampi.local` or by its address.
-  Both devices then count as one player at DCNow!, with the stats together. The page's *DCNow! ID*
-  menu has three choices: this box; the other device always; or (the default after a clone) the
-  other device **only while it is away**. In that mode the box looks for the cloned device every
-  30 s (its port 1998, at the address it was cloned from, or as `dreampi.local`): while it is on
-  the network this box reports with its own ID, so two devices never report as one at the same
-  time; 3 misses in a row (about 90 s) and it takes the cloned ID, and the cloned device's
-  return switches it back. The ID changes only while no session is running. One limit: the
-  look-up by name finds only one `dreampi.local`, so with several DreamPis on the network the
-  remembered address is what counts.
-* **Typing** a MAC or ID is possible only until the box has been on a Wi-Fi network once
-  (the field disappears after that). The way to unlock it again is flashing the merged image.
-
-### VPN
-
-The Dreamcast Live profiles from DreamPi 2.1 are built in (`vpn/`, used with Dreamcast Live's
-okay); the VPN is on by default. Newer profiles can be uploaded on the page without a rebuild:
-the `.conf` files and `server.list` from a DreamPi's `/etc/openvpn/client/`, or the
-`dreampi-vpn.txt` that `../tools/dreampi_vpn_extract.py` makes from a DreamPi image.
-
-Like DreamPi, the tunnel stays up the whole time the box is on, not only during calls. Which
-server: "auto" on the page does as DreamPi: one ping to every server (1 s to answer), the
-fastest first (status line `VPN: ping ...`). Servers that do not answer follow in `server.list`
-order (shumania first), so with ping blocked everywhere it is the list order. After a lost
-tunnel it pings again; on a slower fallback server it pings again and moves to the fastest every
-15 minutes while no Dreamcast is online. The page can also pin one server.
-
-### The serial line's queue
-
-The serial line is the slowest part (115200 baud = 11.5 KB/s). Everything for the Dreamcast
-used to wait in one line of bytes (up to ~12 KB on the ESP32 and the cable), so during a
-download a game update could wait over a second. Now the cable holds only ~20 ms; the rest waits
-on the ESP32 as whole packets in two queues, and the line gets one packet at a time:
-
-* **UDP and ICMP first** (game updates, DNS, ping), then **TCP** (pages, downloads, lobbies).
-  TCP stays in one queue in arrival order, so its segments never overtake each other.
-* Full queues drop as a modem's full buffer would: UDP its oldest packet (a game wants the
-  newest), TCP its newest (the server sends it again). `queue_full` in `/api/status` counts them.
-* The Dreamcast connects exactly as before. A game alone sees no difference (nothing waits).
-
-`firmware/tests/test_serq_sim.c` runs the real rules: a 20 Hz game update during a download
-with an 8 KB TCP window waited about 1 s at 115200 (4 s at 57600) before, about 0.12 s on
-average and 0.19 s at worst now (0.22 / 0.35 s at 57600), with the line just as busy. What is
-left is mostly the TCP segment the update has to wait behind (1500 bytes = 0.13 s at 115200).
-
 ### Shared IPv4 (carrier-grade NAT)
 
 The box asks the router for its outside address. If the provider shares the IPv4 address
@@ -208,7 +169,8 @@ waiting need the VPN on such a connection.
 | `main/ppp_srv.c` | modem emulation, PPP server, NAT, call control (serial cable and USB modem) |
 | `main/dc_eth.c` | the cable's W5500 network as an interface |
 | `main/wired.c` | the W5500 module: uplink or BBA port |
-| `main/usbmodem.c` | USB host, CDC-ACM modem, dial tone and answering |
+| `main/usbport.c` | the USB socket as host: a DC-PicoLink cable (link over USB) or, for anything else, the modem driver |
+| `main/usbmodem.c` | CDC-ACM modem, dial tone and answering |
 | `main/dcnet.c`, `main/netlink.c` | DCNet; Netlink, game servers, XBAND |
 | `main/vpn.c`, `main/ovpn.c` | VPN task, profiles, the tunnel interface; the OpenVPN client |
 | `main/portfwd.c` | UPnP, NAT port maps (only without a home address), shared-IPv4 check |

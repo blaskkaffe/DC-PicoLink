@@ -171,7 +171,7 @@ No card-detect pin: the cable looks for a card every 2 s.
 | GPIO10 | W5500 module CS (SCS) |
 | GPIO7 (stack) / GPIO9 (other builds) | W5500 module INT |
 | 3V3, GND | W5500 module 3.3 V, GND |
-| USB-C (modem build) | a USB voice modem through an OTG adapter; the Dreamcast's modem joins it by a phone cord, as with a DreamPi |
+| USB-C (modem build) | a USB host for one device (a hub works too): a USB voice modem through an OTG adapter (the Dreamcast's modem joins it by a phone cord, as with a DreamPi), or a DC-PicoLink cable: the link then runs over USB, no link wires needed |
 | GPIO43 / GPIO44 | console TX / RX (UART0, 115200) |
 
 The W5500 module is the Internet uplink when a router answers DHCP on it, otherwise the
@@ -195,7 +195,9 @@ socket for the Dreamcast's Broadband Adapter.
 * **Stack:** 5V and GND are joined, so either board's USB powers both. **Plug in one USB at a
   time** (the Zero has no diode on its USB 5 V). The Zero's USB is for updates and for a
   computer (it then takes the serial and network traffic, as with DreamPi); the ESP32's USB-C
-  is its console, or the USB modem's socket in the modem build.
+  is its console, or in the modem build the socket for a USB modem or a DC-PicoLink cable.
+* **Cable over USB:** a Pico or Zero cable plugged into the ESP32's USB-C (modem build) needs no
+  link wires; the ESP32 powers it over the cable.
 * Never join the Dreamcast's 3.3 V (port pin 10 / SD VDD) to a board's 3V3: it goes only to the
   sense pin, through 10 kΩ.
 

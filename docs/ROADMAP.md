@@ -19,7 +19,9 @@
   built-in profiles and pushed routes, UPnP port forwarding, DCNow! + port 1998, web page,
   firmware update.
 * Written since the last hardware test (host-tested): UDP-first queue for the serial line,
-  VPN auto picks the fastest ping, DCNow! ID clone/lock, the slot card's files on the web page.
+  VPN auto picks the fastest ping, DCNow! ID clone/lock, the slot card's files on the web page,
+  the ESP32's USB socket taking a modem or a DC-PicoLink cable (the link over USB), hubs.
+* Next on the USB socket: USB Ethernet adapters (CDC-ECM/NCM; Realtek RTL8152/8153 in ECM mode).
 * Written and host-tested, **not on hardware yet**: the soldered stack, W5500 emulation as a
   network, SD slot on SPI1 (GP26-29), the wired uplink / BBA port, USB modem, DCNet,
   Netlink/XBAND/Capcom, shared-IPv4 check.
