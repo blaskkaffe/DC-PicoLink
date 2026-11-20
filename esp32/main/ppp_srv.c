@@ -4,7 +4,7 @@
  * The cable passes the Dreamcast's serial bytes in channel SER. They first meet a Hayes modem
  * stub (hayes_model.h): AT -> OK, ATD -> CONNECT. After CONNECT the bytes are PPP. They go
  * through the frame filter (hdlc_model.h: TTL 64, PowerSmash double SYN) into lwIP's PPP server.
- * The Dreamcast gets 10.64.0.2, we are 10.64.0.1 (also its DNS: dnsd.c). lwIP's NAPT
+ * Without its home address the Dreamcast gets 192.168.221.2, we are 192.168.221.1 (also its DNS: dnsd.c; the Dreamcast network, ipplan_model.h). lwIP's NAPT
  * (outgoing side = the Wi-Fi) is switched on for the PPP interface, as iptables MASQUERADE
  * is on a DreamPi. The call ends when the Dreamcast closes PPP, or when "AT" shows up again.
  *
@@ -34,6 +34,7 @@
 #include "dcnet_model.h"
 #include "hdlc_model.h"
 #include "serq_model.h"
+#include "ipplan_model.h"
 #include "app.h"
 
 static const char *TAG = "ppp";
@@ -90,7 +91,7 @@ static u32_t out_cb(ppp_pcb *p, const void *data, u32_t len, void *ctx) {
 static void status_cb(ppp_pcb *p, int err, void *ctx) {
     (void)p;
     ctl_t c = { .what = err == PPPERR_NONE ? C_UP : C_DOWN, .session = (uint32_t)(uintptr_t)ctx, .err = err };
-    if (err == PPPERR_NONE && !call_lan) ip_napt_enable_no(pppif.num, 1);   /* no home address for the Dreamcast: NAT as before */
+    if (err == PPPERR_NONE && !call_lan) { ip_napt_enable_no(pppif.num, 1); dcside_heard(&pppif); }   /* no home address for the Dreamcast: NAT as before */
     xQueueSend(ctl_q, &c, 0);
 }
 
@@ -212,8 +213,8 @@ static bool start_ppp(int who) {
     ppp_output_orig = pppif.output;
     pppif.output = ppp_output_to_dc;
     ip4_addr_t our, his;
-    IP4_ADDR(&our, 10, 64, 0, 1);
-    IP4_ADDR(&his, 10, 64, 0, 2);
+    ip4_addr_set_u32(&our, lwip_htonl(IPP_BOX));         /* the Dreamcast network (ipplan_model.h); the home address replaces these in dclan.c */
+    ip4_addr_set_u32(&his, lwip_htonl(IPP_PPP_DC));
     /* as DreamPi's autoconfigure_ppp: the VPN's tun+1/tun+2, else the home network's .98/.99 */
     uint32_t vip = vpn_dc_addr(), lthis, ldc;
     call_lan = dclan_addrs(&lthis, &ldc);

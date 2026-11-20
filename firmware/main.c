@@ -182,7 +182,7 @@ static inline bool ser_bridge(void) { return link_up && dc_mode == MODE_OFFLINE 
 static inline bool eth_bridge(void) { return DC_USB_BRIDGE || (link_up && dc_mode == MODE_OFFLINE && usb_pc()); }
 /* Test build (cmake -DDC_USB_BRIDGE=1): the computer's USB network interface is wired straight
    to the ESP32 (channel ETH, both ways) instead of to the W5500 emulation, so the link and the
-   ESP32's Dreamcast network (DHCP 192.168.99.x, DNS, NAT out through Wi-Fi) can be tested with
+   ESP32's Dreamcast network (DHCP 192.168.221.x, DNS, NAT out through Wi-Fi) can be tested with
    a computer and no Dreamcast. The W5500 emulation's own frames are dropped in this build. */
 /* someone reads the status lines: dcsd on the Pi, or the ESP32 */
 static inline bool log_up(void) { return sd_link_up || link_up; }

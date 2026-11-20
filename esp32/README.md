@@ -39,8 +39,8 @@ app `.bin` or the merged one) and `idf.py flash` keep everything.
 ## Use
 
 Join **DC-PicoLink-XXXX** (password `dreamcast`, change it in menuconfig) and open
-http://192.168.98.1 (the setup network is a /24 of its own, 192.168.98.0; a home network with
-that range would clash with it). Save your home network under *Wi-Fi*; the page is then also on the address
+http://192.168.220.1 (the setup network is a /24 of its own, 192.168.220.0; a home network with
+that range would clash with it; the whole plan: [IP plan](../README.md#ip-plan)). Save your home network under *Wi-Fi*; the page is then also on the address
 shown there. The page shows the link to the cable, status lines from both boards, the serial
 monitor, and the settings: Internet over serial, DCNow!, VPN, DCNet, port forwarding, VPN
 profile upload.
@@ -51,10 +51,10 @@ profile upload.
 
 | Path | How |
 |---|---|
-| serial cable | modem emulation (`../firmware/hayes_model.h`), lwIP's PPP server. As on DreamPi: the Dreamcast gets its own home address (usually .98, this box .99 = its DNS and gateway), this box answers ARP for it, no NAT (`dclan.c`); tun+1 with the VPN up, mapped 1:1 to the home address. Without a free home address: 10.64.0.2 behind NAT |
-| the cable's W5500 emulation | second interface 192.168.99.1/24, DHCP, DNS (`dc_eth.c`); mapped 1:1 to the Dreamcast's home address (NAT only without one) |
+| serial cable | modem emulation (`../firmware/hayes_model.h`), lwIP's PPP server. As on DreamPi: the Dreamcast gets its own home address (usually .98, this box .99 = its DNS and gateway), this box answers ARP for it, no NAT (`dclan.c`); tun+1 with the VPN up, mapped 1:1 to the home address. Without a free home address: 192.168.221.2 behind NAT |
+| the cable's W5500 emulation | second interface 192.168.221.1/24, DHCP, DNS (`dc_eth.c`); mapped 1:1 to the Dreamcast's home address (NAT only without one) |
 | USB modem | a USB voice modem on this board's USB socket; the Dreamcast's own modem calls it over a phone cord (`usbmodem.c`) |
-| BBA | a W5500 module on GPIO9-13 (`wired.c`): with a cable from the Dreamcast's BBA it serves 192.168.97.x; with a cable to a router it is the uplink instead |
+| BBA | a W5500 module on GPIO9-13 (`wired.c`): with a cable from the Dreamcast's BBA it serves 192.168.221.x; with a cable to a router it is the uplink instead |
 
 ### As DreamPi
 

@@ -201,6 +201,22 @@ socket for the Dreamcast's Broadband Adapter.
 * Never join the Dreamcast's 3.3 V (port pin 10 / SD VDD) to a board's 3V3: it goes only to the
   sense pin, through 10 kΩ.
 
+## IP plan
+
+The same Dreamcast settings work on the ESP32 box and on a DreamPi with this add-on.
+
+| Network | The box (or Pi) | The Dreamcast |
+|---|---|---|
+| Setup Wi-Fi `DC-PicoLink-XXXX` (ESP32) | 192.168.220.1: the web page (also `http://dreampi.local`) | – |
+| **The Dreamcast network**: the W5500 (cable), the BBA socket (W5500 module), a PPP call without its home address | 192.168.221.1: gateway and DNS | DHCP .2–.99 (a PPP call gets .2); a fixed address at **.100** or above, mask 255.255.255.0, gateway and DNS 192.168.221.1 |
+| Modem / serial PPP with its home address (default) | home network .99 | home network .98, as DreamPi picks them (no NAT; port forwarding points there) |
+| VPN (Dreamcast Live) | the address the server gives | that address + 1 (only the server's game networks go through the tunnel) |
+| DreamPi's W5500 network (`dcusb0`) | 192.168.221.1 | DHCP .10–.50, fixed .100 or above |
+
+The Dreamcast uses one way to connect at a time, so they share one network: the box answers on
+the interface the Dreamcast was last heard on. On the W5500, gateway and DNS must be set to
+192.168.221.1 (0.0.0.0 only works over the modem, where PPP fills them in).
+
 ## Quick start (DreamPi)
 
 1. **Wire it** to the Dreamcast serial port: [hardware/WIRING.md](hardware/WIRING.md)
@@ -210,9 +226,10 @@ socket for the Dreamcast's Broadband Adapter.
 3. **Install the DreamPi side**: copy `dc-picolink-dreampi-setup.sh` to the Pi and run
    `sudo bash dc-picolink-dreampi-setup.sh`.
 4. **Serial PPP** (Netlink): in DreamPi's `netlink_config.ini` set `port = /dev/dccable`.
-5. **W5500**: the Dreamcast gets an address by DHCP (192.168.99.x). Static settings:
-   IP 192.168.99.60, mask 255.255.255.0, gateway 192.168.99.1, DNS 192.168.99.1 (DreamPi's DNS;
-   46.101.91.123 without DreamPi). Settings: `/etc/dcusb0.conf`.
+5. **W5500**: the Dreamcast gets an address by DHCP (192.168.221.x). Static settings:
+   IP 192.168.221.100, mask 255.255.255.0, gateway 192.168.221.1, DNS 192.168.221.1 (DreamPi's DNS;
+   46.101.91.123 without DreamPi). Settings: `/etc/dcusb0.conf` (an untouched 192.168.99.x one from
+   an older version is replaced by the installer).
 6. **Check**: `sudo dreampi-snapshot` prints what the DreamPi and the add-on are doing.
 
 Logs: `journalctl -fu dcsd` (the cable's own status lines), `journalctl -u dcusb0`,

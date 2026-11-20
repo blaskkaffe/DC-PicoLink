@@ -12,7 +12,7 @@
  *    leaves as its home address and what comes in for that address goes to tun+1 (DreamPi's
  *    SNAT/DNAT rules, add_pseudo_interface_rules).
  *  - the cable's network and the wired BBA port (no DreamPi equivalent): the Dreamcast keeps its
- *    192.168.99.x / BBA lease there and is mapped 1:1 to the same home address, so UPnP and the
+ *    192.168.221.x (the Dreamcast network) lease there and is mapped 1:1 to the same home address, so UPnP and the
  *    router see the same thing whichever cable it uses.
  * UPnP (portfwd.c) points the game ports at this address, as DreamPi's port_forwarding.py does.
  * When no address can be picked (no uplink, nothing free) the Dreamcast stays behind this box's

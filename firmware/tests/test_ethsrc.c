@@ -13,15 +13,15 @@ static void frame(uint8_t *f, int a, int b, int c, int d) {
 
 int main(void) {
     uint8_t f[60];
-    uint32_t gw = be(192, 168, 99, 1), mask = be(255, 255, 255, 0);
-    frame(f, 192, 168, 99, 60);  CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == be(192, 168, 99, 60));
-    frame(f, 192, 168, 99, 1);   CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* the box itself */
+    uint32_t gw = be(192, 168, 221, 1), mask = be(255, 255, 255, 0);
+    frame(f, 192, 168, 221, 60);  CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == be(192, 168, 221, 60));
+    frame(f, 192, 168, 221, 1);   CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* the box itself */
     frame(f, 0, 0, 0, 0);        CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* DHCP discover */
     frame(f, 192, 168, 1, 98);   CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* another network */
-    frame(f, 192, 168, 99, 255); CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* broadcast */
-    frame(f, 192, 168, 99, 60); f[12] = 0x08; f[13] = 0x06;                          /* ARP */
+    frame(f, 192, 168, 221, 255); CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);    /* broadcast */
+    frame(f, 192, 168, 221, 60); f[12] = 0x08; f[13] = 0x06;                          /* ARP */
     CHECK(ethsrc_dc_ip(f, sizeof f, gw, mask) == 0);
-    frame(f, 192, 168, 99, 60);  CHECK(ethsrc_dc_ip(f, 20, gw, mask) == 0);          /* too short */
+    frame(f, 192, 168, 221, 60);  CHECK(ethsrc_dc_ip(f, 20, gw, mask) == 0);          /* too short */
     printf("%s: %d failures\n", bad ? "FAIL" : "ok", bad);
     return bad != 0;
 }

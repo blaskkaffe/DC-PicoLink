@@ -5,7 +5,7 @@
  *   uplink  somebody on the wire answers DHCP (a router): the wired network becomes the way
  *           out, ahead of Wi-Fi.
  *   BBA     nobody answers within 10 s (a Dreamcast broadband adapter never does): this box
- *           is 192.168.97.1, hands out addresses and DNS, and routes the Dreamcast out through
+ *           is 192.168.221.1 (the Dreamcast network, shared with the cable: ipplan_model.h), hands out addresses and DNS, and routes the Dreamcast out through
  *           Wi-Fi with NAT, the same way as the cable's own network (dc_eth.c).
  * Safety: a DHCP server on somebody's home network is harmful, so in the BBA role every frame
  * from another DHCP server sends the port straight back to the uplink role for a minute.
@@ -14,6 +14,7 @@
  */
 #include "sdkconfig.h"
 #include "app.h"
+#include "ipplan_model.h"
 #if CONFIG_DCL_W5500
 #include <string.h>
 #include <stdio.h>
@@ -31,7 +32,7 @@
 #include "esp_timer.h"
 #include "ipfilter_model.h"
 
-#define BBA_IP        0xC0A86101u                 /* 192.168.97.1 */
+#define BBA_IP        IPP_BOX                     /* 192.168.221.1: the Dreamcast network, shared with the cable (ipplan_model.h) */
 #define DETECT_US     (10 * 1000000LL)            /* no DHCP answer for this long: BBA role */
 #define HOLD_US       (60 * 1000000LL)            /* after seeing a foreign DHCP server */
 #define QUIET_US      (30 * 1000000LL)
@@ -82,6 +83,7 @@ static esp_err_t eth_in(esp_eth_handle_t h, uint8_t *buf, uint32_t len, void *pr
         ipf.public_ip = pubip_get(); ipf.dnat = dnat_rules();
         if (!ipf_ether(&ipf, buf, len, (uint32_t)(esp_timer_get_time() / 1000))) { free(buf); return ESP_OK; }
         last_dc_us = esp_timer_get_time();
+        dcside_heard((struct netif *)esp_netif_get_netif_impl(bba_if));   /* replies for the Dreamcast network go here now */
     }
     cnt.rx++;
     return esp_netif_receive(to, buf, len, buf);                   /* lwIP frees it through free_cb */
@@ -135,12 +137,13 @@ static void up_off(void) {
 static void bba_on(void) {
     esp_netif_action_start(bba_if, NULL, 0, NULL);                 /* AUTOUP: also starts the DHCP server */
     esp_netif_dhcps_stop(bba_if);
-    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = ESP_IP4TOADDR(192, 168, 97, 1) } };
+    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = IPP_ESP(IPP_BOX) } };
     esp_netif_set_dns_info(bba_if, ESP_NETIF_DNS_MAIN, &dns);
+    dcside_dhcp_pool(bba_if);
     uint8_t offer = 1;                                             /* OFFER_DNS */
     esp_netif_dhcps_option(bba_if, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof offer);
     esp_netif_dhcps_start(bba_if);
-    esp_netif_napt_enable(bba_if);
+    dcside_nat_on(bba_if);                                         /* not esp_netif_napt_enable: that turns the cable's NAT off */
     dnsd_set_listen(2, true, BBA_IP);
     foreign_dhcp = false;
     cur = bba_if;
@@ -190,8 +193,8 @@ static void manager(void *arg) {
                 if (t - said > 60000000LL) { said = t; say("wired port: several devices on this cable but no DHCP answer yet: a network, not a Dreamcast; still asking for an address"); }
             } else if (t - t_role > DETECT_US && t > hold_until) {
                 up_off(); bba_on(); role = R_BBA; cnt.to_bba++;
-                strlcpy(cnt.ip, "192.168.97.1", sizeof cnt.ip);
-                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.97.x");
+                strlcpy(cnt.ip, "192.168.221.1", sizeof cnt.ip);
+                say("wired port: nobody answered DHCP, so this is the Dreamcast's broadband adapter: handing out 192.168.221.2-.99");
             }
             break;
         case R_UPLINK:
@@ -233,9 +236,9 @@ size_t wired_info_json(char *out, size_t cap) {
 
 static esp_netif_t *make_netif(bool server, const uint8_t mac[6]) {
     static const esp_netif_ip_info_t ipi = {
-        .ip      = { .addr = ESP_IP4TOADDR(192, 168, 97, 1) },
-        .netmask = { .addr = ESP_IP4TOADDR(255, 255, 255, 0) },
-        .gw      = { .addr = ESP_IP4TOADDR(192, 168, 97, 1) },
+        .ip      = { .addr = IPP_ESP(IPP_BOX) },
+        .netmask = { .addr = IPP_ESP(IPP_MASK) },
+        .gw      = { .addr = IPP_ESP(IPP_BOX) },
     };
     static esp_netif_driver_ifconfig_t drv[2];
     esp_netif_driver_ifconfig_t *d = &drv[server];

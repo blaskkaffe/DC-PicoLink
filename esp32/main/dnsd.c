@@ -188,7 +188,9 @@ static void dns_task(void *arg) {
                 continue;
             }
             any = true;
-            if (ls[i] < 0) {
+            bool dup = false;                         /* the Dreamcast network's .1 serves several interfaces: one socket answers them all */
+            for (int j = 0; j < LISTEN_N; j++) if (j != i && online[j] && ls[j] >= 0 && bind_ip[j] == bind_ip[i]) dup = true;
+            if (ls[i] < 0 && !dup) {
                 ls[i] = socket(AF_INET, SOCK_DGRAM, 0);
                 struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(53), .sin_addr.s_addr = htonl(bind_ip[i]) };
                 if (ls[i] < 0 || bind(ls[i], (struct sockaddr *)&a, sizeof a) != 0) {
@@ -209,7 +211,7 @@ static void dns_task(void *arg) {
             struct sockaddr_in u = { .sin_family = AF_INET };
             if (us >= 0) bind(us, (struct sockaddr *)&u, sizeof u);
         }
-        if (us < 0 || (ls[0] < 0 && ls[1] < 0)) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }
+        if (us < 0 || (ls[0] < 0 && ls[1] < 0 && ls[2] < 0)) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }
         fd_set rs; FD_ZERO(&rs); FD_SET(us, &rs);
         int mx = us;
         for (int i = 0; i < LISTEN_N; i++) if (ls[i] >= 0) { FD_SET(ls[i], &rs); if (ls[i] > mx) mx = ls[i]; }

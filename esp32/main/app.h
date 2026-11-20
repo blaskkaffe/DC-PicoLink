@@ -10,6 +10,11 @@ bool link_send(uint8_t ch, const void *p, size_t n);   /* false if the queue is 
 bool link_is_up(void);
 size_t link_room(void);                              /* free bytes in the queue to the cable */
 size_t link_backlog(void);
+struct netif;
+void dcside_heard(struct netif *n);                  /* dc_eth.c: the Dreamcast was heard on this interface (Dreamcast network) */
+#include "esp_netif.h"
+void dcside_dhcp_pool(esp_netif_t *nif);
+void dcside_nat_on(esp_netif_t *nif);                /* dc_eth.c: NAT out for one interface, the others untouched */             /* dc_eth.c: DHCP .2-.99 on a Dreamcast network interface */
 void link_usb_set(bool on);                          /* usbport.c: a DC-PicoLink cable is on the USB port (or gone) */
 void link_usb_rx(const uint8_t *p, size_t n);        /* usbport.c: bytes from that cable */
 void link_tx_freed(void);                            /* usbport.c: a transfer took bytes to the cable */
@@ -165,7 +170,7 @@ void pubip_hint(uint32_t host_order);                  /* the router's public ou
 void pubip_start(void);
 void wifi_start(void);
 bool wifi_joined_once(void);                               /* this box has been on a home network (kept in flash) */
-#define DCL_AP_IP "192.168.98.1"                           /* the setup network's address, and the page on it */
+#define DCL_AP_IP "192.168.220.1"                          /* the setup network's address, and the page on it (ipplan_model.h) */
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);
 

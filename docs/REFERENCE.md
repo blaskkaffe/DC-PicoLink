@@ -347,7 +347,7 @@ Everything the Pi needs is in `host/dreampi/`:
 |------|--------------|---------|
 | `70-dc-cable.rules` | `/etc/udev/rules.d/` | names the network interface `dcusb0`, adds the `/dev/dccable` serial symlink, starts the service on plug-in |
 | `dcusb0.service` | `/etc/systemd/system/` | runs while the cable is plugged in, stops when it's removed |
-| `dcusb0-up.sh` | `/usr/local/sbin/` | gives `dcusb0` the address 192.168.99.1/24, enables IP forwarding, adds NAT (iptables, or nft if iptables is missing) |
+| `dcusb0-up.sh` | `/usr/local/sbin/` | gives `dcusb0` the address 192.168.221.1/24, enables IP forwarding, adds NAT (iptables, or nft if iptables is missing) |
 | `dcusb0-dnsmasq.sh` | `/usr/local/sbin/` | DHCP-only dnsmasq for the Dreamcast (`--port=0`, so it never conflicts with another DNS server on port 53) |
 | `dcusb0.conf` | `/etc/` | subnet, DHCP range and DNS server handed to the DC (kept on reinstall) |
 | `dcsd.py` | `/usr/local/bin/` | SD card server: finds the cable by USB ID and serves the image over its vendor interface (Python 3 stdlib only, Linux usbfs) |
@@ -373,7 +373,7 @@ The installer:
 
 Check it:
 ```sh
-ip addr show dcusb0              # 192.168.99.1/24
+ip addr show dcusb0              # 192.168.221.1/24
 systemctl status dcusb0          # dnsmasq running
 journalctl -u dcusb0 -f          # DHCP lease when the Dreamcast app starts networking
 ls -l /dev/dccable               # serial port (dc-tool-ser -t /dev/dccable)
@@ -385,7 +385,7 @@ resolves the games' master and login servers). Set `DNS=` empty to use the Pi's 
 upstream nameserver from `/etc/resolv.conf` instead.
 
 Static settings on the Dreamcast (games with their own broadband settings, e.g. Quake 3):
-IP 192.168.99.60, mask 255.255.255.0, gateway 192.168.99.1, DNS 46.101.91.123.
+IP 192.168.221.100, mask 255.255.255.0, gateway 192.168.221.1, DNS 46.101.91.123.
 
 Or use the single file `dc-picolink-dreampi-setup.sh` from a release (all of
 `host/dreampi/` in one self-extracting script, made by `tools/make-dreampi-setup.sh`):

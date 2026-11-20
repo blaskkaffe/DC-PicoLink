@@ -2,9 +2,9 @@
  * Internet for the Dreamcast over the cable's W5500 network (E-4).
  *
  * The cable emulates the W5500; its Ethernet frames come in channel ETH (the same frames a
- * Pi sees on USB). Here they are the "wire" of a second network interface, 192.168.99.1/24
+ * Pi sees on USB). Here they are the "wire" of a second network interface, 192.168.221.1/24 (the Dreamcast network, shared with the BBA socket and PPP: ipplan_model.h)
  * (the same address a DreamPi uses on the cable), with a DHCP server (the Dreamcast gets
- * 192.168.99.2 and up), this box as gateway and DNS (dnsd.c), and NAT out through the Wi-Fi.
+ * 192.168.221.2-.99), this box as gateway and DNS (dnsd.c), and NAT out through the Wi-Fi.
  * The TTL / PowerSmash rules (ipfilter_model.h) are applied to what the Dreamcast sends.
  * DCNow! reports run while the Dreamcast has sent frames in the last 30 seconds.
  *
@@ -26,9 +26,14 @@
 #include "ipfilter_model.h"
 #include "app.h"
 #include "ethsrc_model.h"
+#include "ipplan_model.h"
+#include "lwip/netif.h"
+#include "dhcpserver/dhcpserver.h"
+#include "lwip/lwip_napt.h"
+#include "lwip/tcpip.h"
 
 static const char *TAG = "dc_eth";
-#define ETH_IP   0xC0A86301u          /* 192.168.99.1 */
+#define ETH_IP   IPP_BOX               /* 192.168.221.1 (ipplan_model.h) */
 #define QUIET_US (30 * 1000000LL)
 
 static esp_netif_t *eth_if;
@@ -54,6 +59,35 @@ static esp_err_t tx_cb(void *h, void *buf, size_t len) {
 
 static void free_cb(void *h, void *buf) { (void)h; free(buf); }
 
+/* ---- the Dreamcast network (ipplan_model.h): the W5500 here, the BBA socket (wired.c) and a PPP
+   call without its home address (ppp_srv.c) share 192.168.221.0/24; one Dreamcast uses one at a
+   time, so what goes to an address there goes to the interface it was last heard on. ---- */
+static struct netif *volatile dc_heard_nif;
+void dcside_heard(struct netif *n) { if (n) dc_heard_nif = n; }
+/* lwIP's routing hook (hooks/dcl_lwip_hooks.h; lwIP's thread) */
+struct netif *dcside_route(const ip4_addr_t *dest) {
+    if (!dest || !ipp_dc_host(lwip_ntohl(ip4_addr_get_u32(dest)))) return NULL;
+    struct netif *n = dc_heard_nif;
+    return n && netif_is_up(n) && netif_is_link_up(n) ? n : NULL;
+}
+/* NAT out for one interface, leaving the others as they are: ESP-IDF's esp_netif_napt_enable()
+   switches NAT off on every other interface (with the BBA socket up, the cable's network lost its
+   way out). lwIP's own call, under its lock. */
+void dcside_nat_on(esp_netif_t *nif) {
+    struct netif *n = (struct netif *)esp_netif_get_netif_impl(nif);
+    if (!n) return;
+    LOCK_TCPIP_CORE();
+    ip_napt_enable_netif(n, 1);
+    UNLOCK_TCPIP_CORE();
+}
+/* DHCP for the Dreamcast: .2-.99 (a fixed address at .100 and above never meets a lease); call with the server stopped */
+void dcside_dhcp_pool(esp_netif_t *nif) {
+    dhcps_lease_t l = { .enable = true };
+    l.start_ip.addr = IPP_ESP(IPP_DHCP_FIRST);
+    l.end_ip.addr = IPP_ESP(IPP_DHCP_LAST);
+    esp_netif_dhcps_option(nif, ESP_NETIF_OP_SET, ESP_NETIF_REQUESTED_IP_ADDRESS, &l, sizeof l);
+}
+
 /* a frame from the Dreamcast (link reader task) */
 void eth_from_dc(const uint8_t *p, size_t n) {
     if (!eth_if || n < 14 || n > 1514) return;
@@ -65,12 +99,13 @@ void eth_from_dc(const uint8_t *p, size_t n) {
     if (!link_eth_is_computer()) {
         last_dc_us = esp_timer_get_time();   /* a computer on the cable's USB is not a Dreamcast session (DCNow!) */
         /* a Dreamcast with a fixed address never asks DHCP: learn it from its frames */
-        uint32_t a = ethsrc_dc_ip(c, n, lwip_htonl(ETH_IP), lwip_htonl(0xFFFFFF00u));
+        dcside_heard(dc_eth_netif());          /* replies for the Dreamcast network go here now */
+        uint32_t a = ethsrc_dc_ip(c, n, lwip_htonl(ETH_IP), lwip_htonl(IPP_MASK));
         if (a && a != lease_ip) {
             lease_ip = a;
             esp_ip4_addr_t ip = { .addr = a };
             snprintf(cnt.last_ip, sizeof cnt.last_ip, IPSTR, IP2STR(&ip));
-            say_line("Ethernet: the Dreamcast uses " IPSTR " (a fixed address; gateway and DNS must be 192.168.99.1)", IP2STR(&ip));
+            say_line("Ethernet: the Dreamcast uses " IPSTR " (a fixed address; gateway and DNS must be 192.168.221.1)", IP2STR(&ip));
         }
     }
     cnt.rx++;
@@ -115,9 +150,9 @@ size_t eth_info_json(char *out, size_t cap) {
 
 void dc_eth_start(void) {
     static const esp_netif_ip_info_t ipi = {
-        .ip      = { .addr = ESP_IP4TOADDR(192, 168, 99, 1) },
-        .netmask = { .addr = ESP_IP4TOADDR(255, 255, 255, 0) },
-        .gw      = { .addr = ESP_IP4TOADDR(192, 168, 99, 1) },
+        .ip      = { .addr = IPP_ESP(IPP_BOX) },
+        .netmask = { .addr = IPP_ESP(IPP_MASK) },
+        .gw      = { .addr = IPP_ESP(IPP_BOX) },
     };
     static esp_netif_driver_ifconfig_t drv;
     drv.handle = &drv;                         /* any non-NULL value */
@@ -139,14 +174,15 @@ void dc_eth_start(void) {
 
     /* hand out this box as DNS */
     esp_netif_dhcps_stop(eth_if);
-    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = ESP_IP4TOADDR(192, 168, 99, 1) } };
+    esp_netif_dns_info_t dns = { .ip = { .type = ESP_IPADDR_TYPE_V4, .u_addr.ip4.addr = IPP_ESP(IPP_BOX) } };
     esp_netif_set_dns_info(eth_if, ESP_NETIF_DNS_MAIN, &dns);
+    dcside_dhcp_pool(eth_if);
     uint8_t offer = 1;                                    /* OFFER_DNS */
     esp_netif_dhcps_option(eth_if, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof offer);
     esp_netif_dhcps_start(eth_if);
 
-    esp_netif_napt_enable(eth_if);                        /* NAT out through the Wi-Fi */
+    dcside_nat_on(eth_if);                                /* NAT out through the Wi-Fi */
     dnsd_set_listen(1, true, ETH_IP);
     xTaskCreate(watch_task, "dc_eth", 2048, NULL, 4, NULL);
-    ESP_LOGI(TAG, "Ethernet side up: 192.168.99.1/24, DHCP, NAT");
+    ESP_LOGI(TAG, "Ethernet side up: 192.168.221.1/24, DHCP, NAT");
 }

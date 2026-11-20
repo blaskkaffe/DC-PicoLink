@@ -1,5 +1,5 @@
 /*
- * Wi-Fi: always a setup network "DC-PicoLink-XXXX" (192.168.98.1), plus the home network
+ * Wi-Fi: always a setup network "DC-PicoLink-XXXX" (192.168.220.1), plus the home network
  * once one is saved (Settings on the web page). Saved in NVS ("wifi" / "ssid", "pass").
  */
 #include <string.h>
@@ -100,7 +100,7 @@ void wifi_start(void) {
     sta_if = esp_netif_create_default_wifi_sta();
     ap_if = esp_netif_create_default_wifi_ap();
     (void)sta_if;
-    {   /* the setup network's own address (the page is at http://192.168.98.1), a /24 of its own */
+    {   /* the setup network's own address (the page is at http://192.168.220.1), a /24 of its own */
         esp_netif_ip_info_t ip = { 0 };
         esp_netif_str_to_ip4(DCL_AP_IP, &ip.ip);
         ip.gw = ip.ip;

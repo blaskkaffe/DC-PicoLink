@@ -45,8 +45,8 @@ int main(void) {
     hdlc_init(&flt, emit, NULL);
     pcb = pppos_create(&pppif, out_cb, status_cb, NULL);
     ip4_addr_t our, his;
-    IP4_ADDR(&our, 10, 64, 0, 1);
-    IP4_ADDR(&his, 10, 64, 0, 2);
+    IP4_ADDR(&our, 192, 168, 221, 1);   /* as ppp_srv.c (ipplan_model.h) */
+    IP4_ADDR(&his, 192, 168, 221, 2);
     ppp_set_ipcp_ouraddr(pcb, &our);
     ppp_set_ipcp_hisaddr(pcb, &his);
     ppp_set_ipcp_dnsaddr(pcb, 0, &our);
