@@ -271,8 +271,6 @@ Cable (RP2040), Pico SDK 2.1.1 and `gcc-arm-none-eabi`:
 cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 && make -C build
 # RP2040-Zero + ESP32-S3 SuperMini stack (Dreamcast on GPIO9-14, ESP32 link over SPI)
 cmake -S firmware -B build-zero -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 -DDC_BOARD=zero-stack && make -C build-zero
-# the same with the computer's USB network wired to the ESP32 (tests the stack without a Dreamcast)
-cmake -S firmware -B build-zero-bridge -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 -DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1 && make -C build-zero-bridge
 ```
 
 The UF2 is `build*/dc_usb_serial.uf2`: hold BOOT (BOOTSEL), plug in, copy it to the drive.

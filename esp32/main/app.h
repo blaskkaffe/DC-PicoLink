@@ -53,6 +53,8 @@ int https_req(const char *url, http_event_handle_cb ev, int timeout_ms, const ch
 size_t log_since(uint32_t since, char *json_out, size_t cap, uint32_t *next);
 /* serial bytes seen in both directions, for the monitor */
 void ser_mon_add(bool from_dc, const uint8_t *p, size_t n);
+void ser_mon_enable(bool on);                            /* the page's serial monitor switch (off at start) */
+bool ser_mon_on(void);
 size_t ser_mon_since(uint32_t since, char *json_out, size_t cap, uint32_t *next);
 
 /* ---- Internet for the Dreamcast over the serial cable (E-3) ---- */

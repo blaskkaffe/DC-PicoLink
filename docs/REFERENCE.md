@@ -408,8 +408,6 @@ or `-DDC_BOARD=zero-stack` (RP2040-Zero back to back with an ESP32-S3 SuperMini:
 GPIO9-14, ESP32 link over SPI0 on GPIO2-7, see [hardware/ESP32.md](../hardware/ESP32.md)). The
 W5500/SD PIO programs are the same; the firmware loads them moved to the board's pins
 (`dc_pio_reloc.h`), and `tools/run-tests.sh <build>` simulates them at both layouts.
-`-DDC_USB_BRIDGE=1` (test build): the computer's USB network goes straight to the ESP32
-instead of the W5500 emulation, to test the link and the ESP32's network without a Dreamcast.
 Options: `-DDC_POWER_PIN=-1` turns off the sense-wire detection (default: the sixth Dreamcast
 pin, GPIO7 or GPIO14). `-DDC_VERSION=...` replaces `git describe` in the first log line.
 `-DDC_SDC_HZ=...` sets the SPI1 clock of the SD slot (default 12.5 MHz). `DC_PIN_BASE` and
@@ -423,7 +421,7 @@ status lines (frames, late reads, underruns, bad RECV pointers, framing errors) 
 
 Release files (GitHub releases, built by CI): `dc-picolink-<version>-250mhz.uf2`
 (release: diagnostics off), `-250mhz-debug.uf2` and `-200mhz-debug.uf2` (diagnostics on), and for the
-stack `-zero-stack-250mhz-debug.uf2` and `-zero-stack-250mhz-usbbridge-test.uf2` (the `DC_USB_BRIDGE=1` test build).
+stack `-zero-stack-250mhz-debug.uf2`.
 The DreamPi installer `dc-picolink-dreampi-setup.sh` is a release file too.
 All work with or without the sense wire. The first log line after connecting
 (`cable: DC-PicoLink firmware <version> (<date> <time>) ready; ...; power sense ...`)

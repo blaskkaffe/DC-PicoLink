@@ -167,9 +167,6 @@ static uint8_t ser_in[SER_IN_SIZE];
 static uint32_t ser_in_wr, ser_in_rd;
 static bool link_send(uint8_t ch, const void *p, size_t n);
 static void request_baud(uint32_t b, uint32_t queued_bytes);
-#ifndef DC_USB_BRIDGE
-#define DC_USB_BRIDGE 0
-#endif
 static bool usb_link;                            /* the USB host is an ESP32 using the link interface (vendor 1) */
 /* a computer or Pi on USB (it gets the traffic): mounted, and not an ESP32 using the link */
 static inline bool usb_pc(void) { return tud_mounted() && !usb_link; }
@@ -179,11 +176,7 @@ static inline bool eth_to_link(void) { return link_up && !usb_pc(); }
    place, so the modem/PPP and the Dreamcast network on the ESP32 can be tested from a terminal
    or the computer's network interface. As soon as a Dreamcast is on, the normal routes apply. */
 static inline bool ser_bridge(void) { return link_up && dc_mode == MODE_OFFLINE && tud_cdc_connected(); }
-static inline bool eth_bridge(void) { return DC_USB_BRIDGE || (link_up && dc_mode == MODE_OFFLINE && usb_pc()); }
-/* Test build (cmake -DDC_USB_BRIDGE=1): the computer's USB network interface is wired straight
-   to the ESP32 (channel ETH, both ways) instead of to the W5500 emulation, so the link and the
-   ESP32's Dreamcast network (DHCP 192.168.98.x, DNS, NAT out through Wi-Fi) can be tested with
-   a computer and no Dreamcast. The W5500 emulation's own frames are dropped in this build. */
+static inline bool eth_bridge(void) { return link_up && dc_mode == MODE_OFFLINE && usb_pc(); }
 /* someone reads the status lines: dcsd on the Pi, or the ESP32 */
 static inline bool log_up(void) { return sd_link_up || link_up; }
 
@@ -842,22 +835,20 @@ static void hello_task(void) {
 #endif
         /* the first line a new reader gets: only to that reader */
         status_to(new_usb, new_link,
-                  "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ")%s ready; mode %s; VERSIONR on the wire %02x; power sense %s"
-                  ,
-                  DC_USB_BRIDGE ? " [TEST BUILD: USB network bridged to the ESP32]" : "",
+                  "DC-PicoLink firmware " DC_VERSION " (" __DATE__ " " __TIME__ ") ready; mode %s; VERSIONR on the wire %02x; power sense %s",
                   names[dc_mode], w5.common[W5C_VERSIONR],
                   DC_POWER_PIN < 0 ? "off (DC_POWER_PIN=-1)" : dc_sense ? "wire in use" : "wire not seen (auto)");
         return;
     }
-    /* offline: once after 10 s, then only when a pin changes, core1 stops, or every 5 minutes */
-    static uint32_t said_sig = 0xFFFFFFFFu, said_t;
+    /* offline: once after 10 s, then only when a pin changes or core1 stops */
+    static uint32_t said_sig = 0xFFFFFFFFu;
     if (dc_mode != MODE_OFFLINE) { said_sig = 0xFFFFFFFFu; return; }
     if (now - last < 10000000u) return;
     uint32_t in = gpio_get_all();
     bool stuck = core1_beat == beat0;
     uint32_t psig = ((in >> DC_PIN_BASE) & 0x3F) | (stuck ? 0x100u : 0u);
-    if (psig == said_sig && now - said_t < 300000000u) { beat0 = core1_beat; last = now; return; }
-    said_sig = psig; said_t = now;
+    if (psig == said_sig) { beat0 = core1_beat; last = now; return; }
+    said_sig = psig;
     status("offline: waiting for the DC (needs %s). pins CLK=%lu TXD=%lu RXD=%lu RTS=%lu CTSout=%lu; core1 %s",
            dc_sense ? "3.3 V on the sense wire" : "TXD or RTS high",
            (unsigned long)(in >> PIN_DC_CTS_SENSE & 1), (unsigned long)(in >> PIN_RX & 1), (unsigned long)(in >> PIN_TX & 1),
@@ -867,32 +858,27 @@ static void hello_task(void) {
 }
 
 /* ---- SPI / W5500 diagnostics ----------------------------------------------- */
-/* The SPI/W5500 lines: only when the Dreamcast did something on the SPI bus since the last
-   report (at most every 5 s); the error line only when there are errors; the USB network
-   counters (they move with any traffic of the computer) at most once a minute. */
+/* The SPI/W5500 lines: only when something changes that a reader cares about (the bus
+   switched between SD and W5500, the socket opened or closed or changed state, the MAC, an
+   error count, the USB network going up or down), checked every 5 s. Frame and byte counts
+   alone move all the time in a session, so they are shown in those lines but never cause one. */
 static void spi_report(void) {
-    static uint32_t last, sig, net_sig, net_last;
+    static uint32_t last, sig;
     uint32_t now = time_us_32();
     if (now - last < 5000000u) return;
-    uint32_t s = spi_stats.w5_frames * 3u + spi_stats.sd_frames * 5u + spi_stats.book_lost * 29u +
+    last = now;
+    const uint8_t *mac = &w5.common[W5C_SHAR];
+    uint32_t s = spi_stats.to_sd * 3u + spi_stats.to_w5 * 5u + spi_stats.book_lost * 29u +
                  spi_stats.late_frames * 37u + spi_stats.underruns * 41u + w5.n_recv_bad * 43u +
-                 w5.n_open * 17u + w5.n_send * 19u + w5.n_recv * 23u;
+                 spi_stats.short_frames * 47u + w5.n_open * 17u + w5.n_close * 19u +
+                 w5.sreg[0][W5S_SR] * 23u + (spi_stats.sd_locked ? 53u : 0u) + (usb_pc() ? 59u : 0u) +
+                 (uint32_t)(mac[3] << 16 | mac[4] << 8 | mac[5]) * 61u +
+                 (spi_stats.w5_frames || spi_stats.sd_frames ? 1u : 0u);
 #if DC_DIAG
     s += spi_stats.cap_n * 31u;
 #endif
-    uint32_t ns = net_in * 7u + net_out * 11u + net_in_drop * 13u + net_in_full * 3u;
-    bool net_due = ns != net_sig && (s != sig || now - net_last > 60000000u);
-    if (s == sig) {
-        if (net_due && (spi_stats.w5_frames || net_out)) {       /* only once a W5500 session has existed */
-            net_sig = ns; net_last = now; last = now;
-            status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
-                   usb_pc() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
-                   (unsigned long)net_in_drop, (unsigned long)net_in_full);
-        }
-        return;
-    }
-    sig = s; last = now;
-    const uint8_t *mac = &w5.common[W5C_SHAR];
+    if (s == sig) return;
+    sig = s;
     status("spi: %lu W5500 frames, %lu SD frames, switches to SD %lu / to W5500 %lu; W5500 version reads %lu, other common reads %lu; SD %s",
            (unsigned long)spi_stats.w5_frames, (unsigned long)spi_stats.sd_frames,
            (unsigned long)spi_stats.to_sd, (unsigned long)spi_stats.to_w5,
@@ -946,12 +932,10 @@ static void spi_report(void) {
         late_shown = spi_stats.late_n;
     }
 #endif
-    if (ns != net_sig) {
-        net_sig = ns; net_last = now;
+    if (net_out || net_in)
         status("w5500: USB network %s; frames to Pi %lu, from Pi %lu (dropped while socket closed/not W5500: %lu, buffer-full waits %lu)",
                usb_pc() ? "up" : "down", (unsigned long)net_out, (unsigned long)net_in,
                (unsigned long)net_in_drop, (unsigned long)net_in_full);
-    }
 }
 
 /* ---- follow the Dreamcast's real TX rate (auto-baud) --------------------- */

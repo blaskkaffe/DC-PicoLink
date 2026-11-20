@@ -56,3 +56,8 @@ CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_SECTOR_512=y
 CONFIG_FATFS_API_ENCODING_UTF_8=y
 CONFIG_WL_SECTOR_SIZE_512=y
+
+# IPv6 stays built in but is off: no interface is given an IPv6 address, and ESP-IDF's default
+# IPv6 input hook drops every IPv6 packet on an interface without one (only flash is spent).
+# Turning it on later = esp_netif_create_ip6_linklocal() on the uplink.
+CONFIG_LWIP_IPV6=y

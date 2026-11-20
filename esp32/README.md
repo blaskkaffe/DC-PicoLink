@@ -187,7 +187,7 @@ waiting need the VPN on such a connection.
 | `main/dnat.c` | DreamPi's `dnat.txt` address swaps (Alien Front Online etc.), fetched every six hours, last copy kept in flash |
 | `main/sdfs.c` | the slot card's files over the link (FatFs on `LINK_CH_SD`) for the web page: `GET/POST /api/sd` |
 | `main/app.h`, `main/ovpn.h` | shared declarations of the ESP32 tasks; the OpenVPN client's interface |
-| `main/main.c` | status-line ring, serial monitor ring, start-up |
+| `main/main.c` | status-line ring, serial monitor (off until switched on on the page; its 2 KiB buffer exists only while on), start-up |
 | `hooks/dcl_lwip_hooks.h` | lwIP route hook (VPN routes) |
 | `components/` | vendored `mdns`, `usb_host_cdc_acm` (Apache-2.0) |
 | `../firmware/*_model.h` | host-compilable rules shared with the cable, each with a test in `../firmware/tests` |

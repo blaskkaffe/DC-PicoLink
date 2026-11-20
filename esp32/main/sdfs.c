@@ -32,6 +32,8 @@ static uint8_t ask;
 static BYTE pdrv = 0xFF;
 static FATFS *fs;                         /* mounted while not NULL */
 static char drv[4];                       /* "N:" */
+#define XFER_BUF 4096
+typedef struct { FIL f; uint8_t b[XFER_BUF]; } xfer_t;   /* one file transfer from or to the page */
 static int64_t last_op_us;
 static bool lost;                         /* the cable took the card back while mounted */
 
@@ -271,19 +273,20 @@ esp_err_t sdfs_get(httpd_req_t *r) {
         return httpd_resp_send_chunk(r, NULL, 0);
     }
     if (!strcmp(op, "get")) {
-        FIL *f = malloc(sizeof *f);
+        xfer_t *x = malloc(sizeof *x);                /* the file and its buffer exist only for the transfer */
+        FIL *f = x ? &x->f : NULL;
         FRESULT fr = f ? f_open(f, path, FA_READ) : FR_NOT_ENOUGH_CORE;
-        if (fr != FR_OK) { free(f); return reply(r, fr_text(fr)); }
+        if (fr != FR_OK) { free(x); return reply(r, fr_text(fr)); }
         const char *name = strrchr(path, '/'); name = name ? name + 1 : path;
         char cd[340];
         snprintf(cd, sizeof cd, "attachment; filename=\"%.300s\"", name);
         httpd_resp_set_type(r, "application/octet-stream");
         httpd_resp_set_hdr(r, "Content-Disposition", cd);
-        static uint8_t b[4096];
+        uint8_t *b = x->b;
         UINT n = 0;
         esp_err_t er = ESP_OK;
-        while (er == ESP_OK && f_read(f, b, sizeof b, &n) == FR_OK && n) er = httpd_resp_send_chunk(r, (const char *)b, (ssize_t)n);
-        f_close(f); free(f);
+        while (er == ESP_OK && f_read(f, b, XFER_BUF, &n) == FR_OK && n) er = httpd_resp_send_chunk(r, (const char *)b, (ssize_t)n);
+        f_close(f); free(x);
         return httpd_resp_send_chunk(r, NULL, 0);
     }
     return reply(r, "unknown op");
@@ -305,21 +308,22 @@ esp_err_t sdfs_post(httpd_req_t *r) {
     if (!strcmp(op, "rm")) { FRESULT fr = f_unlink(path); return reply(r, fr == FR_OK ? NULL : fr_text(fr)); }
     if (!strcmp(op, "mkdir")) { FRESULT fr = f_mkdir(path); return reply(r, fr == FR_OK ? NULL : fr_text(fr)); }
     if (!strcmp(op, "put")) {
-        FIL *f = malloc(sizeof *f);
+        xfer_t *x = malloc(sizeof *x);
+        FIL *f = x ? &x->f : NULL;
         FRESULT fr = f ? f_open(f, path, FA_WRITE | FA_CREATE_ALWAYS) : FR_NOT_ENOUGH_CORE;
-        if (fr != FR_OK) { free(f); return reply(r, fr_text(fr)); }
-        static uint8_t b[4096];
+        if (fr != FR_OK) { free(x); return reply(r, fr_text(fr)); }
+        uint8_t *b = x->b;
         size_t left = r->content_len;
         UINT w = 0;
         while (left && fr == FR_OK) {
-            int k = httpd_req_recv(r, (char *)b, left < sizeof b ? left : sizeof b);
+            int k = httpd_req_recv(r, (char *)b, left < XFER_BUF ? left : XFER_BUF);
             if (k == HTTPD_SOCK_ERR_TIMEOUT) continue;
             if (k <= 0) { fr = FR_INT_ERR; break; }
             fr = f_write(f, b, (UINT)k, &w);
             if (fr == FR_OK && w != (UINT)k) fr = FR_DENIED;      /* full */
             left -= (size_t)k;
         }
-        FRESULT fc = f_close(f); free(f);
+        FRESULT fc = f_close(f); free(x);
         if (fr == FR_OK) fr = fc;
         if (fr != FR_OK) { f_unlink(path); return reply(r, fr == FR_INT_ERR ? "the upload broke off" : fr_text(fr)); }
         say_line("SD card: %s written from the web page (%u bytes)", path + strlen(drv), (unsigned)r->content_len);

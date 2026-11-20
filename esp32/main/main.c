@@ -123,14 +123,31 @@ size_t log_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
     return o;
 }
 
-/* ---- serial monitor: ring of the last 4 KiB, one direction bit per byte ---- */
+/* ---- serial monitor: the last 2 KiB of serial bytes, one direction bit per byte. Off by
+   default (a switch on the page; off again at restart): its buffer exists only while it is on,
+   and while off each call costs one test ---- */
 #define MON_SIZE 2048u
-static uint8_t mon_b[MON_SIZE], mon_d[MON_SIZE / 8];
+static uint8_t *mon_b, *mon_d;                 /* MON_SIZE bytes + MON_SIZE/8 direction bits */
+static volatile bool mon_on;
 static uint32_t mon_wr;
 static SemaphoreHandle_t mon_lock;
 
-void ser_mon_add(bool from_dc, const uint8_t *p, size_t n) {
+bool ser_mon_on(void) { return mon_on; }
+void ser_mon_enable(bool on) {
     xSemaphoreTake(mon_lock, portMAX_DELAY);
+    if (on && !mon_b) {
+        mon_b = calloc(1, MON_SIZE + MON_SIZE / 8);
+        mon_d = mon_b ? mon_b + MON_SIZE : NULL;
+        mon_wr = 0;
+    } else if (!on && mon_b) { free(mon_b); mon_b = mon_d = NULL; mon_wr = 0; }
+    mon_on = mon_b != NULL;
+    xSemaphoreGive(mon_lock);
+}
+
+void ser_mon_add(bool from_dc, const uint8_t *p, size_t n) {
+    if (!mon_on) return;
+    xSemaphoreTake(mon_lock, portMAX_DELAY);
+    if (!mon_b) { xSemaphoreGive(mon_lock); return; }
     for (size_t i = 0; i < n; i++, mon_wr++) {
         uint32_t k = mon_wr % MON_SIZE;
         mon_b[k] = p[i];
@@ -144,6 +161,7 @@ size_t ser_mon_since(uint32_t since, char *out, size_t cap, uint32_t *next) {
     size_t o = 0;
     out[o++] = '[';
     xSemaphoreTake(mon_lock, portMAX_DELAY);
+    if (!mon_b) { xSemaphoreGive(mon_lock); *next = 0; out[o++] = ']'; return o; }
     uint32_t first = mon_wr > MON_SIZE ? mon_wr - MON_SIZE : 0;
     if (since < first || since > mon_wr) since = first;
     uint32_t i = since;

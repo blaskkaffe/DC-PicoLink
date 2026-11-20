@@ -137,12 +137,12 @@ the SPI link (about 300 on the UART link).
 
 ### Testing the stack without a Dreamcast
 
-1. Flash the cable with the **USB bridge test build** (`-DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1`)
-   and the ESP32 with the zero-stack configuration.
+1. Flash the cable with the normal zero-stack build and the ESP32 with the zero-stack
+   configuration. With no Dreamcast on the cable, a computer on the Zero's USB takes the
+   Dreamcast's place (its USB network goes to the ESP32).
 2. Plug only the Zero into a computer (it powers the ESP32 through the stack).
 3. Join **DC-PicoLink-XXXX** (password `dreamcast`), open http://192.168.4.1: expect "link: up"
-   and the cable's first line with `[TEST BUILD: USB network bridged to the ESP32]` and
-   `esp32 link: up (SPI, Hz 15625000)`.
+   and the cable's `esp32 link: up (SPI, Hz 15625000)`.
 4. Save your home Wi-Fi on the page and turn **DCNow! off** (or the computer shows up as a
    Dreamcast online).
 5. The computer gets a USB network adapter with an address 192.168.98.x from the ESP32.

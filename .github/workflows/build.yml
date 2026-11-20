@@ -54,7 +54,6 @@ jobs:
           build 200mhz-debug -DDC_DIAG=1
           # RP2040-Zero + ESP32-S3 SuperMini stack (tried on a breadboard build; the soldered stack is not)
           build zero-stack-250mhz-debug        -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack
-          build zero-stack-250mhz-usbbridge-test -DDC_SYS_KHZ=250000 -DDC_DIAG=1 -DDC_BOARD=zero-stack -DDC_USB_BRIDGE=1
           tools/run-tests.sh "$PWD/build-250mhz"
           tools/run-tests.sh "$PWD/build-250mhz-debug"
           tools/make-dreampi-setup.sh dist/dc-picolink-dreampi-setup.sh
