@@ -4,7 +4,8 @@
 
 /* The Dreamcast pins are six consecutive GPIOs from DC_PIN_BASE, always in this order.
    DC_PIN_BASE 2 (default): GPIO2-7, the Pico / Pro Micro wiring in hardware/WIRING.md.
-   DC_PIN_BASE 9 (cmake -DDC_BOARD=zero-stack): GPIO9-14 on the RP2040-Zero's bottom edge.
+   DC_PIN_BASE 9 (cmake -DDC_BOARD=zero-stack): GPIO9-13 on the RP2040-Zero's bottom edge
+   (GP14 there is the SD card's CS; the sense wire is on GP29, next to the 3V3 pad).
    The W5500/SD PIO programs are loaded moved to these pins (dc_pio_reloc.h). */
 #ifndef DC_PIN_BASE
 #define DC_PIN_BASE       2
@@ -31,8 +32,21 @@ enum { MODE_SERIAL = 0, MODE_W5500 = 1, MODE_OFFLINE = 2 };
    -DDC_POWER_PIN=-1 turns the sense wire off completely (if that GPIO is used for
    something else on your board). */
 #ifndef DC_POWER_PIN
-#define DC_POWER_PIN      (DC_PIN_BASE + 5)   /* GPIO7, or GPIO14 on the zero-stack */
+#if DC_PIN_BASE == 9
+#define DC_POWER_PIN      29                  /* zero-stack: next to the 3V3 pad, by the diode */
+#else
+#define DC_POWER_PIN      (DC_PIN_BASE + 5)   /* GPIO7 */
 #endif
+#endif
+/* The five Dreamcast pads (bits 0-4) and the sense input (bit 5) of a gpio_in snapshot, for
+   the "pins changed" logic: the sense pin is not always the sixth pad. */
+static inline uint32_t dc_pads_sig(uint32_t g) {
+    uint32_t s = (g >> DC_PIN_BASE) & 0x1Fu;
+#if DC_POWER_PIN >= 0
+    s |= ((g >> DC_POWER_PIN) & 1u) << 5;
+#endif
+    return s;
+}
 extern volatile uint8_t dc_sense;           /* 1: the sense wire is in use (set by core0) */
 #define DC_ONLINE_DELAY_SENSE_US  700000u   /* 3.3V -> GRESN release is >= 400 ms */
 #define DC_OFFLINE_SENSE_US        20000u

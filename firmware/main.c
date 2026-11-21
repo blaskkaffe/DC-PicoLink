@@ -76,7 +76,7 @@ static volatile bool cap_req;
 #define PIN_SDC_MOSI  27
 #define PIN_SDC_MISO  28
 #if DC_PIN_BASE == 9
-#define PIN_SDC_CS    29                 /* zero-stack: GP9-14 are the Dreamcast's */
+#define PIN_SDC_CS    14                 /* zero-stack: GP9-13 are the Dreamcast's, GP29 the sense wire */
 #else
 #define PIN_SDC_CS    9
 #endif
@@ -87,6 +87,8 @@ static inline uint8_t sdc_xfer(uint8_t b) { uint8_t r; spi_write_read_blocking(S
 #define SDL_XFER(b)   sdc_xfer(b)
 #define SDL_READ(p, n)  spi_read_blocking(SDC_SPI, 0xFF, (p), (n))     /* the FIFO stays full: no gap per byte */
 #define SDL_WRITE(p, n) spi_write_blocking(SDC_SPI, (p), (n))
+_Static_assert(PIN_SDC_CS != DC_POWER_PIN, "the SD card's CS and the sense wire need different pins");
+_Static_assert(PIN_SDC_CS < DC_PIN_BASE || PIN_SDC_CS > PIN_RTS, "the SD card's CS must not be one of the Dreamcast pins");
 #define SDL_CS(on)    gpio_put(PIN_SDC_CS, !(on))
 #define SDL_SLOW()    spi_set_baudrate(SDC_SPI, 400000)
 #define SDL_FAST()    spi_set_baudrate(SDC_SPI, DC_SDC_HZ)
@@ -862,7 +864,7 @@ static void hello_task(void) {
     if (now - last < 10000000u) return;
     uint32_t in = gpio_get_all();
     bool stuck = core1_beat == beat0;
-    uint32_t psig = ((in >> DC_PIN_BASE) & 0x3F) | (stuck ? 0x100u : 0u);
+    uint32_t psig = dc_pads_sig(in) | (stuck ? 0x100u : 0u);
     if (psig == said_sig) { beat0 = core1_beat; last = now; return; }
     said_sig = psig;
     status("offline: waiting for the DC (needs %s). pins CLK=%lu TXD=%lu RXD=%lu RTS=%lu CTSout=%lu; core1 %s",
@@ -988,7 +990,7 @@ static const char *pins_text(void) {
     uint32_t g = sio_hw->gpio_in;
     snprintf(t, sizeof t, "CLK/CTS=%d CMD/TXD=%d DAT0/RXD=%d CS/RTS=%d RTS-out=%d 3V3-sense=%d",
              (int)((g >> PIN_DC_CTS_SENSE) & 1), (int)((g >> PIN_RX) & 1), (int)((g >> PIN_TX) & 1), (int)((g >> PIN_CTS) & 1),
-             (int)((g >> PIN_RTS) & 1), (int)((g >> (DC_PIN_BASE + 5)) & 1));
+             (int)((g >> PIN_RTS) & 1), (int)(dc_pads_sig(g) >> 5));
     return t;
 }
 
@@ -999,7 +1001,7 @@ static void pins_offline_task(void) {
     uint32_t now = time_us_32();
     if (now - last_t < 500000u) return;
     last_t = now;
-    uint32_t sig = (sio_hw->gpio_in >> DC_PIN_BASE) & 0x3F;
+    uint32_t sig = dc_pads_sig(sio_hw->gpio_in);
     if (sig == last_sig && now - last_rep < 10000000u) return;
     last_sig = sig; last_rep = now;
     if (sd_link_up) status("pads with the DC off or not started: %s", pins_text());

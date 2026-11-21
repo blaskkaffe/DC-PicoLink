@@ -50,7 +50,7 @@ elseif(NOT DC_BOARD STREQUAL "pico")
     message(FATAL_ERROR "DC_BOARD must be pico or zero-stack")
 endif()
 message(STATUS "DC-PicoLink board layout: ${DC_BOARD}")
-if(DEFINED DC_POWER_PIN)   # sense wire GPIO (default: the 6th Dreamcast pin, 7 or 14; found by itself); -1 = off
+if(DEFINED DC_POWER_PIN)   # sense wire GPIO (default: GPIO7, or GPIO29 on the zero-stack; found by itself); -1 = off
     target_compile_definitions(dc_usb_serial PRIVATE DC_POWER_PIN=${DC_POWER_PIN})
 endif()
 pico_set_binary_type(dc_usb_serial copy_to_ram)   # no flash-cache stalls on core1

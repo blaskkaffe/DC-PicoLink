@@ -32,7 +32,7 @@
 
 ## 2. SD card on a physical slot
 
-* Written (sdcard_model.h, not on hardware yet): a card on SPI1 (GP26/27/28, CS GP9, or GP29 on
+* Written (sdcard_model.h, not on hardware yet): a card on SPI1 (GP26/27/28, CS GP9, or GP14 on
   the zero-stack) is the Dreamcast's SD card when the Pi's dcsd isn't connected; multi-block
   streams and a CRC check on every block.
 * Written (sdlink_model.h + esp32/main/sdfs.c, not on hardware yet): the card's files on the

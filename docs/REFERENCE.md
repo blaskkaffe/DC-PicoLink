@@ -405,11 +405,11 @@ cmake -S firmware -B build200 -DPICO_BOARD=pico && make -C build200             
 ```
 Board layout: `-DDC_BOARD=pico` (default; Dreamcast on GPIO2-7, ESP32 link on UART0 GPIO12-15)
 or `-DDC_BOARD=zero-stack` (RP2040-Zero back to back with an ESP32-S3 SuperMini: Dreamcast on
-GPIO9-14, ESP32 link over SPI0 on GPIO2-7, see [hardware/ESP32.md](../hardware/ESP32.md)). The
+GPIO9-13, ESP32 link over SPI0 on GPIO2-7, see [hardware/ESP32.md](../hardware/ESP32.md)). The
 W5500/SD PIO programs are the same; the firmware loads them moved to the board's pins
 (`dc_pio_reloc.h`), and `tools/run-tests.sh <build>` simulates them at both layouts.
 Options: `-DDC_POWER_PIN=-1` turns off the sense-wire detection (default: the sixth Dreamcast
-pin, GPIO7 or GPIO14). `-DDC_VERSION=...` replaces `git describe` in the first log line.
+pin, GPIO7; GPIO29 on the zero-stack, next to the 3V3 pad). `-DDC_VERSION=...` replaces `git describe` in the first log line.
 `-DDC_SDC_HZ=...` sets the SPI1 clock of the SD slot (default 12.5 MHz). `DC_PIN_BASE` and
 `DC_LINK_SPI` are set by `-DDC_BOARD=zero-stack` (9 and 1); don't pass them yourself.
 `-DDC_BAUD_MATCH=0` turns off

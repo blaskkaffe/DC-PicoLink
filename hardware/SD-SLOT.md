@@ -8,7 +8,7 @@ The same pins exist on all supported boards, so one firmware fits all of them.
 | CLK / SCK | GPIO26 (SPI1 SCK) | 26 (A0) | GP26 | GP26 (pin 31) |
 | CMD / DI / MOSI | GPIO27 (SPI1 TX) | 27 (A1) | GP27 | GP27 (pin 32) |
 | DAT0 / DO / MISO | GPIO28 (SPI1 RX) | 28 (A2) | GP28 | GP28 (pin 34) |
-| DAT3 / CS | GPIO9 (zero-stack: GPIO29) | 9 | GP29 (zero-stack) | GP9 |
+| DAT3 / CS | GPIO9 (zero-stack: GPIO14) | 9 | GP14 (zero-stack) | GP9 |
 | card detect | not used: the firmware looks for a card every 2 s | | | |
 | GND | GND | | | |
 | VCC | see below | | | |

@@ -49,14 +49,14 @@ the USB end may differ slightly).
 | 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX; the Zero keeps GP0 a plain input) |
 | 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX; the Zero keeps GP1 a plain input) |
 | 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR, ESP32 has data |
-| 4 | GP29 ↔ GPIO13 | **never**: SD CS (out) / W5500 MISO (in) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
+| 4 | GP29 ↔ GPIO13 | **never**: GP29 is the power-sense input (next to 3V3) / W5500 MISO (in) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
 | 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
 | 6 | GP27 ↔ GPIO11 | **never**: SD MOSI (out) / W5500 MOSI (out): two drivers | GP5 ↔ GPIO4 | **solder**: SPI CS |
 | 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 CS (out): two drivers | GP6 ↔ GPIO5 | **solder**: SPI clock |
 | 8 | GP15 ↔ GPIO9 | the strength pin (opposite corner to 5V): safe, both unused (the Zero keeps GP15 a plain input without pulls) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
-| 9 | GP14 ↔ GPIO8 | **never**: GP14 is the Dreamcast side's power-sense input (bottom-edge corner) | GP8 ↔ GPIO7 | not joined: GPIO7 is the W5500 module's INT, wired from outside |
+| 9 | GP14 ↔ GPIO8 | **never**: GP14 is the SD card's CS (bottom-left corner) | GP8 ↔ GPIO7 | not joined: GPIO7 is the W5500 module's INT, wired from outside |
 
-Both boards have nine pins per side; the Zero's bottom edge (GP9-14) is the Dreamcast's.
+Both boards have nine pins per side; the Zero's bottom edge (GP9-13) is the Dreamcast's.
 Minimum: 5V, GND, the six link pins (right, 3-8), plus GP15 ↔ GPIO9 for strength. With a pin
 header through both boards, **every position that has a header pin is joined**: fit pins only
 where the table says solder (or pull/clip the others), never at 3-7 on the left.
@@ -73,7 +73,7 @@ Not joined pins are wired from the outside:
 the Zero's castellated edge pads, the SuperMini's holes from its outer face.
 
 The Zero's bottom edge, the Dreamcast ([WIRING.md](WIRING.md), the same signals as GPIO2-7
-there, moved to GPIO9-14):
+there, moved to GPIO9-13):
 
 | Zero | Dreamcast (via the SD adapter) |
 |---|---|
@@ -82,7 +82,7 @@ there, moved to GPIO9-14):
 | GP11 | DC RXD ← cable TX |
 | GP12 | DC RTS (SPI CS) |
 | GP13 | ---[1k]--- GP9 (the cable's RTS out) |
-| GP14 | optional: 10k to the Dreamcast's 3.3 V (sense wire) |
+| GP29 | optional: 10k to the Dreamcast's 3.3 V (sense wire) |
 
 **Wired Ethernet (optional, in the firmware, not yet tried on hardware):** a W5500 module on
 the ESP32's own pins, all on the row next to 3V3 and GND:
@@ -104,7 +104,7 @@ NAT like on the cable's own network). In the stack GPIO10-13 sit over the Zero's
 outside), GPIO9 under GP15 (the soldered strength pin, unused), and INT goes to GPIO7 (under the
 Zero's unused GP8, not joined).
 
-SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP27, MISO GP28, CS GP29), see [SD-SLOT.md](SD-SLOT.md).
+SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP27, MISO GP28, CS GP14), see [SD-SLOT.md](SD-SLOT.md).
 
 **The link:** the cable is the SPI master (SPI0, ~15.6 MHz at 250 MHz, mode 1), the ESP32 the
 slave (SPI3). Every transaction is 1024 bytes both ways; the packets inside are the same as on

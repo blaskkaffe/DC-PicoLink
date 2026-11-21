@@ -114,7 +114,7 @@ what it sends).
 | CTS (SPI clock) | 7 | 5 CLK / 5 | GP9 | W5500, SD (the cable reads the line) |
 | CTS drive | – | – | GP13 **→ 1 kΩ →** GP9 | serial flow control; a resistor on the board, no wire to the Dreamcast |
 | GND | 3, 8 | 3 + 6 VSS / 6 | GND | everything |
-| 3.3 V sense (optional) | 10 | 4 VDD / 4 | GP14 **via 10 kΩ** | knowing when the Dreamcast is on; never to the board's 3V3 |
+| 3.3 V sense (optional) | 10 | 4 VDD / 4 | GP29 **via 10 kΩ** (about 10 kΩ; 9.1 kΩ is fine) | knowing when the Dreamcast is on; never to the board's 3V3 |
 | +5 V | 1 | – | not connected | see [Power](#power-and-usb) |
 
 **Which wires are needed.** Serial alone works with TXD, RXD and GND. W5500 and the SD card use
@@ -140,16 +140,16 @@ insulation (Kapton) between the two boards' backs.
 | 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX) |
 | 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX) |
 | 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR (ESP32 has data) |
-| 4 | GP29 ↔ GPIO13 | **never** | GP3 ↔ GPIO2 | **solder**: HS (ESP32 ready) |
+| 4 | GP29 ↔ GPIO13 | **never** (GP29 is the power sense) | GP3 ↔ GPIO2 | **solder**: HS (ESP32 ready) |
 | 5 | GP28 ↔ GPIO12 | **never** | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → Zero) |
 | 6 | GP27 ↔ GPIO11 | **never** | GP5 ↔ GPIO4 | **solder**: SPI CS |
 | 7 | GP26 ↔ GPIO10 | **never** | GP6 ↔ GPIO5 | **solder**: SPI clock |
 | 8 | GP15 ↔ GPIO9 | solder for strength (both unused) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (Zero → ESP32) |
-| 9 | GP14 ↔ GPIO8 | **never** (GP14 is the power sense) | GP8 ↔ GPIO7 | **not joined**: GPIO7 is the W5500 module's INT |
+| 9 | GP14 ↔ GPIO8 | **never** (GP14 is the SD card's CS) | GP8 ↔ GPIO7 | **not joined**: GPIO7 is the W5500 module's INT |
 
-Left 4-7 are the Zero's SD slot pins over the ESP32's W5500 pins: both are used, each from the
-outside (the Zero's edge pads, the SuperMini's holes from its outer face). The Zero's bottom
-edge GP9-14 is the Dreamcast (table above). GP16 is the Zero's own RGB LED (red: no ESP32,
+Left 4-7 are the Zero's power sense (GP29) and SD slot pins (GP28-26) over the ESP32's W5500 pins: both are used, each from the
+outside (the Zero's edge pads, the SuperMini's holes from its outer face); GP14, the SD card's CS, is the bottom-left corner. The Zero's bottom
+edge GP9-13 is the Dreamcast (table above). GP16 is the Zero's own RGB LED (red: no ESP32,
 yellow: damaged link packets, green: link up, blue: link up and the Dreamcast on).
 
 ### SD card slot (optional)
@@ -161,7 +161,7 @@ A 3.3 V microSD module or breakout on the RP2040-Zero's SPI1, never on the Dream
 | CLK / SCK | GP26 |
 | CMD / DI / MOSI | GP27 |
 | DAT0 / DO / MISO | GP28 |
-| DAT3 / CS | GP29 |
+| DAT3 / CS | GP14 |
 | VCC / GND | 3V3 or 5V, see [SD-SLOT.md](hardware/SD-SLOT.md#which-vcc) / GND |
 
 No card-detect pin: the cable looks for a card every 2 s.

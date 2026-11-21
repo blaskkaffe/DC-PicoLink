@@ -425,3 +425,10 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
 - **The page's top bar changed size by itself (Nov 2026).** Mobile browsers enlarge text in wide
   blocks ("font boosting"), and the bar's length changed every second. text-size-adjust:100% and a
   fixed size for the link text and the device list; the list only names what is connected.
+- **Zero stack: sense wire on GP29, SD card CS on GP14 (Nov 2026).** The two swapped places so the
+  sense resistor sits next to the 3V3 pad and its diode (the console's 3.3 V goes through a Schottky
+  into the Zero's 3V3, see hardware/ESP32.md, Power). Both stay in the "never solder" positions of
+  the stack table. The Dreamcast pads are GP9-13 only; the "pins changed" logic reads the sense pin
+  as bit 5 (`dc_pads_sig`), so SD chip-select activity on GP14 no longer shows up as a pad change.
+  Static asserts keep the two pins and the Dreamcast pads apart. The 10 kΩ may be 4.7-15 kΩ: it
+  forms a divider with the pin's own pull-down (50-80 kΩ) and must leave more than about 2.3 V.
