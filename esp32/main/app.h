@@ -23,6 +23,8 @@ bool usbport_start(char *why, size_t cap);           /* the USB host on this boa
 bool usbport_next_other(uint16_t *vid, uint16_t *pid, uint32_t wait_ms);   /* a device that is not a cable */
 bool usbport_cable(void);                                /* a DC-PicoLink cable is on the USB port */
 size_t usbport_bus_text(char *out, size_t cap);           /* "hub, cable, 0572:1324" */
+bool cableflash_feed(const uint8_t *p, size_t n, bool first);   /* a .uf2 for the cable, as it is uploaded */
+const char *cableflash_end(bool upload_ok);              /* ... done: restart the cable; text for the page */
 uint32_t link_wire_baud(void);                       /* the Dreamcast serial line's rate, 0 = not known yet */                           /* bytes still waiting for the cable */
 void ppp_serial_room(void);
 void sdfs_from_cable(const uint8_t *p, size_t n);   /* LINK_CH_SD answers (sdfs.c) */                          /* from the link: the cable took bytes (serial queue, ppp_srv.c) */

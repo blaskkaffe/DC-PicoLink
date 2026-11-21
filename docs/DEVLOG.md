@@ -416,3 +416,12 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   (esp32/tests/run-dcside-test.sh, ESP-IDF's own DHCP server and NAPT) gives DHCP leases with DNS
   192.168.98.1 and answers DNS for both broadcast-flag kinds, after a reconnect and for twelve
   new MACs: the "no DNS question after DHCP" seen on the console is not on the ESP32's side.
+- **The 1200-baud touch is back, and the ESP32 updates the cable (Nov 2026).** 1200 baud with DTR
+  low restarts the cable into BOOTSEL again (Arduino/picotool style; a terminal that only opens the
+  port at 1200 keeps DTR high). The ESP32 uses it for a cable built into the Dreamcast: touch over
+  EP0, then the boot ROM's PICOBOOT interface (the cable's own 3 USB channels), erase on first touch
+  of each sector, write, read back, reboot. test_uf2 writes the real build's .uf2 into a simulated
+  flash and compares it with the .bin.
+- **The page's top bar changed size by itself (Nov 2026).** Mobile browsers enlarge text in wide
+  blocks ("font boosting"), and the bar's length changed every second. text-size-adjust:100% and a
+  fixed size for the link text and the device list; the list only names what is connected.

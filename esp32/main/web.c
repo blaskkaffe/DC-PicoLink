@@ -28,8 +28,8 @@ static const char PAGE[] =
 "<title>DC-PicoLink</title><style>"
 ":root{--bg:#fafafa;--fg:#1c1c1c;--mut:#6b6b6b;--card:#fff;--line:#e3e3e3;--acc:#e8711c;--ok:#2e8b57;--bad:#c0392b}"
 "@media(prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ececec;--mut:#9a9a9a;--card:#1e1e1e;--line:#333}}"
-"body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}"
-"header{padding:14px 16px;border-bottom:3px solid var(--acc);display:flex;gap:10px;align-items:center;flex-wrap:wrap}.dv{font-size:.85em;opacity:.85}"
+"html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}"
+"header{padding:14px 16px;border-bottom:3px solid var(--acc);display:flex;gap:10px;align-items:center;flex-wrap:wrap}#lk,.dv{font-size:14px}.dv{opacity:.85}"
 "h1{font-size:18px;margin:0}main{padding:12px;display:grid;gap:12px;max-width:900px;margin:auto}"
 ".c{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}"
 "h2{font-size:14px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}"
@@ -45,7 +45,7 @@ static const char PAGE[] =
 "<form id=sf><input id=sv placeholder='text to the Dreamcast, e.g. AT' style='flex:1'><button>Send</button></form></div>"
 "<div class=c><h2>dc1 to the cable</h2><form id=df><input id=dv value='get link.*' style='flex:1'><button>Send</button></form><pre id=ans class=m></pre></div>"
 "<div class=c><h2>Internet for the Dreamcast</h2><pre id=net class=m></pre><form id=nf>"
-"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label>DCNow! ID <select id=nds><option value=0>this box<option value=1>other device<option value=2>other device, only while it is away</select></label><label>Clone a DreamPi on this network (its address, or empty to find dreampi.local) <input id=nci size=14> <button type=button id=ncb>Clone DreamPi</button></label><pre id=ncm class=m></pre><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>VPN server <select id=nvp><option value=auto>auto (fastest ping)</select></label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><details class=m><summary>VPN profiles: the DreamPi ones are built in. Tap here only to replace them</summary>Files: dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client: <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></details><details class=m><summary>Firmware update</summary>ESP32: <input type=file id=uf accept=.bin> <button type=button id=ub>Update</button> <span id=us></span><br>Zero (cable): <button type=button id=zb>Restart into USB update mode</button> then copy the .uf2 to the RPI-RP2 drive on a computer</details></div>"
+"<label><input type=checkbox id=np> Internet over serial (PPP)</label><label><input type=checkbox id=nd> report to DCNow!</label><label>DCNow! ID <select id=nds><option value=0>this box<option value=1>other device<option value=2>other device, only while it is away</select></label><label>Clone a DreamPi on this network (its address, or empty to find dreampi.local) <input id=nci size=14> <button type=button id=ncb>Clone DreamPi</button></label><pre id=ncm class=m></pre><label><input type=checkbox id=nv> VPN (Dreamcast Live)</label><label>VPN server <select id=nvp><option value=auto>auto (fastest ping)</select></label><label>DCNet <select id=nc><option value=0>off<option value=1>when *69 is dialled first<option value=2>every call</select></label><label><input type=checkbox id=npf> port forwarding (UPnP)</label><button>Save</button></form><details class=m><summary>VPN profiles: the DreamPi ones are built in. Tap here only to replace them</summary>Files: dreampi-vpn.txt from tools/dreampi_vpn_extract.py, or the .conf files and server.list from a DreamPi 2.1's /etc/openvpn/client: <input type=file id=vf multiple> <button type=button id=vb>Upload</button> <span id=vs></span></details><details class=m><summary>Firmware update</summary>ESP32: <input type=file id=uf accept=.bin> <button type=button id=ub>Update</button> <span id=us></span><br>Cable (.uf2, the cable on this box's USB port): <input type=file id=cf accept=.uf2> <button type=button id=cb>Update</button> <span id=cs></span><br>Cable from a computer: <button type=button id=zb>Restart into USB update mode</button> then copy the .uf2 to the RPI-RP2 drive</details></div>"
 "<div class=c><h2>SD card (saves to and from this computer)</h2><pre id=sds class=m>...</pre>"
 "<form><button type=button id=sdt>Take the card</button><button type=button id=sdg style=display:none>Give it back to the Dreamcast</button></form>"
 "<div id=sdb style=display:none><pre id=sdp class=m></pre><div id=sdl></div>"
@@ -57,12 +57,7 @@ static const char PAGE[] =
 "function hexs(h){let s='';for(let i=0;i<h.length;i+=2){const c=parseInt(h.substr(i,2),16);s+=c==13?'':c==10?'\\n':(c>=32&&c<127)?String.fromCharCode(c):'\\u00b7'}return s}"
 "async function tick(){try{const r=await fetch('/api/status?log='+ln+'&ser='+sn);const j=await r.json();"
 "$('lk').className=j.link.up?'up':'';$('lkt').textContent='link: '+(j.link.up?'up':'down');"
-"{const dv=['cable: '+(j.link.up?({usb:'USB',spi:'pins',uart:'UART'})[j.link.via]:'none')];const wd=j.wired||{};"
-"if(j.modem&&j.modem.built)dv.push('modem: '+(j.modem.present?j.modem.id:/^(plugged|reopening|a USB device)/.test(j.modem.state)?'not open ('+j.modem.state+')':'none'));"
-"dv.push('wired port: '+(!wd.present?'no module':wd.role=='uplink'?'Internet':wd.role=='bba'?'BBA socket':wd.role=='detect'?'checking':'no cable'));"
-"dv.push('Internet: '+(wd.role=='uplink'?'wired':j.wifi.up?'Wi-Fi':'none'));"
-"const n=j.net||{};dv.push('Dreamcast: '+(n.up?(n.via||'PPP'):j.eth&&j.eth.active?'W5500 (cable)':wd.role=='bba'&&wd.frames_in?'BBA':'offline'));"
-"if(sdtx)dv.push('SD: '+sdtx);$('dv').textContent=dv.join('  ·  ')}"
+"{const dv=[],wd=j.wired||{};if(j.link.up)dv.push('cable ('+({usb:'USB',spi:'pins',uart:'UART'})[j.link.via]+')');if(j.modem&&j.modem.present)dv.push('modem '+j.modem.id);if(wd.present)dv.push('W5500 module'+(wd.role=='uplink'?' (Internet)':wd.role=='bba'?' (BBA)':''));if(sdcard)dv.push('SD card');$('dv').textContent=dv.length?dv.join(' · '):''}"
 ""
 "$('cab').textContent=j.cable||'waiting for the cable...';"
 "const s=j.link;$('st').textContent=`packets ${s.good} good, ${s.crc_bad} bad checksum, ${s.broken} broken, ${s.lost} lost; sent ${s.sent} (${s.send_full} queue full); serial in ${s.ser_in} B, out ${s.ser_out} B; network frames in ${s.eth_in}`;"
@@ -78,9 +73,9 @@ static const char PAGE[] =
 "}catch(e){$('lkt').textContent='page lost the ESP32'}setTimeout(tick,1000)}"
 "$('sf').onsubmit=e=>{e.preventDefault();fetch('/api/serial',{method:'POST',body:$('sv').value+'\\r'})};"
 "$('df').onsubmit=e=>{e.preventDefault();fetch('/api/dc1',{method:'POST',body:'dc1\\n'+$('dv').value.replace(/;\\s*/g,'\\n')+'\\n'})};"
-"$('nf').onchange=e=>{nfx=true;if(e.target.id=='nds')nds=true};$('ncb').onclick=()=>fetch('/api/net',{method:'POST',body:new URLSearchParams({dcnowclone:$('nci').value.trim()||'auto'})});$('smo').onchange=e=>{fetch('/api/net',{method:'POST',body:new URLSearchParams({sermon:e.target.checked?1:0})});if(!e.target.checked)$('ser').textContent=''};$('ub').onclick=async()=>{const f=$('uf').files[0];if(!f){$('us').textContent='choose the .bin first';return}$('us').textContent='uploading '+(f.size>>10)+' KB...';try{const r=await fetch('/api/update',{method:'POST',body:f});$('us').textContent=await r.text()}catch(e){$('us').textContent='upload failed'}};$('zb').onclick=()=>{if(confirm('Restart the Zero into its USB update mode? The Dreamcast link stops until it is flashed and restarts.'))fetch('/api/dc1',{method:'POST',body:'dc1\\ncall link.update\\n'})};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\\n'+t+'\\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\\n'+sv+'\\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,...(nds?{dcnowuse:$('nds').value}:{}),vpn:$('nv').checked?1:0,vpnpick:$('nvp').value,dcnet:$('nc').value,pf:$('npf').checked?1:0})});nds=false};"
+"$('nf').onchange=e=>{nfx=true;if(e.target.id=='nds')nds=true};$('ncb').onclick=()=>fetch('/api/net',{method:'POST',body:new URLSearchParams({dcnowclone:$('nci').value.trim()||'auto'})});$('smo').onchange=e=>{fetch('/api/net',{method:'POST',body:new URLSearchParams({sermon:e.target.checked?1:0})});if(!e.target.checked)$('ser').textContent=''};$('ub').onclick=async()=>{const f=$('uf').files[0];if(!f){$('us').textContent='choose the .bin first';return}$('us').textContent='uploading '+(f.size>>10)+' KB...';try{const r=await fetch('/api/update',{method:'POST',body:f});$('us').textContent=await r.text()}catch(e){$('us').textContent='upload failed'}};$('cb').onclick=async()=>{const f=$('cf').files[0];if(!f){$('cs').textContent='choose the .uf2 first';return}$('cs').textContent='writing '+(f.size>>10)+' KB to the cable (about a minute)...';try{const r=await fetch('/api/update',{method:'POST',body:f});$('cs').textContent=await r.text()}catch(e){$('cs').textContent='upload failed'}};$('zb').onclick=()=>{if(confirm('Restart the Zero into its USB update mode? The Dreamcast link stops until it is flashed and restarts.'))fetch('/api/dc1',{method:'POST',body:'dc1\\ncall link.update\\n'})};$('vb').onclick=async()=>{const fs=$('vf').files;if(!fs.length){$('vs').textContent='choose the files first';return}let sv='',pr='';for(const f of fs){const t=await f.text();if(/^@@(SERVERS|PROFILE)@@/.test(t))pr+=t+'\\n';else if(/server[.]list$/.test(f.name))sv=t;else if(/[.](conf|ovpn)$/.test(f.name))pr+='@@PROFILE@@\\n'+t+'\\n'}if(!pr){$('vs').textContent='no .conf files chosen';return}$('vs').textContent='uploading...';try{const r=await fetch('/api/vpnprof',{method:'POST',body:(sv?'@@SERVERS@@\\n'+sv+'\\n':'')+pr});$('vs').textContent=await r.text()}catch(e){$('vs').textContent='upload failed'}};$('nf').onsubmit=e=>{e.preventDefault();nfx=false;fetch('/api/net',{method:'POST',body:new URLSearchParams({ppp:$('np').checked?1:0,dcnow:$('nd').checked?1:0,...(nds?{dcnowuse:$('nds').value}:{}),vpn:$('nv').checked?1:0,vpnpick:$('nvp').value,dcnet:$('nc').value,pf:$('npf').checked?1:0})});nds=false};"
 "$('wfm').onsubmit=e=>{e.preventDefault();fetch('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:$('ws').value,pass:$('wp').value})})};"
-"let sdp='/',sdon=false,sdtx='';"
+"let sdp='/',sdon=false,sdcard=false;"
 "async function sdpost(o,b){try{const r=await fetch('/api/sd?'+new URLSearchParams(o),{method:'POST',body:b||''});const j=await r.json();$('sdr').textContent=j.ok?'':j.err;return j}catch(e){$('sdr').textContent='the ESP32 did not answer';return{ok:false}}}"
 "async function sdls(){let j;try{j=await (await fetch('/api/sd?op=ls&p='+encodeURIComponent(sdp))).json()}catch(e){return}$('sdp').textContent='folder: '+sdp;const L=$('sdl');L.innerHTML='';if(!j.ok){$('sdr').textContent=j.err;return}"
 "if(sdp!='/'){const a=document.createElement('a');a.href='#';a.textContent='.. (up)';a.onclick=e=>{e.preventDefault();sdp=sdp.replace(/[^\\/]+\\/$/,'');sdls()};const d=document.createElement('div');d.appendChild(a);L.appendChild(d)}"
@@ -89,7 +84,7 @@ static const char PAGE[] =
 "r.appendChild(a);r.append(f.d?'  ':'  '+f.s+' bytes  ');const x=document.createElement('button');x.textContent='delete';x.onclick=async()=>{if(!confirm('Delete '+f.n+'?'))return;await sdpost({op:'rm',p:sdp+f.n});sdls()};r.appendChild(x);L.appendChild(r)}}"
 "async function sdst(){try{const j=await (await fetch('/api/sd?op=state')).json();"
 "$('sds').textContent=!j.cable?'the cable does not answer about the SD card (cable firmware too old?)':j.pi?'the Pi (dcsd) serves the Dreamcast SD card; the slot is not in use':!j.card?'no card in the slot':j.mounted?`the page has the card (${j.mb} MB); the Dreamcast sees no card until you give it back`:`card in the slot (${j.mb} MB); the Dreamcast has it`+(j.dc_busy?' and is using it right now':'')+(j.why?' - '+j.why:'');"
-"sdtx=!j.cable||j.pi?'':!j.card?'no card':j.mounted?'on this page':j.mb+' MB';$('sdb').style.display=j.mounted?'':'none';$('sdt').style.display=j.mounted?'none':'';$('sdg').style.display=j.mounted?'':'none';if(j.mounted&&!sdon)sdls();sdon=j.mounted}catch(e){}setTimeout(sdst,5000)}"
+"sdcard=!!(j.cable&&!j.pi&&j.card);$('sdb').style.display=j.mounted?'':'none';$('sdt').style.display=j.mounted?'none':'';$('sdg').style.display=j.mounted?'':'none';if(j.mounted&&!sdon)sdls();sdon=j.mounted}catch(e){}setTimeout(sdst,5000)}"
 "$('sdt').onclick=async()=>{$('sdr').textContent='taking the card...';const j=await sdpost({op:'take',on:1});if(j.ok){sdp='/';sdon=false}sdst()};"
 "$('sdg').onclick=async()=>{await sdpost({op:'take',on:0});sdst()};"
 "$('sdu').onsubmit=async e=>{e.preventDefault();for(const f of $('sdfile').files){$('sdr').textContent='uploading '+f.name+'...';const j=await sdpost({op:'put',p:sdp+f.name},f);if(!j.ok)break}if($('sdr').textContent.startsWith('uploading'))$('sdr').textContent='uploaded';sdls()};"
@@ -241,14 +236,44 @@ static void restart_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500))
    (...-merged.bin, the app part is taken from 0x20000) goes into the other app slot; the box
    restarts into it, and the bootloader goes back to this one if the new one does not come up
    (main.c marks it good). */
+static esp_err_t post_update_esp(httpd_req_t *r, uint8_t *b, int first_k);
+/* a .uf2 is the cable's firmware (cableflash.c): written over the USB port */
+static esp_err_t post_cable_update(httpd_req_t *r, uint8_t *b, int k) {
+    size_t total = r->content_len, got = (size_t)k;
+    bool ok = cableflash_feed(b, (size_t)k, true);
+    while (ok && got < total) {
+        int n = httpd_req_recv(r, (char *)b, total - got < 2048 ? total - got : 2048);
+        if (n <= 0) break;
+        got += (size_t)n;
+        ok = cableflash_feed(b, (size_t)n, false);
+    }
+    const char *m = cableflash_end(got == total);
+    return httpd_resp_sendstr(r, m);
+}
+
 static esp_err_t post_update(httpd_req_t *r) {
+    static uint8_t b[2048];
+    {   /* the first piece says which: a .uf2 (the cable) or an ESP32 image */
+        int k = httpd_req_recv(r, (char *)b, r->content_len < 512 ? r->content_len : 512);
+        while (k > 0 && k < 512 && (size_t)k < r->content_len) {
+            int m = httpd_req_recv(r, (char *)b + k, 512 - (size_t)k);
+            if (m <= 0) break;
+            k += m;
+        }
+        if (k <= 0) return httpd_resp_sendstr(r, "update: nothing arrived");
+        if (k >= 8 && b[0] == 'U' && b[1] == 'F' && b[2] == '2' && b[3] == '\n') return post_cable_update(r, b, k);
+        return post_update_esp(r, b, k);
+    }
+}
+
+static esp_err_t post_update_esp(httpd_req_t *r, uint8_t *b, int first_k) {
     const esp_partition_t *to = esp_ota_get_next_update_partition(NULL);
     if (!to) return httpd_resp_sendstr(r, "this flash layout has no second app slot: flash the merged image over USB once");
-    static uint8_t b[2048];
     size_t total = r->content_len, got = 0, skip = 0;
     esp_ota_handle_t h = 0; bool begun = false; const char *err = NULL;
     while (got < total) {
-        int k = httpd_req_recv(r, (char *)b, total - got < sizeof b ? total - got : sizeof b);
+        int k = first_k ? first_k : httpd_req_recv(r, (char *)b, total - got < 2048 ? total - got : 2048);
+        first_k = 0;
         if (k <= 0) { err = "upload interrupted"; break; }
         size_t off = got; got += (size_t)k;
         if (off == 0) {                                   /* app image: its description (magic ABCD5432) at byte 32 */

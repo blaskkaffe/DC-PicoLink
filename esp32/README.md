@@ -36,6 +36,14 @@ saved settings** (Wi-Fi, DCNow! ID, switches), so the box starts as new; the upl
 profiles stay (own partition, `partitions.csv`). Updating from the page (*Firmware update*, the
 app `.bin` or the merged one) and `idf.py flash` keep everything.
 
+**The cable's firmware from the page** (modem builds, the cable on the USB port, also through a
+hub): *Firmware update* → *Cable (.uf2)*. The box restarts the cable into its USB bootloader with
+the 1200-baud touch (a cable too old for the touch is asked over the link), writes the UF2 over the
+boot ROM's PICOBOOT interface, reads every block back, and restarts it. No button, no computer: for
+a cable built into the Dreamcast. A stop half way leaves the cable in its bootloader (the RP2040
+cannot be bricked that way); upload again. On the stacked pins there is no USB between the boards,
+so that cable updates from a computer. `cableflash.c`, `firmware/uf2_model.h` (test_uf2).
+
 ## Use
 
 Join **DC-PicoLink-XXXX** (password `dreamcast`, change it in menuconfig) and open

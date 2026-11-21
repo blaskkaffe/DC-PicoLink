@@ -426,8 +426,11 @@ The DreamPi installer `dc-picolink-dreampi-setup.sh` is a release file too.
 All work with or without the sense wire. The first log line after connecting
 (`cable: DC-PicoLink firmware <version> (<date> <time>) ready; ...; power sense ...`)
 shows which build is running and whether the wire is in use.
-There is no 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate and never reboots the board. To
-reflash, hold the BOOTSEL button while plugging in.
+To reflash without the BOOTSEL button: set the USB serial port to 1200 baud and close it (or set
+1200 with DTR low), as Arduino and picotool do; the cable restarts into its UF2 bootloader. A
+terminal that merely opens the port at 1200 does nothing until it closes. With the cable on the
+ESP32's USB port, the page's "Cable firmware" upload does all of it (touch, then the UF2 written
+over PICOBOOT), for a cable built into the Dreamcast. The BOOTSEL button still works.
 
 ## Host tests
 

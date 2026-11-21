@@ -30,6 +30,8 @@
 #define PL_PID      0x4DC5
 #define PL_EP_OUT   0x07
 #define PL_EP_IN    0x87
+#define RP_VID      0x2E8A                /* an RP2040 in its USB bootloader (BOOTSEL): cableflash.c */
+#define RP_PID_BOOT 0x0003
 #define URING_OWN   (4u * 1024u)          /* wire bytes to the cable when there is no SPI ring to borrow */
 #define XFER        1024u                 /* bytes per bulk OUT transfer (a multiple of 64) */
 #define XFER_IN     512u                  /* bytes per bulk IN transfer */
@@ -57,6 +59,7 @@ static usb_device_handle_t want;          /* a cable waiting for the modem to fr
 static bool modem_moved;                  /* the modem closed for the cable: offer it again after */
 
 static int64_t want_until;
+static volatile uint8_t boot_addr;        /* bus address of an RP2040 in BOOTSEL, 0 = none seen */
 bool usbmodem_yield(void);
 
 /* ---- to the cable ---- */
@@ -205,6 +208,12 @@ static void look_at(uint8_t addr) {
     if (usb_host_get_device_descriptor(d, &dd) != ESP_OK) { usb_host_device_close(client, d); return; }
     if (dd->bDeviceClass == USB_CLASS_HUB) { usb_host_device_close(client, d); return; }   /* the hub itself */
     if (dd->idVendor == PL_VID && dd->idProduct == PL_PID) { take_cable(d); return; }
+    if (dd->idVendor == RP_VID && dd->idProduct == RP_PID_BOOT) {    /* a cable waiting for its firmware */
+        boot_addr = addr;
+        usb_host_device_close(client, d);
+        say_line("USB: an RP2040 in its USB bootloader is plugged in (a cable waiting for firmware: upload the .uf2 on the page)");
+        return;
+    }
     uint32_t id = (uint32_t)dd->idVendor << 16 | dd->idProduct;
     usb_host_device_close(client, d);
     xQueueSend(otherq, &id, 0);
@@ -249,6 +258,11 @@ bool usbport_next_other(uint16_t *vid, uint16_t *pid, uint32_t wait_ms) {
     return true;
 }
 bool usbport_cable(void) { return active; }
+/* for cableflash.c */
+usb_host_client_handle_t usbport_client(void) { return client; }
+usb_device_handle_t usbport_cable_dev(void) { return active ? cdev : NULL; }
+uint8_t usbport_boot_addr(void) { return boot_addr; }
+void usbport_boot_forget(void) { boot_addr = 0; }
 
 /* what is on the bus, for the log when the host's 8 channels run out: "hub, hub, cable, 0572:1324"
    (a 7-port hub is often two hub chips: 2 channels each) */

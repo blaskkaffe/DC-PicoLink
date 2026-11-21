@@ -510,17 +510,30 @@ static void dc_to_usb(void) {
 }
 
 /* ---- TinyUSB callbacks ------------------------------------------------ */
+static uint32_t update_at;           /* != 0: restart into the USB bootloader then (call link.update, 1200 touch) */
+/* The 1200-baud "touch", as Arduino and picotool do it: the port at 1200 with DTR low (set 1200 and
+   close the port, or set it with DTR already low) restarts the cable into its USB bootloader, so a
+   host (a computer, or the ESP32 for a cable built into the Dreamcast) can update it without the
+   BOOTSEL button. A terminal that only opens the port at 1200 keeps DTR high and does not reboot it
+   until it closes; the Dreamcast never runs at 1200 (dctest skips that rate). */
+static bool touch_1200, cdc_dtr;
+static void touch_check(void) {
+    if (touch_1200 && !cdc_dtr && !update_at) update_at = time_us_32() + 100000u;
+}
 void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *lc) {
     if (itf != 0) return;               /* only the coder's-cable port has a baud rate */
+    touch_1200 = lc->bit_rate == 1200;
+    if (touch_1200) { touch_check(); return; }
     /* bytes already received over USB belong to the old rate (dc-tool sends the
        new speed and reopens the port immediately) */
     request_baud(lc->bit_rate, tud_cdc_available());
 }
 
-/* No 1200-baud "touch" to BOOTSEL: 1200 is an ordinary rate here, and a test tool or terminal that
-   sets it must not reboot the cable. BOOTSEL is the button. */
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
-    (void)itf; (void)dtr; (void)rts;
+    (void)rts;
+    if (itf != 0) return;
+    cdc_dtr = dtr;
+    touch_check();
 }
 
 static void status(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -1292,7 +1305,6 @@ static void request_baud(uint32_t b, uint32_t queued_bytes) {
     pending_baud = b;
 }
 
-static uint32_t update_at;           /* != 0: restart into the USB bootloader then (call link.update) */
 static link_test_t link_test;        /* runs by itself whenever the link comes up */
 static uint32_t link_up_at;
 static bool link_test_due;           /* starts 3 s after the link comes up: the ESP32 is still booting
@@ -1514,7 +1526,8 @@ static void ser_bridge_task(void) {
 static void link_task(void) {
     uint32_t now = time_us_32();
     if (update_at && (int32_t)(now - update_at) >= 0) {
-        status("restarting into the USB bootloader for a firmware update (copy the .uf2 to the RPI-RP2 drive)");
+        status("restarting into the USB bootloader for a firmware update (%s)",
+               touch_1200 ? "1200-baud touch on the USB serial port" : "asked over the link; copy the .uf2 to the RPI-RP2 drive");
         busy_wait_ms(100);
         reset_usb_boot(0, 0);
     }

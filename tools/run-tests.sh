@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/../firmware"
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 fail=0
-for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_serq test_ethsrc test_ipplan test_serq_sim test_vpnpick test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan test_ethtrace test_serial_sim; do
+for t in test_w5500 test_w5500_recv test_sd test_sd_detect test_sense test_pubip test_baud test_link test_hayes test_hdlc test_ipfilter test_dns test_dcnow test_serq test_ethsrc test_ipplan test_serq_sim test_vpnpick test_link_spi test_link_test test_usbmodem test_dcnet test_netlink test_sdcard test_dclan test_ethtrace test_serial_sim test_uf2; do
     if gcc -O1 -Wall -Wno-unused-variable -Wno-unused-function -I. "tests/$t.c" -lm -o "$out/$t" && "$out/$t" > "$out/$t.log"; then
         echo "PASS $t: $(tail -1 "$out/$t.log")"
     else
@@ -33,6 +33,11 @@ if [ -n "${1:-}" ]; then
     done
     if gcc -O1 -Wall -DPICO_NO_HARDWARE=1 -I. -I"$1" tests/test_pio_reloc.c -o "$out/test_pio_reloc" && "$out/test_pio_reloc" > "$out/reloc.log"; then
         echo "PASS test_pio_reloc: $(tail -1 "$out/reloc.log")"; else echo "FAIL test_pio_reloc"; cat "$out/reloc.log"; fail=1; fi
+    # the build's .uf2 written the way the ESP32 writes it over USB must give the .bin back
+    if [ -f "$1/dc_usb_serial.uf2" ] && [ -f "$1/dc_usb_serial.bin" ]; then
+        if gcc -O1 -Wall tests/test_uf2.c -o "$out/test_uf2r" && "$out/test_uf2r" "$1/dc_usb_serial.uf2" "$1/dc_usb_serial.bin" > "$out/uf2r.log"; then
+            echo "PASS cable update of this build: $(grep 'the real' "$out/uf2r.log" | cut -c6-)"; else echo "FAIL cable update of this build"; cat "$out/uf2r.log"; fail=1; fi
+    fi
 fi
 # the ESP32-only probe's bit-banged SPI slave (logic only; the probe firmware measures the timing)
 if gcc -O2 -Wall -o "$out/test_dcspi_bb" ../esp32/tests/dcspi_bb/test_dcspi_bb.c && "$out/test_dcspi_bb" > "$out/dcspi_bb.log"; then
