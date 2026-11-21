@@ -94,35 +94,40 @@ Test before trusting it: [docs/TESTING.md](docs/TESTING.md).
 
 ## Wiring (full pinout)
 
-Two builds share one firmware: the **Pico wiring** (a Raspberry Pi Pico or Pro Micro RP2040,
-Dreamcast on GPIO2-7, for DreamPi or a computer over USB) and the **stack** (RP2040-Zero +
-ESP32-S3 SuperMini, Dreamcast on GP9-14, no computer). Every signal below is 3.3 V logic.
-More detail: [hardware/WIRING.md](hardware/WIRING.md), [hardware/ESP32.md](hardware/ESP32.md),
-[hardware/SD-SLOT.md](hardware/SD-SLOT.md).
+The stack: an RP2040-Zero and an ESP32-S3 SuperMini, back to back. Every signal below is 3.3 V
+logic. The older single-board layouts (a Pico or Pro Micro with the Dreamcast on GPIO2-7, a UART
+link to the ESP32) are only for testing: [hardware/WIRING.md](hardware/WIRING.md). More detail:
+[hardware/ESP32.md](hardware/ESP32.md), [hardware/SD-SLOT.md](hardware/SD-SLOT.md).
 
-### Dreamcast side (both builds)
+### Dreamcast side
 
 The usual way in is a **DC SD Adapter V2** in the serial port with an SD extender / sniffer
 board in its slot (the adapter only maps the port's pins to SD contacts). An internal install
 solders the same signals to the serial port's pins. Names are the Dreamcast's own (its TXD is
 what it sends).
 
-| Dreamcast signal | Serial port pin | SD contact: full-size / microSD | Pico wiring: GPIO (Pico pin) | Stack: RP2040-Zero | |
-|---|---|---|---|---|---|
-| CTS (SPI clock) | 7 | 5 CLK / 5 | GPIO2 (4) | GP9 | read by the cable |
-| TXD (SPI MOSI) | 5 | 2 CMD / 3 | GPIO3 (5) | GP10 | Dreamcast → cable |
-| RXD (SPI MISO) | 4 | 7 DAT0 / 7 | GPIO4 (6) | GP11 | cable → Dreamcast |
-| RTS (SPI CS) | 6 | 1 DAT3 / 2 | GPIO5 (7) | GP12 | Dreamcast → cable |
-| (drives CTS) | – | – | GPIO6 (9) **→ 1 kΩ →** GPIO2 | GP13 **→ 1 kΩ →** GP9 | the resistor is required |
-| 3.3 V (sense, optional) | 10 | 4 VDD / 4 | GPIO7 (10) **via 10 kΩ** | GP14 **via 10 kΩ** | never to the board's 3V3 |
-| GND | 3, 8 | 3 + 6 VSS / 6 | GND (3 or 8) | GND | |
-| +5 V | 1 | – | not connected | not connected | powering from it is not measured yet |
+| Dreamcast signal | Serial port pin | SD contact: full-size / microSD | RP2040-Zero | Needed for |
+|---|---|---|---|---|
+| TXD (SPI MOSI) | 5 | 2 CMD / 3 | GP10 | serial, W5500, SD |
+| RXD (SPI MISO) | 4 | 7 DAT0 / 7 | GP11 | serial, W5500, SD |
+| RTS (SPI CS) | 6 | 1 DAT3 / 2 | GP12 | W5500, SD (serial only reads it) |
+| CTS (SPI clock) | 7 | 5 CLK / 5 | GP9 | W5500, SD (the cable reads the line) |
+| CTS drive | – | – | GP13 **→ 1 kΩ →** GP9 | serial flow control; a resistor on the board, no wire to the Dreamcast |
+| GND | 3, 8 | 3 + 6 VSS / 6 | GND | everything |
+| 3.3 V sense (optional) | 10 | 4 VDD / 4 | GP14 **via 10 kΩ** | knowing when the Dreamcast is on; never to the board's 3V3 |
+| +5 V | 1 | – | not connected | see [Power](#power-and-usb) |
 
-Serial port pins 2 and 9 and SD contacts 8 and 9 (DAT1, DAT2) stay unconnected. The serial
-port's numbers come from coder's cable guides: measure before soldering (pin 1 is +5 V,
-pin 10 is +3.3 V with the console on). Why the 1 kΩ: the same CTS pin is an input in serial
-mode and the SPI clock output in W5500/SD mode, so both sides may drive it
-([WIRING.md](hardware/WIRING.md), "Why the 1 kΩ resistor").
+**Which wires are needed.** Serial alone works with TXD, RXD and GND. W5500 and the SD card use
+all four signal wires (TXD, RXD, RTS, CTS), because there they are the SPI bus: so with all three
+functions, wire all four. CTS is one pin on the Dreamcast that does two jobs. In serial mode it is
+an input: the cable pulls it high through GP13 to say "stop sending" when its buffer is nearly
+full. In W5500/SD mode the Dreamcast turns it into the SPI clock, an output. GP9 reads what is
+really on the line (which is also how the cable notices SPI mode), and the 1 kΩ lets both sides
+drive it without harm ([why](hardware/WIRING.md#why-the-1-kω-resistor)). Without the GP13
+resistor serial still works, but the cable can no longer slow the Dreamcast down. The sense wire
+is optional: without it the cable decides the Dreamcast is on when it sees TXD or RTS high.
+Serial port pins 2 and 9 and SD contacts 8 and 9 (DAT1, DAT2) stay unconnected. The pin numbers come from coder's
+cable guides: measure before soldering.
 
 ### The stack: which pins are joined
 
@@ -149,15 +154,15 @@ yellow: damaged link packets, green: link up, blue: link up and the Dreamcast on
 
 ### SD card slot (optional)
 
-A 3.3 V microSD module or breakout on the RP2040's SPI1, never on the Dreamcast's wires.
+A 3.3 V microSD module or breakout on the RP2040-Zero's SPI1, never on the Dreamcast's wires.
 
-| SD module | Pico wiring | Stack: RP2040-Zero |
-|---|---|---|
-| CLK / SCK | GPIO26 (pin 31) | GP26 |
-| CMD / DI / MOSI | GPIO27 (pin 32) | GP27 |
-| DAT0 / DO / MISO | GPIO28 (pin 34) | GP28 |
-| DAT3 / CS | GPIO9 (pin 12) | GP29 |
-| VCC / GND | 3V3 (pin 36) or 5 V, see [SD-SLOT.md](hardware/SD-SLOT.md#which-vcc) / GND | 3V3 or 5V / GND |
+| SD module | RP2040-Zero |
+|---|---|
+| CLK / SCK | GP26 |
+| CMD / DI / MOSI | GP27 |
+| DAT0 / DO / MISO | GP28 |
+| DAT3 / CS | GP29 |
+| VCC / GND | 3V3 or 5V, see [SD-SLOT.md](hardware/SD-SLOT.md#which-vcc) / GND |
 
 No card-detect pin: the cable looks for a card every 2 s.
 
@@ -169,7 +174,7 @@ No card-detect pin: the cable looks for a card every 2 s.
 | GPIO11 | W5500 module MOSI |
 | GPIO13 | W5500 module MISO |
 | GPIO10 | W5500 module CS (SCS) |
-| GPIO7 (stack) / GPIO9 (other builds) | W5500 module INT |
+| GPIO7 | W5500 module INT |
 | 3V3, GND | W5500 module 3.3 V, GND |
 | USB-C (modem build) | a USB host for one device (a hub works too): a USB voice modem through an OTG adapter (the Dreamcast's modem joins it by a phone cord, as with a DreamPi), or a DC-PicoLink cable: the link then runs over USB, no link wires needed |
 | GPIO43 / GPIO44 | console TX / RX (UART0, 115200) |
@@ -177,27 +182,16 @@ No card-detect pin: the cable looks for a card every 2 s.
 The W5500 module is the Internet uplink when a router answers DHCP on it, otherwise the
 socket for the Dreamcast's Broadband Adapter.
 
-### Pico wiring + any ESP32-S3 (UART link)
-
-| RP2040 | | ESP32-S3 | |
-|---|---|---|---|
-| GPIO12 (pin 16) | → | GPIO6 | cable TX → ESP32 RX |
-| GPIO13 (pin 17) | ← | GPIO5 | ESP32 TX → cable RX |
-| GPIO14 (pin 19) | ← | GPIO7 | ESP32 RTS → cable CTS |
-| GPIO15 (pin 20) | → | GPIO8 | cable RTS → ESP32 CTS |
-| GND | — | GND | |
-
-3 Mbaud with RTS/CTS, wires under ~15 cm.
-
 ### Power and USB
 
-* **Pico wiring:** powered by its USB (the Pi or computer). Only GND is shared with the Dreamcast.
-* **Stack:** 5V and GND are joined, so either board's USB powers both. **Plug in one USB at a
+* **Today:** 5V and GND are joined, so either board's USB powers both. **Plug in one USB at a
   time** (the Zero has no diode on its USB 5 V). The Zero's USB is for updates and for a
   computer (it then takes the serial and network traffic, as with DreamPi); the ESP32's USB-C
-  is its console, or in the modem build the socket for a USB modem or a DC-PicoLink cable.
-* **Cable over USB:** a Pico or Zero cable plugged into the ESP32's USB-C (modem build) needs no
-  link wires; the ESP32 powers it over the cable.
+  is its console, or in the modem build the socket for a USB modem, a USB Ethernet adapter or a
+  DC-PicoLink cable (then the link runs over USB and needs no link wires; the ESP32 powers it).
+* **From the Dreamcast (serial port pin 1, +5 V):** not measured yet, so not recommended. Any
+  such feed goes through a Schottky diode (e.g. SS14) so a USB cable plugged in later can't push
+  power back into the console. Current budget and options: [hardware/ESP32.md](hardware/ESP32.md#power).
 * Never join the Dreamcast's 3.3 V (port pin 10 / SD VDD) to a board's 3V3: it goes only to the
   sense pin, through 10 kΩ.
 
@@ -267,9 +261,9 @@ boot a dcload-serial CDI, then `dc-tool-ser -t /dev/dccable -b 1500000 -x progra
 Cable (RP2040), Pico SDK 2.1.1 and `gcc-arm-none-eabi`:
 
 ```sh
-# Pico / Pro Micro wiring (Dreamcast on GPIO2-7, ESP32 link on UART GPIO12-15)
+# Test layout, single Pico / Pro Micro (Dreamcast on GPIO2-7, ESP32 link on UART GPIO12-15)
 cmake -S firmware -B build -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 && make -C build
-# RP2040-Zero + ESP32-S3 SuperMini stack (Dreamcast on GPIO9-14, ESP32 link over SPI)
+# The stack: RP2040-Zero + ESP32-S3 SuperMini (Dreamcast on GP9-14, ESP32 link over SPI)
 cmake -S firmware -B build-zero -DPICO_BOARD=pico -DDC_SYS_KHZ=250000 -DDC_BOARD=zero-stack && make -C build-zero
 ```
 
@@ -280,7 +274,7 @@ ESP32-S3, ESP-IDF 5.4 (details in [esp32/README.md](esp32/README.md)):
 
 ```sh
 cd esp32
-idf.py set-target esp32s3 && idf.py build                                             # UART link (Pico wiring)
+idf.py set-target esp32s3 && idf.py build                                             # UART link (test layout)
 idf.py -B build-zero -D SDKCONFIG=build-zero/sdkconfig \
        -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.zero-stack" build          # SPI link (stack)
 idf.py -B build-modem -D SDKCONFIG=build-modem/sdkconfig \

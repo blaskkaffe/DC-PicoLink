@@ -156,11 +156,41 @@ the SPI link (about 300 on the UART link).
 
 ## Power
 
-For now, power both boards over their own USB ports (a phone charger is fine), with GND
-connected between them. Powering everything from the Dreamcast's serial port (+5 V on pin 1)
-is planned but **not measured yet**: don't do it until the current budget is known. When it
-is done, the 5 V goes through a Schottky diode so a USB cable plugged in later can't feed the
-console, and the Dreamcast's 3.3 V (SD VDD) stays connected only to the optional sense wire.
+For now, power the stack over a USB port (a phone charger is fine). Powering it from the
+Dreamcast's serial port (+5 V on pin 1) is **not measured yet**: nobody knows what that pin can
+supply, so measure first (a 10 Ω / 5 W resistor from pin 1 to GND draws 0.5 A; the voltage must
+stay above ~4.7 V; 4.7 Ω for 1 A).
+
+Rough budget at 5 V, from datasheet typicals, not measured:
+
+| Part | Current |
+|---|---|
+| RP2040-Zero at 250 MHz | ~40 mA |
+| microSD card | 30-100 mA, ~150 mA spikes when writing |
+| ESP32-S3 with Wi-Fi | 100-150 mA, bursts to ~350 mA |
+| W5500 module | ~130 mA |
+| USB modem on the ESP32's USB-C | 100-250 mA |
+| USB Ethernet adapter | 100-300 mA (gigabit adapters the most) |
+| USB MIDI keyboard on the Zero | ~100 mA (bus-powered devices may take up to 500 mA) |
+
+That is ~0.4 A typical and ~0.7 A at the peaks without USB devices, 1.0-1.3 A with a modem or
+adapter and a keyboard. The Dreamcast's 3.3 V (pin 10, the SD adapter's VDD) is sized for an SD
+card: it stays on the sense wire only.
+
+Whatever the source, a Schottky diode (e.g. SS14, ~0.3 V drop) sits between it and the board
+5V: the anode on the Dreamcast pin, so a USB cable plugged in later can't push power into the
+console. Two ways:
+
+* **One rail:** pin 1 → diode → the stack's 5V (stack position 1 soldered). Simple, but pin 1
+  carries everything, including the USB devices.
+* **Two rails:** pin 1 → diode → the Zero's 5V pin only (Zero, SD card, a USB keyboard on the
+  Zero, whose 5V pin is its USB VBUS); stack position 1 (5V ↔ 5V) is **not** soldered and the
+  ESP32's 5V pin gets its own feed (a stiff 5V point in the console, or a charger through its own
+  diode). GND stays common. Switch both from the same source so they power up together.
+
+The Zero's USB can't be plugged into a computer while the Dreamcast feeds the Zero's 5V pin (it
+has no diode on its USB 5 V). When the Dreamcast is off, everything fed from it is off too,
+including the web page.
 
 ## Who gets the traffic
 
