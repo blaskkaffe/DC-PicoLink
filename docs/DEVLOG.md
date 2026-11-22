@@ -445,3 +445,14 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   while a Dreamcast session is active, the API (the Dreamcast asked) does not. Not kept:
   `get events`; dc1 lines are trimmed, so a password with leading or trailing spaces cannot be
   set that way. Built and host-tested only: not tried on hardware.
+- **One pin map for the stack and the stripboard (Nov 2026).** The zero-stack SD card's MOSI moved
+  GP27 -> GP15 (SPI1 TX is also on GP15, the driver and its speed are untouched; the Pico layout
+  keeps GP27), the link's DR line GP2/GPIO1 -> GP8/GPIO7, and the ESP32's W5500 to GPIO13 MOSI,
+  12 SCLK, 11 CS, 10 INT, 9 MISO (Kconfig defaults, so the UART build agrees). Effect: the six link
+  signals are one straight run GP3..GP8 over GPIO2..7, all SD pins and the sense wire sit on the
+  Zero's left pads (GP14, 15, 26, 28, 29), and every pad pair that must not be joined is used.
+  GP15 used to be the soldered "strength" pin, and the link-init loop that set GP8/GP15 to plain
+  inputs would have turned MOSI into an input: it now covers GP0-2 only. `tests/test_pinmap.c`
+  reads main.c and sdkconfig.zero-stack and checks hardware-SPI capability, uniqueness and the
+  stack geometry. The W5500 now goes through the GPIO matrix for four of its five pins (only SCLK
+  is on the IO MUX): fine at 20 MHz on paper, not tried; lower `DCL_W5500_MHZ` if a module misreads.

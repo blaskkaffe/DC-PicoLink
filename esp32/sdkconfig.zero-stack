@@ -6,7 +6,12 @@ CONFIG_DCL_LSPI_MISO=3
 CONFIG_DCL_LSPI_SCLK=5
 CONFIG_DCL_LSPI_CS=4
 CONFIG_DCL_LSPI_HS=2
-CONFIG_DCL_LSPI_DR=1
-# W5500 module interrupt on GPIO7 (under the Zero's unused GP8, wired from outside): GPIO9 sits
-# under the Zero's GP15, the strength pin that is soldered through both boards
-CONFIG_DCL_W5500_INT=7
+CONFIG_DCL_LSPI_DR=7
+# W5500 module on GPIO9-13, all on the SuperMini's right-hand pin column beside 3V3/GND (the
+# stripboard layout, hardware/STRIPBOARD.md). The link's DR line moved to GPIO7 so GPIO1-7 are
+# one straight run GP2..GP8 <-> GPIO1..GPIO7 in the stack (GPIO1 unused).
+CONFIG_DCL_W5500_MOSI=13
+CONFIG_DCL_W5500_SCLK=12
+CONFIG_DCL_W5500_CS=11
+CONFIG_DCL_W5500_INT=10
+CONFIG_DCL_W5500_MISO=9

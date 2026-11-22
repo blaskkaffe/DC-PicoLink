@@ -73,11 +73,13 @@ static volatile bool cap_req;
 #include "hardware/spi.h"
 #define SDC_SPI       spi1
 #define PIN_SDC_SCK   26
-#define PIN_SDC_MOSI  27
 #define PIN_SDC_MISO  28
 #if DC_PIN_BASE == 9
-#define PIN_SDC_CS    14                 /* zero-stack: GP9-13 are the Dreamcast's, GP29 the sense wire */
+#define PIN_SDC_MOSI  15                 /* zero-stack: SPI1 TX also on GP15, so the SD pins sit on the Zero's left edge pads
+                                            (GP26/GP28 + GP15) with GP27 free; the Dreamcast has GP9-13, GP29 is the sense wire */
+#define PIN_SDC_CS    14
 #else
+#define PIN_SDC_MOSI  27
 #define PIN_SDC_CS    9
 #endif
 #ifndef DC_SDC_HZ
@@ -137,7 +139,7 @@ static int tx_cur = 0;
 #include "link_spi_model.h"
 _Static_assert(DC_PIN_BASE >= 8, "the SPI link uses GPIO0-7: move the Dreamcast pins (DC_PIN_BASE 9)");
 #define LINK_SPI       spi0
-#define PIN_LSPI_DR    2                         /* <- ESP32 GPIO1: it has data for us */
+#define PIN_LSPI_DR    8                         /* <- ESP32 GPIO7: it has data for us */
 #define PIN_LSPI_HS    3                         /* <- ESP32 GPIO2: a transaction is loaded */
 /* GPIO0/1 sit over the ESP32's GPIO43/44 (corner pins for strength): left as plain inputs */
 #define PIN_LSPI_MISO  4                         /* SPI0 RX  <- ESP32 GPIO3 */
@@ -1244,11 +1246,9 @@ static void link_init(void) {
     gpio_init(PIN_LSPI_DR);
     gpio_set_dir(PIN_LSPI_DR, GPIO_IN);
     gpio_pull_down(PIN_LSPI_DR);
-    for (uint p = 0; p <= 1; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
-    /* GP15 sits over the ESP32's GPIO9 (the strength pin, soldered through both boards) and GP8
-       over GPIO7 (the W5500 module's interrupt, wired from outside): plain inputs without pulls,
-       so neither loads an ESP32 pin even where a header joins them */
-    for (uint p = 8; p <= 15; p += 7) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
+    /* GP0-2 sit over the ESP32's GPIO43/44/1 (nothing uses them; soldered for strength at most):
+       plain inputs without pulls, so none loads an ESP32 pin even where a header joins them */
+    for (uint p = 0; p <= 2; p++) { gpio_init(p); gpio_set_dir(p, GPIO_IN); gpio_disable_pulls(p); }
     lspi_dma_tx = (int)dma_claim_unused_channel(true);
     lspi_dma_rx = (int)dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config((uint)lspi_dma_tx);

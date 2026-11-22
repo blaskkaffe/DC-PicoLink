@@ -141,16 +141,17 @@ insulation (Kapton) between the two boards' backs.
 |---|---|---|---|---|
 | 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX) |
 | 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX) |
-| 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR (ESP32 has data) |
-| 4 | GP29 ↔ GPIO13 | **never** (GP29 is the power sense) | GP3 ↔ GPIO2 | **solder**: HS (ESP32 ready) |
-| 5 | GP28 ↔ GPIO12 | **never** | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → Zero) |
-| 6 | GP27 ↔ GPIO11 | **never** | GP5 ↔ GPIO4 | **solder**: SPI CS |
-| 7 | GP26 ↔ GPIO10 | **never** | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | solder for strength (both unused) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (Zero → ESP32) |
-| 9 | GP14 ↔ GPIO8 | **never** (GP14 is the SD card's CS) | GP8 ↔ GPIO7 | **not joined**: GPIO7 is the W5500 module's INT |
+| 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | not used (optional, strength) |
+| 4 | GP29 ↔ GPIO13 | **never** (GP29 is the power sense / W5500 MOSI) | GP3 ↔ GPIO2 | **solder**: HS (ESP32 ready) |
+| 5 | GP28 ↔ GPIO12 | **never** (SD MISO / W5500 SCLK) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → Zero) |
+| 6 | GP27 ↔ GPIO11 | **never** (GP27 free / W5500 CS) | GP5 ↔ GPIO4 | **solder**: SPI CS |
+| 7 | GP26 ↔ GPIO10 | **never** (SD SCK / W5500 INT) | GP6 ↔ GPIO5 | **solder**: SPI clock |
+| 8 | GP15 ↔ GPIO9 | **never** (SD MOSI / W5500 MISO) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (Zero → ESP32) |
+| 9 | GP14 ↔ GPIO8 | **never** (GP14 is the SD card's CS) | GP8 ↔ GPIO7 | **solder**: DR (ESP32 has data) |
 
-Left 4-7 are the Zero's power sense (GP29) and SD slot pins (GP28-26) over the ESP32's W5500 pins: both are used, each from the
-outside (the Zero's edge pads, the SuperMini's holes from its outer face); GP14, the SD card's CS, is the bottom-left corner. The Zero's bottom
+Left 4-9 are the Zero's power sense (GP29), SD slot pins (GP28, GP26, GP15, GP14) and the free GP27 over the ESP32's W5500 pins:
+all used, each from the outside (the Zero's edge pads, the SuperMini's holes from its outer face), none joined.
+The same pin map serves the stripboard layout ([hardware/STRIPBOARD.md](hardware/STRIPBOARD.md)): there the boards stand side by side. The Zero's bottom
 edge GP9-13 is the Dreamcast (table above). GP16 is the Zero's own RGB LED (red: no ESP32,
 yellow: damaged link packets, green: link up, blue: link up and the Dreamcast on).
 
@@ -161,7 +162,7 @@ A 3.3 V microSD module or breakout on the RP2040-Zero's SPI1, never on the Dream
 | SD module | RP2040-Zero |
 |---|---|
 | CLK / SCK | GP26 |
-| CMD / DI / MOSI | GP27 |
+| CMD / DI / MOSI | GP15 (Pico layout: GP27) |
 | DAT0 / DO / MISO | GP28 |
 | DAT3 / CS | GP14 |
 | VCC / GND | 3V3 or 5V, see [SD-SLOT.md](hardware/SD-SLOT.md#which-vcc) / GND |
@@ -173,10 +174,10 @@ No card-detect pin: the cable looks for a card every 2 s.
 | ESP32-S3 SuperMini | Connects to |
 |---|---|
 | GPIO12 | W5500 module SCLK |
-| GPIO11 | W5500 module MOSI |
-| GPIO13 | W5500 module MISO |
-| GPIO10 | W5500 module CS (SCS) |
-| GPIO7 | W5500 module INT |
+| GPIO13 | W5500 module MOSI |
+| GPIO9 | W5500 module MISO |
+| GPIO11 | W5500 module CS (SCS) |
+| GPIO10 | W5500 module INT |
 | 3V3, GND | W5500 module 3.3 V, GND |
 | USB-C (modem build) | a USB host for one device (a hub works too): a USB voice modem through an OTG adapter (the Dreamcast's modem joins it by a phone cord, as with a DreamPi), or a DC-PicoLink cable: the link then runs over USB, no link wires needed |
 | GPIO43 / GPIO44 | console TX / RX (UART0, 115200) |

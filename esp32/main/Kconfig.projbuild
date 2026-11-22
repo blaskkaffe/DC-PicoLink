@@ -28,9 +28,9 @@ menu "DC-PicoLink ESP32"
         depends on DCL_LINK_SPI
         default 2
     config DCL_LSPI_DR
-        int "SPI link data-ready pin, DR (to the cable's GPIO2)"
+        int "SPI link data-ready pin, DR (to the cable's GPIO8)"
         depends on DCL_LINK_SPI
-        default 1
+        default 7
     config DCL_LINK_TX
         int "Link TX pin (to the cable's GPIO13)"
         depends on DCL_LINK_UART
@@ -70,19 +70,19 @@ menu "DC-PicoLink ESP32"
     config DCL_W5500_MOSI
         int "W5500 MOSI pin"
         depends on DCL_W5500
-        default 11
+        default 13
     config DCL_W5500_MISO
         int "W5500 MISO pin"
         depends on DCL_W5500
-        default 13
+        default 9
     config DCL_W5500_CS
         int "W5500 chip-select pin"
         depends on DCL_W5500
-        default 10
+        default 11
     config DCL_W5500_INT
         int "W5500 interrupt pin (-1: none, poll every 5 ms)"
         depends on DCL_W5500
-        default 9
+        default 10
     config DCL_W5500_MHZ
         int "W5500 SPI clock in MHz"
         depends on DCL_W5500

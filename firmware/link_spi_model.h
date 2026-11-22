@@ -13,10 +13,10 @@
  *   GP6  SPI0 SCK  ------->  SCLK  (GPIO5)
  *   GP5  CS (GPIO) ------->  CS    (GPIO4)
  *   GP3  HS        <-------  GPIO2   "ready": a transaction is loaded, both buffers armed
- *   GP2  DR        <-------  GPIO1   "data ready": the ESP32 has bytes for the cable
+ *   GP8  DR        <-------  GPIO7   "data ready": the ESP32 has bytes for the cable
  *
  * (In the back-to-back stack each of these pairs sits directly over the other. GP0/GP1
- * over ESP32 GPIO43/44 are soldered for strength only and stay inputs: GPIO43 prints the
+ * over ESP32 GPIO43/44, and GP2 over GPIO1, are soldered for strength only and stay inputs: GPIO43 prints the
  * ESP32's ROM boot messages and GPIO44 has a pull-up during its boot, so neither is a
  * good handshake line.)
  *

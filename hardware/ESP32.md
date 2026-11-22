@@ -48,19 +48,21 @@ the USB end may differ slightly).
 |---|---|---|---|---|
 | 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX; the Zero keeps GP0 a plain input) |
 | 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX; the Zero keeps GP1 a plain input) |
-| 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | **solder**: DR, ESP32 has data |
-| 4 | GP29 ↔ GPIO13 | **never**: GP29 is the power-sense input (next to 3V3) / W5500 MISO (in) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
-| 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
-| 6 | GP27 ↔ GPIO11 | **never**: SD MOSI (out) / W5500 MOSI (out): two drivers | GP5 ↔ GPIO4 | **solder**: SPI CS |
-| 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 CS (out): two drivers | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | the strength pin (opposite corner to 5V): safe, both unused (the Zero keeps GP15 a plain input without pulls) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
-| 9 | GP14 ↔ GPIO8 | **never**: GP14 is the SD card's CS (bottom-left corner) | GP8 ↔ GPIO7 | not joined: GPIO7 is the W5500 module's INT, wired from outside |
+| 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | not used (optional, strength; the Zero keeps GP2 a plain input) |
+| 4 | GP29 ↔ GPIO13 | **never**: GP29 is the power-sense input (next to 3V3) / W5500 MOSI (out) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
+| 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCLK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
+| 6 | GP27 ↔ GPIO11 | **never**: GP27 is free / W5500 CS (out) | GP5 ↔ GPIO4 | **solder**: SPI CS |
+| 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 INT (in) | GP6 ↔ GPIO5 | **solder**: SPI clock |
+| 8 | GP15 ↔ GPIO9 | **never**: SD MOSI (out) / W5500 MISO (in) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 9 | GP14 ↔ GPIO8 | **never**: GP14 is the SD card's CS (bottom-left corner) | GP8 ↔ GPIO7 | **solder**: DR, ESP32 has data |
 
 Both boards have nine pins per side; the Zero's bottom edge (GP9-13) is the Dreamcast's.
-Minimum: 5V, GND, the six link pins (right, 3-8), plus GP15 ↔ GPIO9 for strength. With a pin
+Minimum: 5V, GND and the six link pins (right, 4-9: one straight run GP3..GP8 over GPIO2..7). With a pin
 header through both boards, **every position that has a header pin is joined**: fit pins only
-where the table says solder (or pull/clip the others), never at 3-7 on the left.
-Corners: 5V/GND top left, GP0/GP1 top right, GP15 bottom left, the SPI pins bottom right.
+where the table says solder (or pull/clip the others), never at 3-9 on the left.
+Corners: 5V/GND top left, GP0/GP1 top right, GP14 bottom left, the SPI pins bottom right.
+The **stripboard layout** ([STRIPBOARD.md](STRIPBOARD.md)) uses exactly the same pin map: only the
+physical joining differs (strips instead of a stack), so one firmware and one `sdkconfig` serve both.
 
 **Insulate between the boards.** The two backs face each other: the SuperMini's back has about
 20 bare pads (GPIO14-21, 33-48 incl. the strapping pins 45/46, B+/B-) and the USB socket's
@@ -91,20 +93,19 @@ the ESP32's own pins, all on the row next to 3V3 and GND:
 |---|---|
 | 3V3, GND | 3.3V, GND |
 | GPIO12 | SCLK |
-| GPIO11 | MOSI |
-| GPIO13 | MISO |
-| GPIO10 | CS (SCS) |
-| GPIO9 | INT (zero-stack build: GPIO7, since GPIO9 is the soldered strength pin) |
+| GPIO13 | MOSI |
+| GPIO9 | MISO |
+| GPIO11 | CS (SCS) |
+| GPIO10 | INT |
 
 The firmware finds the module by itself ("wired port: W5500 module found", or "no W5500 module
 found ... off"). With a cable plugged in, the port is the **uplink** when a router answers DHCP
 (the wired network then is the way out, ahead of Wi-Fi), or the socket for the **Dreamcast's
 broadband adapter** when nobody answers within 10 s (the Dreamcast gets 192.168.98.x, DNS and
-NAT like on the cable's own network). In the stack GPIO10-13 sit over the Zero's GP26-29 (not joined, wired from the
-outside), GPIO9 under GP15 (the soldered strength pin, unused), and INT goes to GPIO7 (under the
-Zero's unused GP8, not joined).
+NAT like on the cable's own network). In the stack GPIO9-13 sit over the Zero's GP15 and GP26-29 (SD card, sense wire; not joined, wired from the
+outside). The same pins serve the default (UART) build.
 
-SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP27, MISO GP28, CS GP14), see [SD-SLOT.md](SD-SLOT.md).
+SD slot: on the Zero's SPI1 (SCK GP26, MOSI GP15, MISO GP28, CS GP14), see [SD-SLOT.md](SD-SLOT.md).
 
 **The link:** the cable is the SPI master (SPI0, ~15.6 MHz at 250 MHz, mode 1), the ESP32 the
 slave (SPI3). Every transaction is 1024 bytes both ways; the packets inside are the same as on
