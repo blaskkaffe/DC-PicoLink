@@ -449,6 +449,7 @@ them on every push. `tools/run-tests.sh <firmware build dir>` adds `pio_sim.py` 
 | `test_serq`, `test_serq_sim` | the queues in front of the Dreamcast's serial line; a game's UDP updates beside a TCP download |
 | `test_hayes`, `test_hdlc`, `test_ipfilter`, `test_usbmodem` | Hayes modem answers; the PPP frame filter (TTL 64, PowerSmash double SYN); the same rules on Ethernet frames; the USB voice modem's answers |
 | `test_dns`, `test_dcnow`, `test_pubip`, `test_vpnpick`, `test_dclan` | the ESP32's DNS helper; DCNow! rules and the settings-service answer; the public-address query; VPN auto order (fastest ping first); the Dreamcast's home address (.98/.99 pick, 1:1 rewrite, ARP) |
+| `test_dcapi`, `test_wifiscan` | the dc1 answers (hello, net.select, wifi scan/pass/join); the Wi-Fi list (one entry per name, strongest first, JSON) |
 | `test_dcnet`, `test_netlink` | which calls go to DCNet; dial strings, Netlink data exchange, STUN, matchmaking JSON |
 | `test_pio_reloc` | `dc_pio_relocate()` on the really assembled PIO programs |
 

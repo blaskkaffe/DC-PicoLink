@@ -81,7 +81,9 @@ ESP32 details: [esp32/README.md](esp32/README.md).
 | BBA | the Dreamcast's Broadband Adapter on the ESP32's W5500 module | |
 | DNS | DreamPi's DNS list from dreamcast.online, revival DNS; over TCP when the router intercepts DNS | yes |
 | DCNow! | reports, and `dreampi.local:1998` for dreamcast.online/now/configure | yes |
-| DCNet | `*69` before the number, or every call | yes |
+| Network switch | two buttons at the top of the page: DCNow! (default) or DCNet, from the next call, whatever number the game dials; `*69` still goes to DCNet while DCNow! is selected (tick box). Also `call net.select dcnow\|dcnet` in the DC API (`POST /dcapi`), `POST /dcnow`, `/dcnet`, `GET /tag`, `/openmenu/poll` | yes |
+| Wi-Fi from the console | `call wifi.scan`, `get wifi.scan.*`, `set wifi.pass ...`, `call wifi.join <name or #n>` in the DC API, and the page's Search button (list, filter, tap to pick) | |
+| DCNet | `*69` before the number, or every call (the switch) | yes |
 | Netlink | direct dial, matchmaking, game server codes, XBAND, Capcom matching (USB modem) | yes |
 | VPN | Dreamcast Live, profiles built in (okayed by Dreamcast Live); the Dreamcast gets its own VPN address; auto mode pings every server and takes the fastest | yes |
 | Own home address | as DreamPi: the Dreamcast gets .98 on your network (this box .99, answers ARP for it, no NAT); 1:1 with the VPN up | yes |

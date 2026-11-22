@@ -72,6 +72,13 @@ typedef void (*dcnet_done_t)(void);
 void dcnet_start(void);
 int dcnet_mode(void);                                   /* DCNET_OFF / _PREFIX (*69) / _ALWAYS */
 void dcnet_set_mode(int m);
+bool dcnet_selected(void);                              /* the network switch: true = DCNet for every call, false = DCNow! (this box) */
+bool dcnet_star69(void);                                /* with DCNow! selected, *69 before the number still goes to DCNet */
+void dcnet_select(bool dcnet, const char *who);         /* who: "page", "DC API", "openMenu" (for the status line) */
+void dcnet_set_star69(bool on);
+const char *netsel_call(void);                          /* dcapi.c: network of the call in progress: "dcnow", "dcnet" or NULL */
+void dcapi_register(void *httpd_handle);                  /* dcapi.c: POST/GET /dcapi, POST /dcnow /dcnet, GET /tag /openmenu/poll */
+bool dc_session_busy(void);                             /* a call or a Dreamcast network session is going on */
 bool dcnet_call(const char *number, dcnet_out_t out, dcnet_done_t done);
 void dcnet_from_dc(const uint8_t *p, size_t n);
 void dcnet_hangup(void);
@@ -140,6 +147,7 @@ uint32_t vpn_dc_addr(void);                             /* the Dreamcast's addre
 bool vpn_profiles_write(const void *d, size_t n, bool first, bool last);
 uint32_t ppp_dc_ip(void);                               /* network order, 0 = no PPP call */
 uint32_t dc_eth_dc_ip(void);
+bool dc_eth_is_active(void);                           /* the Dreamcast is using the cable's network right now */
 uint32_t wired_dc_ip(void);
 struct netif;
 struct netif *ppp_dc_netif(void);                        /* the PPP call's interface */
@@ -177,6 +185,14 @@ void wifi_start(void);
 #define DCL_AP_IP "192.168.4.1"                          /* the setup network's address, and the page on it (ipplan_model.h) */
 void wifi_set_sta(const char *ssid, const char *pass);
 size_t wifi_info_json(char *out, size_t cap);
+size_t wifi_scan_json(char *out, size_t cap);          /* the list of networks in range, for the page (takes a few seconds) */
+int wifi_scan(bool force);                              /* runs a scan: number found, -1 refused (a Dreamcast session; force skips that), -2 did not run */
+int wifi_scan_count(void);                              /* results of the last scan, -1 = none yet */
+bool wifi_scan_get(int i, int *rssi, int *open, char *ssid, size_t cap);
+const char *wifi_state_text(void);                      /* none | connecting | connected | failed */
+const char *wifi_error_text(void);                      /* why it failed, "" when it did not */
+const char *wifi_saved_ssid(void);
+const char *wifi_ip_text(void);
 
 /* ---- the wired Ethernet port: a real W5500 module on the ESP32's SPI pins (wired.c) ---- */
 void wired_start(void);

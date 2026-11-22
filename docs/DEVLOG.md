@@ -432,3 +432,16 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   as bit 5 (`dc_pads_sig`), so SD chip-select activity on GP14 no longer shows up as a pad change.
   Static asserts keep the two pins and the Dreamcast pads apart. The 10 kΩ may be 4.7-15 kΩ: it
   forms a divider with the pin's own pull-down (50-80 kΩ) and must leave more than about 2.3 V.
+- **A network switch of its own, and the DC API on the box (Nov 2026).** Most games cannot change
+  the dialled number, so the choice DCNow! / DCNet no longer hangs on `*69`: the page's top card
+  has two buttons (DCNow! is the default), the choice applies from the next call, and `*69`
+  stays as an extra way into DCNet while DCNow! is selected (tick box). The same choice is
+  `call net.select dcnow|dcnet` in `POST /dcapi` (the dc1 language of DC-DreamDash, so openMenu
+  and the other devices see a DreamPi and this box the same way), `POST /dcnow` and `/dcnet`
+  (openMenu's buttons; a request with another site's Origin is refused), `GET /tag` and
+  `GET /openmenu/poll`. The box also offers `wifi.*` in dc1 so the console can set up the Wi-Fi:
+  `call wifi.scan`, `get wifi.scan.*`, `set wifi.pass ...` (write only, RAM until the join),
+  `call wifi.join <name|#n>`. A scan makes the radio leave its channel for 2-3 s: the page refuses
+  while a Dreamcast session is active, the API (the Dreamcast asked) does not. Not kept:
+  `get events`; dc1 lines are trimmed, so a password with leading or trailing spaces cannot be
+  set that way. Built and host-tested only: not tried on hardware.

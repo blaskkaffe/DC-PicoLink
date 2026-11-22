@@ -4,6 +4,7 @@
  */
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -13,11 +14,13 @@
 #include "nvs.h"
 #include "sdkconfig.h"
 #include "app.h"
+#include "wifiscan_model.h"
 
 static esp_netif_t *sta_if, *ap_if;
 static char ap_name[33], sta_ssid[33];
 static volatile bool sta_up;
 static char sta_ip[16];
+static volatile int last_reason;                            /* why the last connection attempt failed (0 = none since the last try began) */
 
 #define note say_line
 
@@ -31,11 +34,13 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
             say_line("Wi-Fi: lost %s (reason %d, signal %d dBm), trying again", sta_ssid, d ? d->reason : -1, d ? d->rssi : 0);
         }
         sta_up = false;
+        { const wifi_event_sta_disconnected_t *d = (const wifi_event_sta_disconnected_t *)data; if (d) last_reason = d->reason; }
         if (sta_ssid[0]) esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
         snprintf(sta_ip, sizeof sta_ip, IPSTR, IP2STR(&ev->ip_info.ip));
         sta_up = true;
+        last_reason = 0;
         char t[96];
         snprintf(t, sizeof t, "%s, address %s", sta_ssid, sta_ip);
         note("Wi-Fi: connected to %s", t);
@@ -57,6 +62,7 @@ static void apply_sta(const char *ssid, const char *pass) {
     strlcpy((char *)c.sta.password, pass, sizeof c.sta.password);
     c.sta.threshold.authmode = pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     strlcpy(sta_ssid, ssid, sizeof sta_ssid);
+    last_reason = 0;
     esp_wifi_disconnect();
     esp_wifi_set_config(WIFI_IF_STA, &c);
     if (ssid[0]) esp_wifi_connect();
@@ -80,9 +86,53 @@ size_t wifi_info_json(char *out, size_t cap) {
     char s[80], a[80];
     json_escape(s, sizeof s, sta_ssid, strlen(sta_ssid));
     json_escape(a, sizeof a, ap_name, strlen(ap_name));
-    return (size_t)snprintf(out, cap, "{\"ap\":\"%s\",\"ssid\":\"%s\",\"up\":%s,\"ip\":\"%s\"}",
-                            a, s, sta_up ? "true" : "false", sta_up ? sta_ip : "");
+    return (size_t)snprintf(out, cap, "{\"ap\":\"%s\",\"ssid\":\"%s\",\"up\":%s,\"ip\":\"%s\",\"state\":\"%s\",\"err\":\"%s\"}",
+                            a, s, sta_up ? "true" : "false", sta_up ? sta_ip : "", wifi_state_text(), wifi_error_text());
 }
+
+/* ---- the search for networks (the page's list and the DC API's wifi.scan) ---- */
+static wscan_t scan_last;
+static int scan_cnt = -1;                                           /* results of the last scan; -1 = none yet */
+
+/* A scan while the box is online makes the radio leave its channel for a second or two, which a
+   Dreamcast in a game would feel: `force` (the Dreamcast itself asked, over the DC API) skips the
+   check. Returns the number found, -1 = refused (busy), -2 = did not run. */
+int wifi_scan(bool force) {
+    if (!force && dc_session_busy()) return -1;
+    wifi_scan_config_t sc = { .show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE, .scan_time.active = { .min = 100, .max = 200 } };
+    if (esp_wifi_scan_start(&sc, true) != ESP_OK) return -2;       /* waits until done (about 2-3 s) */
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 40) n = 40;
+    wifi_ap_record_t *rec = n ? malloc(sizeof *rec * n) : NULL;
+    if (n && !rec) { esp_wifi_clear_ap_list(); return -2; }
+    if (n) esp_wifi_scan_get_ap_records(&n, rec); else esp_wifi_clear_ap_list();
+    memset(&scan_last, 0, sizeof scan_last);
+    for (int i = 0; i < n; i++)
+        wscan_add(&scan_last, (const char *)rec[i].ssid, strnlen((const char *)rec[i].ssid, 32), rec[i].rssi, rec[i].authmode == WIFI_AUTH_OPEN);
+    free(rec);
+    scan_cnt = scan_last.n;
+    note("Wi-Fi: found %d networks", scan_cnt);
+    return scan_cnt;
+}
+int wifi_scan_count(void) { return scan_cnt; }
+bool wifi_scan_get(int i, int *rssi, int *open, char *ssid, size_t cap) {
+    if (i < 0 || i >= scan_cnt) return false;
+    *rssi = scan_last.ap[i].rssi; *open = scan_last.ap[i].open;
+    strlcpy(ssid, scan_last.ap[i].ssid, cap);
+    return true;
+}
+size_t wifi_scan_json(char *out, size_t cap) {
+    int n = wifi_scan(false);
+    if (n == -1) return (size_t)snprintf(out, cap, "{\"ok\":false,\"err\":\"The Dreamcast is online: searching would interrupt it. Try again when it is idle.\"}");
+    if (n < 0) return (size_t)snprintf(out, cap, "{\"ok\":false,\"err\":\"the scan did not run\"}");
+    return wscan_json(&scan_last, out, cap);
+}
+
+const char *wifi_state_text(void) { return !sta_ssid[0] ? "none" : sta_up ? "connected" : last_reason ? "failed" : "connecting"; }
+const char *wifi_error_text(void) { return sta_up ? "" : wscan_reason_text(last_reason); }
+const char *wifi_saved_ssid(void) { return sta_ssid; }
+const char *wifi_ip_text(void) { return sta_up ? sta_ip : ""; }
 
 void wifi_start(void) {
     ESP_ERROR_CHECK(esp_netif_init());

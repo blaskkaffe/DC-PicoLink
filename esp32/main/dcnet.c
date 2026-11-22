@@ -24,6 +24,7 @@
 static SemaphoreHandle_t lk;
 static TaskHandle_t task_h;
 static int mode = DCNET_PREFIX;
+static bool star69 = true;                    /* with DCNow! selected, "*69" before the number still goes to DCNet */
 static volatile int sock = -1;
 static volatile bool want, hang;              /* a call is asked for / the Dreamcast side ended it */
 static volatile bool active;
@@ -43,8 +44,26 @@ int dcnet_mode(void) { return mode; }
 void dcnet_set_mode(int m) {
     if (m < DCNET_OFF || m > DCNET_ALWAYS) return;
     mode = m;
+    if (m == DCNET_OFF) star69 = false; else if (m == DCNET_PREFIX) star69 = true;     /* ALWAYS leaves the *69 choice as it was */
     nvs_handle_t h;
-    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "dcnet", (uint8_t)m); nvs_commit(h); nvs_close(h); }
+    if (nvs_open("dcl", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "dcnet", (uint8_t)m); nvs_set_u8(h, "dcnet_pre", star69); nvs_commit(h); nvs_close(h); }
+}
+
+/* The network switch: DCNow! (this box's own PPP, VPN, Netlink; the default) or DCNet for every
+   dial-up call, whatever number the Dreamcast dials. It is the same setting as `mode`: DCNet
+   selected = ALWAYS; DCNow! selected = PREFIX (a call that starts with *69 still goes to DCNet,
+   as on a DreamPi) or OFF when that is switched off. A call in progress keeps its network. */
+bool dcnet_selected(void) { return mode == DCNET_ALWAYS; }
+bool dcnet_star69(void) { return star69; }
+void dcnet_select(bool dcnet, const char *who) {
+    bool was = dcnet_selected();
+    dcnet_set_mode(dcnet ? DCNET_ALWAYS : star69 ? DCNET_PREFIX : DCNET_OFF);
+    if (was != dcnet) say("Network: %s selected (%s)%s", dcnet ? "DCNet" : "DCNow!", who, active ? "; the call in progress keeps its network" : "; it applies from the next call");
+}
+void dcnet_set_star69(bool on) {
+    star69 = on;
+    if (mode != DCNET_ALWAYS) dcnet_set_mode(on ? DCNET_PREFIX : DCNET_OFF);
+    else dcnet_set_mode(DCNET_ALWAYS);                                              /* only saves the choice */
 }
 bool dcnet_active(void) { return active; }
 
@@ -191,15 +210,16 @@ void dcnet_hangup(void) { if (active) hang = true; }
 
 size_t dcnet_info_json(char *o, size_t cap) {
     static const char *const m[] = { "off", "prefix", "always" };
-    return (size_t)snprintf(o, cap, "{\"mode\":\"%s\",\"active\":%s,\"ap\":\"%s\",\"calls\":%lu,\"connected\":%lu,\"failed\":%lu,\"to_ap\":%lu,\"to_dc\":%lu}",
-        m[mode], active ? "true" : "false", ap_name, (unsigned long)cnt.calls, (unsigned long)cnt.connected,
+    return (size_t)snprintf(o, cap, "{\"selected\":\"%s\",\"star69\":%s,\"mode\":\"%s\",\"active\":%s,\"ap\":\"%s\",\"calls\":%lu,\"connected\":%lu,\"failed\":%lu,\"to_ap\":%lu,\"to_dc\":%lu}",
+        mode == DCNET_ALWAYS ? "dcnet" : "dcnow", star69 ? "true" : "false", m[mode], active ? "true" : "false", ap_name, (unsigned long)cnt.calls, (unsigned long)cnt.connected,
         (unsigned long)cnt.failed, (unsigned long)cnt.to_ap, (unsigned long)cnt.to_dc);
 }
 
 void dcnet_start(void) {
     lk = xSemaphoreCreateMutex();
-    nvs_handle_t h; uint8_t v = DCNET_PREFIX;
-    if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "dcnet", &v); nvs_close(h); }
+    nvs_handle_t h; uint8_t v = DCNET_PREFIX, pre = 255;
+    if (nvs_open("dcl", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "dcnet", &v); nvs_get_u8(h, "dcnet_pre", &pre); nvs_close(h); }
     if (v <= DCNET_ALWAYS) mode = v;
+    star69 = pre == 255 ? v != DCNET_OFF : pre != 0;
     xTaskCreate(task, "dcnet", 3584, NULL, 6, &task_h);
 }

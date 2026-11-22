@@ -131,6 +131,7 @@ void eth_from_dc(const uint8_t *p, size_t n) {
 }
 
 uint32_t dc_eth_dc_ip(void) { return active ? lease_ip : 0; }
+bool dc_eth_is_active(void) { return active; }
 struct netif *dc_eth_netif(void) { return eth_if ? (struct netif *)esp_netif_get_netif_impl(eth_if) : NULL; }
 
 static void on_lease(void *arg, esp_event_base_t base, int32_t id, void *data) {

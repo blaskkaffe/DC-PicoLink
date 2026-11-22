@@ -181,12 +181,13 @@ waiting need the VPN on such a connection.
 |---|---|
 | `main/link.c` | link to the cable (UART or SPI slave), packets, `get hello` every second, self-test echo |
 | `main/wifi.c` | setup network + home network (NVS) |
-| `main/web.c` | the page (`/`) and its API: `GET /api/status`, `POST /api/wifi`, `/api/dc1`, `/api/serial`, `/api/net`, `/api/vpnprof`, `/api/update`, and `GET`/`POST /api/sd` (the slot card's files, `sdfs.c`) |
+| `main/web.c` | the page (`/`) and its API: `GET /api/status`, `POST /api/wifi`, `GET /api/wifiscan` (the Wi-Fi search),  `/api/dc1`, `/api/serial`, `/api/net`, `/api/vpnprof`, `/api/update`, and `GET`/`POST /api/sd` (the slot card's files, `sdfs.c`) |
 | `main/ppp_srv.c` | modem emulation, PPP server, NAT, call control (serial cable and USB modem) |
 | `main/dc_eth.c` | the cable's W5500 network as an interface |
 | `main/wired.c` | the W5500 module: uplink or BBA port |
 | `main/usbport.c` | the USB socket as host: a DC-PicoLink cable (link over USB) or, for anything else, the modem driver |
 | `main/usbmodem.c` | CDC-ACM modem, dial tone and answering |
+| `main/dcapi.c` | the DC API: `POST /dcapi` (dc1 text: net.*, wifi.*), `POST /dcnow`, `/dcnet`, `GET /tag`, `/openmenu/poll` (`dcapi_model.h`) |
 | `main/dcnet.c`, `main/netlink.c` | DCNet; Netlink, game servers, XBAND |
 | `main/vpn.c`, `main/ovpn.c` | VPN task, profiles, the tunnel interface; the OpenVPN client |
 | `main/portfwd.c` | UPnP, NAT port maps (only without a home address), shared-IPv4 check |
