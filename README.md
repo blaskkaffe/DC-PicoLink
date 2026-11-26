@@ -151,7 +151,7 @@ insulation (Kapton) between the two boards' backs.
 
 Left 4-9 are the Zero's power sense (GP29), SD slot pins (GP28, GP26, GP15, GP14) and the free GP27 over the ESP32's W5500 pins (GPIO9-13):
 all used, each from the outside (the Zero's edge pads, the SuperMini's holes from its outer face), none joined.
-The same pin map serves the stripboard layout ([hardware/STRIPBOARD.md](hardware/STRIPBOARD.md)): there the boards stand side by side. The Zero's bottom
+The same pin map serves the stripboard layout ([hardware/STRIPBOARD.md](hardware/STRIPBOARD.md)) and the perfboard build ([hardware/PERFBOARD.md](hardware/PERFBOARD.md), with a wiring drawing): there the boards stand side by side. The Zero's bottom
 edge GP9-13 is the Dreamcast (table above). GP16 is the Zero's own RGB LED (red: no ESP32,
 yellow: damaged link packets, green: link up, blue: link up and the Dreamcast on).
 

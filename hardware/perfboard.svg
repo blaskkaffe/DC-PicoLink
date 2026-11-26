@@ -1,0 +1,304 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="742" viewBox="0 0 680 742">
+<title>DC-PicoLink perfboard wiring</title>
+<style>.t{font:11px Arial,Helvetica,sans-serif;fill:#2c2c2a}.s{font:10px Arial,Helvetica,sans-serif;fill:#2c2c2a}.x{font:9px Arial,Helvetica,sans-serif;fill:#2c2c2a}.h{font:bold 12px Arial,Helvetica,sans-serif;fill:#2c2c2a}.d{opacity:.5}</style>
+<defs><pattern id="h" x="51.5" y="27.5" width="25" height="25" patternUnits="userSpaceOnUse"><circle cx="12.5" cy="12.5" r="1.6" fill="#B4B2A9"/></pattern></defs>
+<rect width="680" height="742" fill="#ffffff"/>
+<rect x="51.5" y="27.5" width="600" height="250" fill="url(#h)"/>
+<text class="s" x="64" y="12" text-anchor="middle" dominant-baseline="central" >A</text>
+<text class="s" x="89" y="12" text-anchor="middle" dominant-baseline="central" >B</text>
+<text class="s" x="114" y="12" text-anchor="middle" dominant-baseline="central" >C</text>
+<text class="s" x="139" y="12" text-anchor="middle" dominant-baseline="central" >D</text>
+<text class="s" x="164" y="12" text-anchor="middle" dominant-baseline="central" >E</text>
+<text class="s" x="189" y="12" text-anchor="middle" dominant-baseline="central" >F</text>
+<text class="s" x="214" y="12" text-anchor="middle" dominant-baseline="central" >G</text>
+<text class="s" x="239" y="12" text-anchor="middle" dominant-baseline="central" >H</text>
+<text class="s" x="264" y="12" text-anchor="middle" dominant-baseline="central" >I</text>
+<text class="s" x="289" y="12" text-anchor="middle" dominant-baseline="central" >J</text>
+<text class="s" x="314" y="12" text-anchor="middle" dominant-baseline="central" >K</text>
+<text class="s" x="339" y="12" text-anchor="middle" dominant-baseline="central" >L</text>
+<text class="s" x="364" y="12" text-anchor="middle" dominant-baseline="central" >M</text>
+<text class="s" x="389" y="12" text-anchor="middle" dominant-baseline="central" >N</text>
+<text class="s" x="414" y="12" text-anchor="middle" dominant-baseline="central" >O</text>
+<text class="s" x="439" y="12" text-anchor="middle" dominant-baseline="central" >P</text>
+<text class="s" x="464" y="12" text-anchor="middle" dominant-baseline="central" >Q</text>
+<text class="s" x="489" y="12" text-anchor="middle" dominant-baseline="central" >R</text>
+<text class="s" x="514" y="12" text-anchor="middle" dominant-baseline="central" >S</text>
+<text class="s" x="539" y="12" text-anchor="middle" dominant-baseline="central" >T</text>
+<text class="s" x="564" y="12" text-anchor="middle" dominant-baseline="central" >U</text>
+<text class="s" x="589" y="12" text-anchor="middle" dominant-baseline="central" >V</text>
+<text class="s" x="614" y="12" text-anchor="middle" dominant-baseline="central" >W</text>
+<text class="s" x="639" y="12" text-anchor="middle" dominant-baseline="central" >X</text>
+<text class="s" x="3" y="40" text-anchor="start" dominant-baseline="central" >1</text>
+<text class="s" x="3" y="65" text-anchor="start" dominant-baseline="central" >2</text>
+<text class="s" x="3" y="90" text-anchor="start" dominant-baseline="central" >3</text>
+<text class="s" x="3" y="115" text-anchor="start" dominant-baseline="central" >4</text>
+<text class="s" x="3" y="140" text-anchor="start" dominant-baseline="central" >5</text>
+<text class="s" x="3" y="165" text-anchor="start" dominant-baseline="central" >6</text>
+<text class="s" x="3" y="190" text-anchor="start" dominant-baseline="central" >7</text>
+<text class="s" x="3" y="215" text-anchor="start" dominant-baseline="central" >8</text>
+<text class="s" x="3" y="240" text-anchor="start" dominant-baseline="central" >9</text>
+<text class="s" x="3" y="265" text-anchor="start" dominant-baseline="central" >10</text>
+<rect x="50" y="28" width="34" height="76" rx="4" fill="none" stroke="#888780"/>
+<rect x="50" y="128" width="34" height="150" rx="4" fill="none" stroke="#888780"/>
+<rect x="108" y="80" width="168" height="172" rx="5" fill="none" stroke="#378ADD" stroke-dasharray="4 3"/>
+<text class="t" x="192" y="118" text-anchor="middle" dominant-baseline="central" >SD module</text>
+<rect x="279" y="26" width="172" height="236" rx="6" fill="none" stroke="#7F77DD" stroke-dasharray="4 3"/>
+<rect x="477" y="26" width="174" height="226" rx="6" fill="none" stroke="#1D9E75" stroke-dasharray="4 3"/>
+<path d="M439,115 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M439,140 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M439,165 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M439,190 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M439,215 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M439,240 H489" fill="none" stroke="#1D9E75" stroke-width="2" stroke-linejoin="round" />
+<path d="M139,240 V140 H289" fill="none" stroke="#378ADD" stroke-width="2" stroke-linejoin="round" />
+<path d="M164,240 V190 H289" fill="none" stroke="#378ADD" stroke-width="2" stroke-linejoin="round" />
+<path d="M189,240 V215 H289" fill="none" stroke="#378ADD" stroke-width="2" stroke-linejoin="round" />
+<path d="M214,240 V228 H289 V240" fill="none" stroke="#378ADD" stroke-width="2" stroke-linejoin="round" />
+<path d="M239,240 V108 H285 V90 H289" fill="none" stroke="#BA7517" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,65 H76 V52 H277 V65 H289" fill="none" stroke="#5F5E5A" stroke-width="2" stroke-linejoin="round" />
+<path d="M277,52 H655 V65 H639" fill="none" stroke="#5F5E5A" stroke-width="2" stroke-linejoin="round" />
+<path d="M114,240 V96 H277 V65" fill="none" stroke="#5F5E5A" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,40 H246 M259,40 H264 M264,40 H289 M289,40 V30 H639 V40" fill="none" stroke="#E24B4A" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,90 H226 V65 H245 M259,65 H264 V115 H289" fill="none" stroke="#D85A30" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,140 H106 V290 H339 V265" fill="none" stroke="#7F77DD" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,165 H101 V304 H364 V265" fill="none" stroke="#7F77DD" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,240 H96 V318 H389 V265" fill="none" stroke="#7F77DD" stroke-width="2" stroke-linejoin="round" />
+<path d="M64,265 H91 V332 H414 V265" fill="none" stroke="#7F77DD" stroke-width="2" stroke-linejoin="round" />
+<path d="M339,258 V265 M364,258 V265 M389,258 V265 M414,258 V265" fill="none" stroke="#7F77DD" stroke-width="2" stroke-linejoin="round" />
+<rect x="308" y="250" width="12" height="8" fill="none" stroke="#BA7517" stroke-width="1.5"/>
+<rect x="333" y="250" width="12" height="8" fill="none" stroke="#BA7517" stroke-width="1.5"/>
+<rect x="358" y="250" width="12" height="8" fill="none" stroke="#BA7517" stroke-width="1.5"/>
+<rect x="383" y="250" width="12" height="8" fill="none" stroke="#BA7517" stroke-width="1.5"/>
+<rect x="408" y="250" width="12" height="8" fill="none" stroke="#BA7517" stroke-width="1.5"/>
+<polygon points="246,33 246,47 257,40" fill="#fff" stroke="#E24B4A" stroke-width="1.5"/><line x1="259" y1="33" x2="259" y2="47" stroke="#E24B4A" stroke-width="2"/>
+<rect x="245" y="59" width="14" height="12" rx="2" fill="#fff" stroke="#D85A30" stroke-width="1.5"/>
+<text class="x" x="252" y="26" text-anchor="middle" dominant-baseline="central" >D</text>
+<text class="x" x="252" y="79" text-anchor="middle" dominant-baseline="central" >R 10k</text>
+<circle cx="277" cy="52" r="3" fill="#5F5E5A"/>
+<circle cx="277" cy="65" r="3" fill="#5F5E5A"/>
+<circle cx="64" cy="40" r="5" fill="#E24B4A"/>
+<circle cx="64" cy="65" r="5" fill="#5F5E5A"/>
+<circle cx="64" cy="90" r="5" fill="#D85A30"/>
+<circle cx="64" cy="140" r="5" fill="#7F77DD"/>
+<circle cx="64" cy="165" r="5" fill="#7F77DD"/>
+<circle cx="64" cy="240" r="5" fill="#7F77DD"/>
+<circle cx="64" cy="265" r="5" fill="#7F77DD"/>
+<circle cx="64" cy="115" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="64" cy="190" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="64" cy="215" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="289" cy="40" r="5" fill="#E24B4A"/>
+<circle cx="289" cy="65" r="5" fill="#5F5E5A"/>
+<circle cx="289" cy="90" r="5" fill="#BA7517"/>
+<circle cx="289" cy="115" r="5" fill="#D85A30"/>
+<circle cx="289" cy="140" r="5" fill="#378ADD"/>
+<circle cx="289" cy="190" r="5" fill="#378ADD"/>
+<circle cx="289" cy="215" r="5" fill="#378ADD"/>
+<circle cx="289" cy="240" r="5" fill="#378ADD"/>
+<circle cx="289" cy="165" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="239" cy="40" r="5" fill="#E24B4A"/>
+<circle cx="264" cy="40" r="5" fill="#E24B4A"/>
+<circle cx="239" cy="65" r="5" fill="#D85A30"/>
+<circle cx="264" cy="65" r="5" fill="#D85A30"/>
+<circle cx="114" cy="240" r="5" fill="#378ADD"/>
+<circle cx="139" cy="240" r="5" fill="#378ADD"/>
+<circle cx="164" cy="240" r="5" fill="#378ADD"/>
+<circle cx="189" cy="240" r="5" fill="#378ADD"/>
+<circle cx="214" cy="240" r="5" fill="#378ADD"/>
+<circle cx="239" cy="240" r="5" fill="#378ADD"/>
+<circle cx="439" cy="40" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="439" cy="65" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="439" cy="90" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="439" cy="115" r="5" fill="#1D9E75"/>
+<circle cx="439" cy="140" r="5" fill="#1D9E75"/>
+<circle cx="439" cy="165" r="5" fill="#1D9E75"/>
+<circle cx="439" cy="190" r="5" fill="#1D9E75"/>
+<circle cx="439" cy="215" r="5" fill="#1D9E75"/>
+<circle cx="439" cy="240" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="40" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="489" cy="65" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="489" cy="90" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="489" cy="115" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="140" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="165" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="190" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="215" r="5" fill="#1D9E75"/>
+<circle cx="489" cy="240" r="5" fill="#1D9E75"/>
+<circle cx="639" cy="40" r="5" fill="#E24B4A"/>
+<circle cx="639" cy="65" r="5" fill="#5F5E5A"/>
+<circle cx="639" cy="90" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="115" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="140" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="165" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="190" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="215" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="639" cy="240" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="314" cy="265" r="4" fill="none" stroke="#888780" stroke-width="1.5" opacity=".5"/>
+<circle cx="339" cy="265" r="5" fill="#7F77DD"/>
+<circle cx="364" cy="265" r="5" fill="#7F77DD"/>
+<circle cx="389" cy="265" r="5" fill="#7F77DD"/>
+<circle cx="414" cy="265" r="5" fill="#7F77DD"/>
+<text class="s" x="46" y="40" text-anchor="end" dominant-baseline="central" >5V</text>
+<text class="s" x="46" y="65" text-anchor="end" dominant-baseline="central" >GND</text>
+<text class="s" x="46" y="90" text-anchor="end" dominant-baseline="central" >3V3</text>
+<text class="s" x="46" y="140" text-anchor="end" dominant-baseline="central" >RTS</text>
+<text class="s" x="46" y="165" text-anchor="end" dominant-baseline="central" >RXD</text>
+<text class="s" x="46" y="240" text-anchor="end" dominant-baseline="central" >TXD</text>
+<text class="s" x="46" y="265" text-anchor="end" dominant-baseline="central" >CTS</text>
+<text class="x" x="46" y="190" text-anchor="end" dominant-baseline="central" opacity=".5">unused</text>
+<text class="x" x="46" y="215" text-anchor="end" dominant-baseline="central" opacity=".5">unused</text>
+<text class="t" x="298" y="40" text-anchor="start" dominant-baseline="central" >5V</text>
+<text class="t" x="298" y="65" text-anchor="start" dominant-baseline="central" >GND</text>
+<text class="t" x="298" y="90" text-anchor="start" dominant-baseline="central" >3V3</text>
+<text class="t" x="298" y="115" text-anchor="start" dominant-baseline="central" >29</text>
+<text class="t" x="298" y="140" text-anchor="start" dominant-baseline="central" >28</text>
+<text class="t" x="298" y="165" text-anchor="start" dominant-baseline="central" >27</text>
+<text class="t" x="298" y="190" text-anchor="start" dominant-baseline="central" >26</text>
+<text class="t" x="298" y="215" text-anchor="start" dominant-baseline="central" >15</text>
+<text class="t" x="298" y="240" text-anchor="start" dominant-baseline="central" >14</text>
+<text class="t" x="430" y="40" text-anchor="end" dominant-baseline="central" >0</text>
+<text class="t" x="430" y="65" text-anchor="end" dominant-baseline="central" >1</text>
+<text class="t" x="430" y="90" text-anchor="end" dominant-baseline="central" >2</text>
+<text class="t" x="430" y="115" text-anchor="end" dominant-baseline="central" >3</text>
+<text class="t" x="430" y="140" text-anchor="end" dominant-baseline="central" >4</text>
+<text class="t" x="430" y="165" text-anchor="end" dominant-baseline="central" >5</text>
+<text class="t" x="430" y="190" text-anchor="end" dominant-baseline="central" >6</text>
+<text class="t" x="430" y="215" text-anchor="end" dominant-baseline="central" >7</text>
+<text class="t" x="430" y="240" text-anchor="end" dominant-baseline="central" >8</text>
+<text class="t" x="498" y="40" text-anchor="start" dominant-baseline="central" >43</text>
+<text class="t" x="498" y="65" text-anchor="start" dominant-baseline="central" >44</text>
+<text class="t" x="498" y="90" text-anchor="start" dominant-baseline="central" >1</text>
+<text class="t" x="498" y="115" text-anchor="start" dominant-baseline="central" >2</text>
+<text class="t" x="498" y="140" text-anchor="start" dominant-baseline="central" >3</text>
+<text class="t" x="498" y="165" text-anchor="start" dominant-baseline="central" >4</text>
+<text class="t" x="498" y="190" text-anchor="start" dominant-baseline="central" >5</text>
+<text class="t" x="498" y="215" text-anchor="start" dominant-baseline="central" >6</text>
+<text class="t" x="498" y="240" text-anchor="start" dominant-baseline="central" >7</text>
+<text class="t" x="630" y="40" text-anchor="end" dominant-baseline="central" >5V</text>
+<text class="t" x="630" y="65" text-anchor="end" dominant-baseline="central" >GND</text>
+<text class="t" x="630" y="90" text-anchor="end" dominant-baseline="central" >3V3</text>
+<text class="t" x="630" y="115" text-anchor="end" dominant-baseline="central" >13</text>
+<text class="t" x="630" y="140" text-anchor="end" dominant-baseline="central" >12</text>
+<text class="t" x="630" y="165" text-anchor="end" dominant-baseline="central" >11</text>
+<text class="t" x="630" y="190" text-anchor="end" dominant-baseline="central" >10</text>
+<text class="t" x="630" y="215" text-anchor="end" dominant-baseline="central" >9</text>
+<text class="t" x="630" y="240" text-anchor="end" dominant-baseline="central" >8</text>
+<text class="x" x="464" y="108" text-anchor="middle" dominant-baseline="central" >HS</text>
+<text class="x" x="464" y="133" text-anchor="middle" dominant-baseline="central" >MISO</text>
+<text class="x" x="464" y="158" text-anchor="middle" dominant-baseline="central" >CS</text>
+<text class="x" x="464" y="183" text-anchor="middle" dominant-baseline="central" >CLK</text>
+<text class="x" x="464" y="208" text-anchor="middle" dominant-baseline="central" >MOSI</text>
+<text class="x" x="464" y="233" text-anchor="middle" dominant-baseline="central" >DR</text>
+<text class="x" x="114" y="252" text-anchor="middle" dominant-baseline="central" >GND</text>
+<text class="x" x="139" y="252" text-anchor="middle" dominant-baseline="central" >MISO</text>
+<text class="x" x="164" y="252" text-anchor="middle" dominant-baseline="central" >CLK</text>
+<text class="x" x="189" y="252" text-anchor="middle" dominant-baseline="central" >MOSI</text>
+<text class="x" x="214" y="252" text-anchor="middle" dominant-baseline="central" >CS</text>
+<text class="x" x="239" y="252" text-anchor="middle" dominant-baseline="central" >3V3</text>
+<text class="x" x="316" y="244" text-anchor="middle" dominant-baseline="central" >13</text>
+<text class="x" x="339" y="244" text-anchor="middle" dominant-baseline="central" >12</text>
+<text class="x" x="364" y="244" text-anchor="middle" dominant-baseline="central" >11</text>
+<text class="x" x="389" y="244" text-anchor="middle" dominant-baseline="central" >10</text>
+<text class="x" x="414" y="244" text-anchor="middle" dominant-baseline="central" >9</text>
+<text class="t" x="364" y="128" text-anchor="middle" dominant-baseline="central" >RP2040</text>
+<text class="t" x="364" y="146" text-anchor="middle" dominant-baseline="central" >Zero</text>
+<text class="t" x="564" y="140" text-anchor="middle" dominant-baseline="central" >ESP32-S3</text>
+<text class="x" x="130" y="283" text-anchor="start" dominant-baseline="central" >A5 purple RTS (plug pin 6) to GP12</text>
+<text class="x" x="130" y="297" text-anchor="start" dominant-baseline="central" >A6 blue RXD (plug pin 4) to GP11</text>
+<text class="x" x="130" y="311" text-anchor="start" dominant-baseline="central" >A9 red TXD (plug pin 5) to GP10</text>
+<text class="x" x="130" y="325" text-anchor="start" dominant-baseline="central" >A10 orange CTS (plug pin 7) to GP9</text>
+<text class="t" x="20" y="352" text-anchor="start" dominant-baseline="central" >red 5V   gray GND   coral 3.3V sense   amber 3V3   blue SD   green Zero-ESP link   purple Dreamcast serial</text>
+<text class="t" x="20" y="366" text-anchor="start" dominant-baseline="central" >Front view, wires run on the back. R = 10k at H2-I2, D = 1N5819 at H1 (anode) to I1 (bar). A7, A8: no wire.</text>
+<text class="h" x="20" y="396" text-anchor="start" dominant-baseline="central" >Dreamcast plug, front (SD slot at the bottom): pin, signal, wire</text>
+<rect x="35" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="70" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">-</text>
+<text class="x" x="70" y="429" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="70" cy="452" r="7" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="2 2"/>
+<text class="x" x="70" y="468" text-anchor="middle" dominant-baseline="central" >no wire</text>
+<rect x="125" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="160" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">9</text>
+<text class="x" x="160" y="429" text-anchor="middle" dominant-baseline="central" >RESET</text>
+<circle cx="160" cy="452" r="7" fill="#EAC21A" stroke="#444" stroke-width="1"/>
+<text class="x" x="160" y="468" text-anchor="middle" dominant-baseline="central" >yellow, unused</text>
+<rect x="215" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="250" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">7</text>
+<text class="x" x="250" y="429" text-anchor="middle" dominant-baseline="central" >CTS</text>
+<circle cx="250" cy="452" r="7" fill="#F07F1E" stroke="#444" stroke-width="1"/>
+<text class="x" x="250" y="468" text-anchor="middle" dominant-baseline="central" >orange</text>
+<rect x="305" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="340" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">5</text>
+<text class="x" x="340" y="429" text-anchor="middle" dominant-baseline="central" >TX2 = TXD</text>
+<circle cx="340" cy="452" r="7" fill="#E24B4A" stroke="#444" stroke-width="1"/>
+<text class="x" x="340" y="468" text-anchor="middle" dominant-baseline="central" >red</text>
+<rect x="395" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="430" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">3</text>
+<text class="x" x="430" y="429" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="430" cy="452" r="7" fill="#222222" stroke="#444" stroke-width="1"/>
+<text class="x" x="430" y="468" text-anchor="middle" dominant-baseline="central" >black</text>
+<rect x="485" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="520" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">1</text>
+<text class="x" x="520" y="429" text-anchor="middle" dominant-baseline="central" >+5V</text>
+<circle cx="520" cy="452" r="7" fill="#FFFFFF" stroke="#444" stroke-width="1"/>
+<text class="x" x="520" y="468" text-anchor="middle" dominant-baseline="central" >white</text>
+<rect x="575" y="406" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="610" y="415" text-anchor="middle" dominant-baseline="central" font-weight="bold">-</text>
+<text class="x" x="610" y="429" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="610" cy="452" r="7" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="2 2"/>
+<text class="x" x="610" y="468" text-anchor="middle" dominant-baseline="central" >no wire</text>
+<text class="h" x="20" y="492" text-anchor="start" dominant-baseline="central" >Dreamcast plug, back (FFC connector at the bottom)</text>
+<rect x="35" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="70" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">-</text>
+<text class="x" x="70" y="525" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="70" cy="548" r="7" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="2 2"/>
+<text class="x" x="70" y="564" text-anchor="middle" dominant-baseline="central" >no wire</text>
+<rect x="125" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="160" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">2</text>
+<text class="x" x="160" y="525" text-anchor="middle" dominant-baseline="central" >SCK</text>
+<circle cx="160" cy="548" r="7" fill="#1D9E75" stroke="#444" stroke-width="1"/>
+<text class="x" x="160" y="564" text-anchor="middle" dominant-baseline="central" >green, unused</text>
+<rect x="215" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="250" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">4</text>
+<text class="x" x="250" y="525" text-anchor="middle" dominant-baseline="central" >RX2 = RXD</text>
+<circle cx="250" cy="548" r="7" fill="#378ADD" stroke="#444" stroke-width="1"/>
+<text class="x" x="250" y="564" text-anchor="middle" dominant-baseline="central" >blue</text>
+<rect x="305" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="340" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">6</text>
+<text class="x" x="340" y="525" text-anchor="middle" dominant-baseline="central" >RTS</text>
+<circle cx="340" cy="548" r="7" fill="#7F77DD" stroke="#444" stroke-width="1"/>
+<text class="x" x="340" y="564" text-anchor="middle" dominant-baseline="central" >purple</text>
+<rect x="395" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="430" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">8</text>
+<text class="x" x="430" y="525" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="430" cy="548" r="7" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="2 2"/>
+<text class="x" x="430" y="564" text-anchor="middle" dominant-baseline="central" >no wire</text>
+<rect x="485" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="520" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">10</text>
+<text class="x" x="520" y="525" text-anchor="middle" dominant-baseline="central" >+3.3V</text>
+<circle cx="520" cy="548" r="7" fill="#8A8A8A" stroke="#444" stroke-width="1"/>
+<text class="x" x="520" y="564" text-anchor="middle" dominant-baseline="central" >gray</text>
+<rect x="575" y="502" width="70" height="30" rx="3" fill="#f1efe8" stroke="#888780"/>
+<text class="t" x="610" y="511" text-anchor="middle" dominant-baseline="central" font-weight="bold">-</text>
+<text class="x" x="610" y="525" text-anchor="middle" dominant-baseline="central" >GND</text>
+<circle cx="610" cy="548" r="7" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="2 2"/>
+<text class="x" x="610" y="564" text-anchor="middle" dominant-baseline="central" >no wire</text>
+<text class="h" x="20" y="588" text-anchor="start" dominant-baseline="central" >JST housings: pin 1 is the one nearest the board edge (3-pin) or nearest the 3-pin (6-pin)</text>
+<text class="h" x="20" y="610" text-anchor="start" dominant-baseline="central" >3-pin, A1-A3</text>
+<circle cx="28" cy="630" r="6" fill="#FFFFFF" stroke="#444"/>
+<text class="t" x="42" y="630" text-anchor="start" dominant-baseline="central" >1  white  +5V  (plug pin 1)</text>
+<circle cx="28" cy="648" r="6" fill="#222222" stroke="#444"/>
+<text class="t" x="42" y="648" text-anchor="start" dominant-baseline="central" >2  black  GND  (plug pin 3)</text>
+<circle cx="28" cy="666" r="6" fill="#8A8A8A" stroke="#444"/>
+<text class="t" x="42" y="666" text-anchor="start" dominant-baseline="central" >3  gray  3V3  (plug pin 10), 10k to GP29</text>
+<text class="h" x="340" y="610" text-anchor="start" dominant-baseline="central" >6-pin, A5-A10</text>
+<circle cx="348" cy="630" r="6" fill="#7F77DD" stroke="#444"/>
+<text class="t" x="362" y="630" text-anchor="start" dominant-baseline="central" >1  purple  RTS  (plug pin 6) to GP12</text>
+<circle cx="348" cy="647" r="6" fill="#378ADD" stroke="#444"/>
+<text class="t" x="362" y="647" text-anchor="start" dominant-baseline="central" >2  blue  RXD  (plug pin 4) to GP11</text>
+<circle cx="348" cy="664" r="6" fill="#1D9E75" stroke="#444"/>
+<text class="t" x="362" y="664" text-anchor="start" dominant-baseline="central" >3  green  SCK  (plug pin 2): not used</text>
+<circle cx="348" cy="681" r="6" fill="#EAC21A" stroke="#444"/>
+<text class="t" x="362" y="681" text-anchor="start" dominant-baseline="central" >4  yellow  RESET  (plug pin 9): not used</text>
+<circle cx="348" cy="698" r="6" fill="#E24B4A" stroke="#444"/>
+<text class="t" x="362" y="698" text-anchor="start" dominant-baseline="central" >5  red  TXD  (plug pin 5) to GP10</text>
+<circle cx="348" cy="715" r="6" fill="#F07F1E" stroke="#444"/>
+<text class="t" x="362" y="715" text-anchor="start" dominant-baseline="central" >6  orange  CTS  (plug pin 7) to GP9</text>
+</svg>
