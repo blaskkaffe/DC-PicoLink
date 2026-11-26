@@ -1,14 +1,14 @@
 #!/bin/bash
 # DC-PicoLink on any Linux computer: the USB modem server (dc-modemd) and, unless --no-cable,
 # the RP2040 cable's side too (network, DHCP/DNS/NAT, SD image: host/dreampi/install.sh, which
-# does not need a DreamPi). Run: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp]
+# does not need a DreamPi). Run: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp] [--web]
 set -eu
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
 cd "$(dirname "$0")"
-cable=1; modem=1; ppp=0
+cable=1; modem=1; ppp=0; web=0
 for a in "$@"; do case "$a" in
-    --no-cable) cable=0 ;; --no-modem) modem=0 ;; --cable-ppp) ppp=1 ;;
-    *) echo "usage: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp]" >&2; exit 1 ;;
+    --no-cable) cable=0 ;; --no-modem) modem=0 ;; --cable-ppp) ppp=1 ;; --web) web=1 ;;
+    *) echo "usage: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp] [--web]" >&2; exit 1 ;;
 esac; done
 export PATH="$PATH:/usr/sbin:/sbin"
 command -v systemctl >/dev/null 2>&1 || { echo "this needs systemd (systemctl not found)" >&2; exit 1; }
@@ -33,10 +33,17 @@ if [ "$modem" = 1 ]; then
         udevadm control --reload 2>/dev/null || true
     fi
     install -m 644 dc-cabled.service /etc/systemd/system/dc-cabled.service
+    install -m 644 dc-web.service /etc/systemd/system/dc-web.service
+    install -d /usr/local/share/dc-modemd/web
+    install -m 644 web/index.html /usr/local/share/dc-modemd/web/index.html
     systemctl daemon-reload
     systemctl enable dc-modemd.service
     systemctl restart dc-modemd.service
-    if [ "$ppp" = 1 ]; then     # serial PPP on the cable: takes /dev/dccable, so not on by default
+    if [ "$web" = 1 ]; then     # the modem is then Chrome's: page and relay on http://127.0.0.1:8099/
+        systemctl disable --now dc-modemd.service dc-cabled.service
+        systemctl enable --now dc-web.service
+        echo "Open http://127.0.0.1:8099/ in Chrome or Edge on this computer."
+    elif [ "$ppp" = 1 ]; then     # serial PPP on the cable: takes /dev/dccable, so not on by default
         systemctl disable --now dc-modemd.service
         systemctl enable --now dc-cabled.service
     fi

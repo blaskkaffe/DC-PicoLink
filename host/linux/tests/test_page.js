@@ -1,0 +1,21 @@
+// The page's parsers (host/linux/web/index.html), same vectors as test_modemd.py. Run: node test_page.js
+const fs = require("fs"), path = require("path"), assert = require("assert");
+const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
+const js = html.split("<script>")[1].split("</script>")[0];
+const part = js.slice(js.indexOf("const DLE"), js.indexOf("// ---- the serial port ----"));
+const { Rx, Hayes, toneBlock } = new Function(part + "; return { Rx, Hayes, toneBlock };")();
+let fails = 0;
+const check = (n, ok) => { console.log((ok ? "ok   " : "FAIL ") + n); if (!ok) fails++; };
+let r = new Rx(); check("page: OK line", [..."\r\nOK\r\n"].map(c => r.lineByte(c.charCodeAt(0))).includes("OK"));
+r = new Rx(); [..."\r\nCONNECT 33600\r\n"].forEach(c => r.lineByte(c.charCodeAt(0))); check("page: CONNECT with speed", r.last === "CONNECT 33600");
+r = new Rx(); const keys = [0x10, 53, 0x10, 0x10, 0x10, 42, 0x10, 47].map(b => r.voiceByte(b)).filter(Boolean);
+check("page: voice keys only", keys.join("") === "5*");
+r = new Rx(); const got = [...Buffer.from("ppp\x7e\r\nNO CARRIER\r\n", "latin1")].map(b => r.dataByte(b));
+check("page: NO CARRIER in data", got[got.length - 1] === true && !got.slice(0, -1).some(Boolean));
+const t = toneBlock(); check("page: tone 800 samples, no DLE", t.length === 800 && !t.includes(0x10));
+const feed = (h, s) => { let o = "", ev = null; for (const c of Buffer.from(s, "latin1")) { const [x, e] = h.byte(c); o += x; ev = e || ev; } return [o, ev]; };
+let h = new Hayes(); let [o, ev] = feed(h, "ATZ0\r"); check("page: Hayes echo and OK", o === "ATZ0\r\r\nOK\r\n" && ev === null);
+h = new Hayes(); [o, ev] = feed(h, "ATDT555-1234\r"); check("page: Hayes dial", ev === "dial" && o.includes("CONNECT 33600") && h.number === "5551234");
+h = new Hayes(); [o, ev] = feed(h, "\x7e"); check("page: bare PPP flag", ev === "ppp" && o === "");
+h = new Hayes(); [o, ev] = feed(h, "ATE0V0\r"); check("page: E0 V0", !h.echo && !h.verbose && o.endsWith("0\r"));
+process.exit(fails ? 1 : 0);

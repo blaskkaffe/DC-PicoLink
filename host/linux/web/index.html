@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DC-PicoLink: Dreamcast modem in the browser</title>
+<style>
+ body{font:15px system-ui,sans-serif;max-width:46rem;margin:1.5rem auto;padding:0 1rem;color:#222}
+ button,select{font:inherit;padding:.4rem .8rem;margin:.2rem .2rem .2rem 0}
+ #st{font-weight:600;margin:.8rem 0}
+ pre{background:#111;color:#cfc;padding:.7rem;height:18rem;overflow:auto;border-radius:6px;font-size:13px;white-space:pre-wrap}
+ .small{color:#666;font-size:13px}
+</style></head><body>
+<h1>Dreamcast modem in the browser</h1>
+<p class="small">Plug a USB voice modem (as for DreamPi) or the RP2040 cable into <b>this</b> computer, press Connect and pick its port.
+The page plays the dial tone and answers the Dreamcast; the PPP, NAT and DCNet part runs in <code>dc-modemd --relay</code>, the program that served this page.
+Chrome or Edge on a desktop; leave this tab open.</p>
+<div>
+ <select id="mode"><option value="voice">USB voice modem (Dreamcast on the phone cord)</option><option value="cable">RP2040 cable (Dreamcast on the serial port)</option></select>
+ <button id="go">Connect and start</button><button id="stop" disabled>Stop</button>
+</div>
+<div id="st">Not started</div>
+<pre id="log"></pre>
+<script>
+"use strict";
+const DLE = 0x10, ETX = 0x03;
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const enc = s => new TextEncoder().encode(s);
+function log(m) { const l = $("log"); l.textContent += new Date().toLocaleTimeString() + "  " + m + "\n"; l.scrollTop = l.scrollHeight; }
+function status(s) { if ($("st").textContent !== s) { $("st").textContent = s; log(s); } }
+
+// ---- the same parsers as dc-modemd.py / firmware/usbmodem_model.h ----
+class Rx {
+  constructor() { this.line = ""; this.last = ""; this.dle = false; this.nc = 0; }
+  lineByte(b) {
+    if (b !== 13 && b !== 10) { if (this.line.length < 63) this.line += String.fromCharCode(b); return null; }
+    if (!this.line) return null;
+    const l = this.line; this.line = ""; this.last = l;
+    if (l === "OK") return "OK";
+    if (l.startsWith("CONNECT")) return "CONNECT";
+    if (l === "ERROR") return "ERROR";
+    if (["NO CARRIER", "NO ANSWER", "NO DIALTONE", "NO DIAL TONE"].includes(l)) return "NO CARRIER";
+    if (l === "BUSY") return "BUSY";
+    return null;
+  }
+  voiceByte(b) {
+    if (!this.dle) { this.dle = b === DLE; return null; }
+    this.dle = false;
+    const c = String.fromCharCode(b);
+    return "0123456789*#ABCD".includes(c) ? c : null;
+  }
+  dataByte(b) {
+    const pat = "\r\nNO CARRIER\r\n";
+    if (b === pat.charCodeAt(this.nc)) { if (++this.nc === pat.length) { this.nc = 0; return true; } }
+    else this.nc = b === 13 ? 1 : 0;
+    return false;
+  }
+}
+function toneBlock() {           // 100 ms of 350 + 440 Hz, 8-bit unsigned, 8 kHz; no sample is DLE
+  const o = new Uint8Array(800);
+  for (let i = 0; i < 800; i++) {
+    let v = 128 + Math.trunc(40 * Math.sin(2 * Math.PI * 350 * i / 8000) + 40 * Math.sin(2 * Math.PI * 440 * i / 8000));
+    o[i] = v === DLE ? DLE + 1 : v;
+  }
+  return o;
+}
+class Hayes {                    // the Dreamcast's AT commands on the cable (firmware/hayes_model.h)
+  constructor() { this.line = ""; this.echo = true; this.verbose = true; this.quiet = false; this.number = ""; }
+  res(code) {
+    if (this.quiet) return "";
+    return this.verbose ? "\r\n" + ["OK", "CONNECT 33600", "RING", "NO CARRIER", "ERROR"][code] + "\r\n" : code + "\r";
+  }
+  byte(c) {                      // [text for the Dreamcast, event]
+    if (c === 0x7E && !this.line) return ["", "ppp"];
+    let out = "", ev = null;
+    if (this.echo && c >= 8 && c !== 0x7E && c !== 0x7F && c !== 10) out += String.fromCharCode(c);
+    if (c === 13) {
+      const l = this.line.toUpperCase();
+      if (l.startsWith("AT")) { const r = this.run(l); out += r[0]; ev = r[1]; }
+      this.line = "";
+    } else if (c === 8 || c === 0x7F) this.line = this.line.slice(0, -1);
+    else if (c >= 0x20 && c < 0x7F && this.line.length < 96) this.line += String.fromCharCode(c);
+    return [out, ev];
+  }
+  run(l) {
+    let i = 2;
+    while (i < l.length) {
+      const c = l[i++];
+      if (c === " ") continue;
+      if (c === "D" || c === "A") {
+        this.number = c === "D" ? l.slice(i).replace(/[^0-9*#]/g, "") : "";
+        return [this.res(1), "dial"];
+      }
+      if ("+%\\".includes(c)) break;
+      if (c === "&") i++;
+      let j = i; while (i < l.length && l[i] >= "0" && l[i] <= "9") i++;
+      const val = i > j ? parseInt(l.slice(j, i), 10) : -1;
+      if (c === "S") { if ("=?".includes(l[i] || "x")) { i++; while (i < l.length && l[i] >= "0" && l[i] <= "9") i++; } continue; }
+      if (c === "E") this.echo = val !== 0;
+      else if (c === "V") this.verbose = val !== 0;
+      else if (c === "Q") this.quiet = val > 0;
+      else if (c === "Z") { this.echo = this.verbose = true; this.quiet = false; }
+    }
+    return [this.res(0), null];
+  }
+}
+
+// ---- the serial port ----
+let port, writer, reader, onData = () => {}, running = false, ws = null, onGone = null;
+async function openPort() {
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  writer = port.writable.getWriter();
+  reader = port.readable.getReader();
+  (async () => {
+    try { for (;;) { const { value, done } = await reader.read(); if (done) break; if (value) onData(value); } }
+    catch (e) { log("serial: " + e.message); }
+    if (running && onGone) onGone();
+  })();
+}
+async function closePort() {
+  try { await reader.cancel(); } catch (e) {}
+  try { reader.releaseLock(); writer.releaseLock(); await port.close(); } catch (e) {}
+}
+const send = d => writer.write(typeof d === "string" ? enc(d) : d);
+
+async function cmd(text, want = "OK", ms = 2000) {
+  const rx = new Rx();
+  return new Promise(async res => {
+    const t = setTimeout(() => { onData = () => {}; res(false); }, ms);
+    onData = v => { for (const b of v) { const e = rx.lineByte(b); if (e === want) { clearTimeout(t); onData = () => {}; res(rx.last || true); return; }
+                       if (["ERROR", "NO CARRIER", "BUSY"].includes(e)) { clearTimeout(t); onData = () => {}; res(false); return; } } };
+    await send(text + "\r");
+  });
+}
+async function resetModem() {
+  if (!await cmd("ATZ0", "OK", 3000)) return false;
+  await sleep(1000); await cmd("AT&F0"); if (!await cmd("ATE0W2")) await cmd("ATE0");
+  return true;
+}
+async function hangUp() { onData = () => {}; await sleep(1100); await send("+++"); await sleep(1100); await cmd("ATH0", "OK", 3000); }
+async function endTone() { onData = () => {}; await send(new Uint8Array([0, DLE, ETX, 13, 10])); await hangUp(); }
+
+// ---- the relay (pppd and DCNet run there) ----
+function openRelay(dial) {
+  return new Promise((res, rej) => {
+    const w = new WebSocket("ws://" + location.host + "/ws"); w.binaryType = "arraybuffer";
+    w.onopen = () => w.send(dial);
+    w.onerror = () => rej(new Error("cannot reach dc-modemd --relay"));
+    w.onclose = () => { if (ws === w && ws.onover) ws.onover(); };
+    w.onmessage = ev => {
+      if (typeof ev.data === "string") {
+        if (ev.data === "over") { if (w.onover) w.onover(); return; }
+        if (!w.answered) { w.answered = true; res([w, ev.data]); return; }
+      } else if (w.onbin) w.onbin(new Uint8Array(ev.data));
+    };
+  });
+}
+// the line is now in data mode: bytes both ways until NO CARRIER or the relay ends
+function bridge(w) {
+  return new Promise(done => {
+    const rx = new Rx(); let ended = false;
+    const end = why => { if (ended) return; ended = true; log(why); onData = () => {}; try { w.close(); } catch (e) {} done(); };
+    w.onbin = d => send(d);
+    w.onover = () => end("the relay ended the call");
+    onGone = () => end("the port went away");
+    onData = v => { if (w.readyState === 1) w.send(v); for (const b of v) if (rx.dataByte(b)) { end("the line dropped (NO CARRIER)"); return; } };
+    $("stop").onclick = () => end("stopped");
+  });
+}
+
+// ---- USB voice modem, as esp32/main/usbmodem.c ----
+async function voiceCall() {
+  status("setting up the modem");
+  if (!await resetModem()) {
+    await send(new Uint8Array([0, DLE, ETX, 13, 10])); await hangUp();
+    if (!await resetModem()) { status("the modem does not answer AT commands"); await sleep(5000); return; }
+  }
+  if (!(await cmd("AT+FCLASS=8") && await cmd("AT+VLS=1") && await cmd("AT+VSM=1,8000") && await cmd("AT+VTX", "CONNECT", 3000))) {
+    status("this modem has no voice mode (needed to hear the Dreamcast dial); a Conexant-based modem works"); await cmd("ATH0"); await sleep(10000); return;
+  }
+  status("dial tone on, waiting for the Dreamcast to dial");
+  const tone = toneBlock(), rx = new Rx(); let dial = "", last = 0, prefix = -1e9, key = null;
+  onData = v => { for (const b of v) { const k = rx.voiceByte(b); if (k && dial.length < 23) { dial += k; last = performance.now(); } } };
+  for (;;) {
+    if (!running) return;
+    send(tone);
+    await sleep(100);
+    if (dial && performance.now() - last > 2000) {
+      if (dial === "*70") { dial = ""; continue; }
+      if (dial === "*69") { prefix = performance.now(); log("*69 heard (DCNet prefix)"); dial = ""; continue; }
+      break;
+    }
+  }
+  log("the Dreamcast dialled " + dial);
+  let w, ans;
+  try { [w, ans] = await openRelay("dial " + dial + (performance.now() - prefix < 10000 ? " prefix" : "")); }
+  catch (e) { log(e.message); await endTone(); await resetModem(); return; }
+  ws = w; log("relay: " + ans);
+  const f = ans.split(" ");
+  if (f[0] !== "ok") { log("not carried out: " + ans); w.close(); await endTone(); await resetModem(); return; }
+  status("the Dreamcast is dialling");
+  await endTone(); await resetModem();
+  await sleep(parseFloat(f[2] || "0") * 1000);
+  status("answering");
+  if (!await cmd("ATA", "CONNECT", 60000)) { log("the two modems did not connect (no CONNECT after ATA)"); w.close(); await hangUp(); return; }
+  status("in a call (" + f[1] + ")");
+  await bridge(w);
+  ws = null; await hangUp();
+}
+
+// ---- RP2040 cable ----
+async function cableCall() {
+  status("waiting for the Dreamcast's AT commands on the cable");
+  const h = new Hayes();
+  const ev = await new Promise(res => {
+    onGone = () => res(null);
+    $("stop").onclick = () => res(null);
+    onData = v => { for (const b of v) { const [out, e] = h.byte(b); if (out) send(out); if (e) { res([e, b]); return; } } };
+  });
+  if (!ev) return;
+  log("Dreamcast: " + (ev[0] === "ppp" ? "PPP without a dial" : "dialled " + h.number));
+  let w, ans;
+  try { [w, ans] = await openRelay("dial " + (ev[0] === "ppp" ? "-" : h.number || "-")); } catch (e) { log(e.message); return; }
+  ws = w; log("relay: " + ans);
+  if (ans.split(" ")[0] !== "ok") { w.close(); return; }
+  if (ev[0] === "ppp") w.send(new Uint8Array([0x7E]));
+  status("in a call");
+  await bridge(w);
+  ws = null;
+}
+
+async function run() {
+  if (!("serial" in navigator)) { status("this browser has no Web Serial: use Chrome or Edge on a desktop"); return; }
+  const mode = $("mode").value;
+  try { await openPort(); } catch (e) { status("no port chosen (" + e.message + ")"); return; }
+  running = true; $("go").disabled = true; $("stop").disabled = false; $("mode").disabled = true;
+  $("stop").onclick = () => { running = false; onData = () => {}; if (ws) ws.close(); };
+  try { while (running) { onGone = null; await (mode === "voice" ? voiceCall() : cableCall()); onGone = null; } }
+  catch (e) { log("error: " + e.message); }
+  running = false;
+  await closePort();
+  $("go").disabled = false; $("stop").disabled = true; $("mode").disabled = false;
+  status("Stopped");
+}
+$("go").onclick = run;
+if (!("serial" in navigator)) status("this browser has no Web Serial: use Chrome or Edge on a desktop");
+</script></body></html>

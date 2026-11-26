@@ -5,7 +5,7 @@ What runs on the computer the board is plugged into.
 | Folder | Status |
 |---|---|
 | [`dreampi/`](dreampi) | working: udev names, `dcusb0` DHCP + NAT, Dreamcast Live VPN address (`dcusb0-vpn`), Dreamcast Now! for the W5500 Dreamcast (`dcusb0-dcnow`), the Quake 3 server-list fix (`dcusb0-masterfix`), SD image server (`dcsd`), helper commands (`dcsd-mode`, `dcsd-capture`, `dreampi-snapshot`). Kept as a self-contained add-on to DreamPi: own files, services and iptables chains, nothing in DreamPi's scripts is changed. |
-| [`linux/`](linux) | stage 1: USB-modem dial-up server `dc-modemd` (any Linux, no DreamPi) + installer that also sets up the cable side; tested against a fake modem only |
+| [`linux/`](linux) | USB-modem dial-up server `dc-modemd` for any Linux (no DreamPi): PPP, DCNet, DNS, serial-cable PPP, Chrome Web Serial page; installer also sets up the cable side. Tested against fakes only |
 | [`macos/`](macos) | planned |
 | [`windows/`](windows) | planned |
 
