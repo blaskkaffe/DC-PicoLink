@@ -7,6 +7,7 @@ not yet with a real modem and Dreamcast.**
 ```
 sudo ./install.sh              # modem server + the RP2040 cable's side
 sudo ./install.sh --no-cable   # only the modem server
+sudo ./install.sh --cable-ppp   # Dreamcast serial PPP on the cable instead of a modem
 sudo ./install.sh --no-modem   # only the cable's side (same as host/dreampi/install.sh)
 journalctl -fu dc-modemd
 ```
@@ -23,7 +24,7 @@ Needs systemd, python3, pppd (`ppp`), iptables (for NAT), and for the cable's si
 | Normal Internet call, `*70`, Capcom number | yes |
 | RP2040 cable: serial port `/dev/dccable`, W5500 network `dcusb0` with DHCP/NAT, SD image, DC Now!, VPN | yes (`../dreampi`, installed by `install.sh`) |
 | DNS overrides from dreampi_dns.conf, DNS log for DC Now! on the modem call | no: the Dreamcast gets the revival DNS servers directly |
-| Serial-cable Hayes/PPP call (Dreamcast on the RP2040's serial port) | no: the cable's PPP is not served on Linux yet |
+| Serial-cable Hayes/PPP call (Dreamcast on the RP2040's serial port) | yes, opt in: `sudo ./install.sh --cable-ppp` (`dc-cabled`, takes `/dev/dccable` and replaces `dc-modemd`, so not with dc-tool-ser) |
 | DCNet (`*69`), Netlink, XBAND, game-server numbers | recognised and logged, hung up on; not carried out |
 | Web page, Wi-Fi setup, firmware update from the page, status JSON | no (the ESP32's own page) |
 

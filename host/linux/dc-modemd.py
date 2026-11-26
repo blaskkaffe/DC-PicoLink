@@ -374,9 +374,107 @@ def one_call(modem, args, state):
     st("hanging up")
 
 
+# ---- the serial cable: the Dreamcast talks AT to us as to a modem (firmware/hayes_model.h) ----
+
+class Hayes:
+    def __init__(self):
+        self.line = b""
+        self.echo = self.verbose = True
+        self.quiet = False
+        self.baud = 33600
+
+    def _res(self, code):
+        if self.quiet: return b""
+        if self.verbose:
+            w = ["OK", "CONNECT %d" % self.baud, "RING", "NO CARRIER", "ERROR"][code]
+            return b"\r\n" + w.encode() + b"\r\n"
+        return b"%d\r" % code
+
+    def byte(self, c):
+        """(reply bytes, event): event is 'dial' after ATD/ATA (CONNECT sent), 'ppp' for a bare PPP flag."""
+        if c == 0x7E and not self.line:
+            return b"", "ppp"
+        out = b""
+        if self.echo and c >= 8 and c not in (0x7E, 0x7F, 10):
+            out += bytes([c])
+        ev = None
+        if c == 13:
+            l = self.line.decode("latin-1").upper()
+            if l.startswith("AT"):
+                r, ev = self._run(l)
+                out += r
+            self.line = b""
+        elif c in (8, 0x7F):
+            self.line = self.line[:-1]
+        elif 0x20 <= c < 0x7F and len(self.line) < 96:
+            self.line += bytes([c])
+        return out, ev
+
+    def _run(self, l):
+        i = 2
+        while i < len(l):
+            c = l[i]; i += 1
+            if c == " ": continue
+            if c in "DA":
+                return self._res(1), "dial"
+            if c in "+%\\": break
+            if c == "&": i += 1
+            j = i
+            while i < len(l) and l[i].isdigit(): i += 1
+            val = int(l[j:i]) if i > j else -1
+            if c == "S":
+                if i < len(l) and l[i] in "=?":
+                    i += 1
+                    while i < len(l) and l[i].isdigit(): i += 1
+                continue
+            if c == "E": self.echo = val != 0
+            elif c == "V": self.verbose = val != 0
+            elif c == "Q": self.quiet = val > 0
+            elif c == "Z": self.echo, self.verbose, self.quiet = True, True, False
+        return self._res(0), None
+
+
+def cable_loop(args):
+    """The RP2040 cable's serial port: Hayes until ATD/ATA or a PPP flag, then pppd."""
+    state = {}
+    while True:
+        if not os.path.exists(args.cable):
+            if state.get("s") != "none":
+                say("waiting for the cable (%s)" % args.cable)
+            state["s"] = "none"; time.sleep(3); continue
+        try:
+            modem = Modem(args.cable)
+        except OSError as e:
+            say("cannot open %s: %s" % (args.cable, e)); time.sleep(5); continue
+        say("serial cable on %s: waiting for the Dreamcast's AT commands" % args.cable)
+        h = Hayes()
+        try:
+            while True:
+                ev, first = None, b""
+                for b in modem.read(0.5):
+                    out, e = h.byte(b)
+                    if out: modem.write(out)
+                    if e: ev = e; first = bytes([b]) if e == "ppp" else b""
+                if ev:
+                    say("Dreamcast on the serial cable: %s" % ("PPP without a dial" if ev == "ppp" else "dialled, PPP starts"))
+                    nat = Nat(args.dc_ip, not args.no_nat); nat.start()
+                    try:
+                        run_ppp(modem, args, "the serial cable")
+                    finally:
+                        nat.stop()
+                    h = Hayes()
+                    if args.once: return 0
+        except Gone:
+            say("the cable was unplugged")
+        finally:
+            modem.close()
+        time.sleep(1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--device", default="auto", help="the modem's tty (default: the first USB serial port that is not our cable)")
+    ap.add_argument("--cable", help="serve the RP2040 cable's serial port (e.g. /dev/dccable) instead of a USB modem: Hayes stub, then PPP")
     ap.add_argument("--pppd", default="pppd")
     ap.add_argument("--our-ip", default="192.168.98.1")
     ap.add_argument("--dc-ip", default="192.168.98.2")
@@ -390,6 +488,8 @@ def main():
     args = ap.parse_args()
     args.dns = args.dns or list(DEFAULT_DNS)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    if args.cable:
+        return cable_loop(args)
     state = {}
     while True:
         path = find_modem(args.device)

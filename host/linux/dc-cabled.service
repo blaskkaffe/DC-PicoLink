@@ -1,0 +1,14 @@
+[Unit]
+Description=Dreamcast serial PPP on the RP2040 cable (DC-PicoLink)
+After=network.target
+# One user of /dev/dccable at a time: stop this before using dc-tool-ser
+Conflicts=dc-modemd.service
+
+[Service]
+ExecStart=/usr/bin/env python3 /usr/local/sbin/dc-modemd --cable /dev/dccable $DC_MODEMD_ARGS
+EnvironmentFile=-/etc/dc-modemd.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

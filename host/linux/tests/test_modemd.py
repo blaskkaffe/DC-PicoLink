@@ -98,4 +98,45 @@ if os.path.exists(os.path.join(tmp, "pppd.args")):
     check("pppd gets the addresses and DNS", "192.168.98.1:192.168.98.2" in a and "ms-dns 9.9.9.9" in a and "noauth" in a)
 check("PPP over is reported", "PPP is over" in out)
 
+# ---- the serial cable: Hayes stub, then PPP ----
+def feed(h, text):
+    out, ev = b"", None
+    for c in text:
+        o, e = h.byte(c); out += o; ev = e or ev
+    return out, ev
+h = m.Hayes()
+o, e = feed(h, b"ATZ0\r")
+check("Hayes: echo and OK", o == b"ATZ0\r\r\nOK\r\n" and e is None)
+o, e = feed(h, b"ATE0V0\r")
+check("Hayes: E0 V0 gives a number", o.endswith(b"0\r") and not h.echo and not h.verbose)
+h = m.Hayes(); o, e = feed(h, b"ATDT5551234\r")
+check("Hayes: dial gives CONNECT 33600", e == "dial" and b"CONNECT 33600" in o)
+h = m.Hayes(); o, e = feed(h, b"\x7e")
+check("Hayes: bare PPP flag", e == "ppp" and o == b"")
+h = m.Hayes(); o, e = feed(h, b"noise\r")
+check("Hayes: non-AT line gets no answer", o == b"noise\r" and e is None)
+
+cm, cs = pty.openpty()
+os.set_blocking(cm, False)
+def cread(sec):
+    end, d = time.time() + sec, b""
+    while time.time() < end:
+        try: d += os.read(cm, 4096)
+        except (BlockingIOError, OSError): time.sleep(0.02)
+    return d
+for f in ("pppd.args",):
+    try: os.remove(os.path.join(tmp, f))
+    except OSError: pass
+cp = subprocess.Popen([sys.executable, PATH, "--cable", os.ttyname(cs), "--pppd", fake_pppd, "--no-nat", "--once"],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+time.sleep(1.0)
+os.write(cm, b"ATZ0\r"); r1 = cread(0.5)
+os.write(cm, b"ATDT5551234\r"); r2 = cread(1.0)
+try: cout = cp.communicate(timeout=15)[0]
+except subprocess.TimeoutExpired: cp.kill(); cout = cp.communicate()[0]
+print(cout)
+check("cable: OK for ATZ0", b"OK" in r1)
+check("cable: CONNECT after ATDT", b"CONNECT 33600" in r2)
+check("cable: pppd started", os.path.exists(os.path.join(tmp, "pppd.args")) and "PPP is over" in cout)
+
 sys.exit(1 if fails else 0)

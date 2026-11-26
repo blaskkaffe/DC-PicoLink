@@ -1,14 +1,14 @@
 #!/bin/bash
 # DC-PicoLink on any Linux computer: the USB modem server (dc-modemd) and, unless --no-cable,
 # the RP2040 cable's side too (network, DHCP/DNS/NAT, SD image: host/dreampi/install.sh, which
-# does not need a DreamPi). Run: sudo ./install.sh [--no-cable] [--no-modem]
+# does not need a DreamPi). Run: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp]
 set -eu
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
 cd "$(dirname "$0")"
-cable=1; modem=1
+cable=1; modem=1; ppp=0
 for a in "$@"; do case "$a" in
-    --no-cable) cable=0 ;; --no-modem) modem=0 ;;
-    *) echo "usage: sudo ./install.sh [--no-cable] [--no-modem]" >&2; exit 1 ;;
+    --no-cable) cable=0 ;; --no-modem) modem=0 ;; --cable-ppp) ppp=1 ;;
+    *) echo "usage: sudo ./install.sh [--no-cable] [--no-modem] [--cable-ppp]" >&2; exit 1 ;;
 esac; done
 export PATH="$PATH:/usr/sbin:/sbin"
 command -v systemctl >/dev/null 2>&1 || { echo "this needs systemd (systemctl not found)" >&2; exit 1; }
@@ -32,9 +32,14 @@ if [ "$modem" = 1 ]; then
         printf '# DC-PicoLink: ModemManager must not probe the voice modem\nSUBSYSTEM=="tty", ENV{ID_BUS}=="usb", ENV{ID_MM_DEVICE_IGNORE}="1"\n' > /etc/udev/rules.d/71-dc-modem.rules
         udevadm control --reload 2>/dev/null || true
     fi
+    install -m 644 dc-cabled.service /etc/systemd/system/dc-cabled.service
     systemctl daemon-reload
     systemctl enable dc-modemd.service
     systemctl restart dc-modemd.service
+    if [ "$ppp" = 1 ]; then     # serial PPP on the cable: takes /dev/dccable, so not on by default
+        systemctl disable --now dc-modemd.service
+        systemctl enable --now dc-cabled.service
+    fi
 fi
 
 if [ "$cable" = 1 ]; then
