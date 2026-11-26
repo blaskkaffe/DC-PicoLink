@@ -49,11 +49,11 @@ the USB end may differ slightly).
 | 1 | 5V ↔ 5V | **solder** | GP0 ↔ GPIO43 | optional (ESP32 console TX; the Zero keeps GP0 a plain input) |
 | 2 | GND ↔ GND | **solder** | GP1 ↔ GPIO44 | optional (ESP32 console RX; the Zero keeps GP1 a plain input) |
 | 3 | 3V3 ↔ 3V3 | **never** (two regulators) | GP2 ↔ GPIO1 | not used (optional, strength; the Zero keeps GP2 a plain input) |
-| 4 | GP29 ↔ GPIO13 | **never**: GP29 is the power-sense input (next to 3V3) / W5500 MOSI (out) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
+| 4 | GP29 ↔ GPIO13 | **never**: GP29 is the power-sense input (next to 3V3) / W5500 MISO (in) | GP3 ↔ GPIO2 | **solder**: HS, ESP32 ready |
 | 5 | GP28 ↔ GPIO12 | **never**: SD MISO (in) / W5500 SCLK (out) | GP4 ↔ GPIO3 | **solder**: SPI MISO (ESP32 → cable) |
-| 6 | GP27 ↔ GPIO11 | **never**: GP27 is free / W5500 CS (out) | GP5 ↔ GPIO4 | **solder**: SPI CS |
-| 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 INT (in) | GP6 ↔ GPIO5 | **solder**: SPI clock |
-| 8 | GP15 ↔ GPIO9 | **never**: SD MOSI (out) / W5500 MISO (in) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
+| 6 | GP27 ↔ GPIO11 | **never**: GP27 is free / W5500 MOSI (out) | GP5 ↔ GPIO4 | **solder**: SPI CS |
+| 7 | GP26 ↔ GPIO10 | **never**: SD SCK (out) / W5500 CS (out): two drivers | GP6 ↔ GPIO5 | **solder**: SPI clock |
+| 8 | GP15 ↔ GPIO9 | **never**: SD MOSI (out) / W5500 INT (in) | GP7 ↔ GPIO6 | **solder**: SPI MOSI (cable → ESP32) |
 | 9 | GP14 ↔ GPIO8 | **never**: GP14 is the SD card's CS (bottom-left corner) | GP8 ↔ GPIO7 | **solder**: DR, ESP32 has data |
 
 Both boards have nine pins per side; the Zero's bottom edge (GP9-13) is the Dreamcast's.
@@ -93,10 +93,10 @@ the ESP32's own pins, all on the row next to 3V3 and GND:
 |---|---|
 | 3V3, GND | 3.3V, GND |
 | GPIO12 | SCLK |
-| GPIO13 | MOSI |
-| GPIO9 | MISO |
-| GPIO11 | CS (SCS) |
-| GPIO10 | INT |
+| GPIO11 | MOSI |
+| GPIO13 | MISO |
+| GPIO10 | CS (SCS) |
+| GPIO9 | INT |
 
 The firmware finds the module by itself ("wired port: W5500 module found", or "no W5500 module
 found ... off"). With a cable plugged in, the port is the **uplink** when a router answers DHCP
