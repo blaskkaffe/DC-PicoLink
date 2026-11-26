@@ -16,6 +16,7 @@ Chrome or Edge on a desktop; leave this tab open.</p>
  <select id="mode"><option value="voice">USB voice modem (Dreamcast on the phone cord)</option><option value="cable">RP2040 cable (Dreamcast on the serial port)</option></select>
  <button id="go">Connect and start</button><button id="stop" disabled>Stop</button>
 </div>
+<div class="small">Relay for the Internet part: <input id="relay" size="34" spellcheck="false"> <span id="relayhint"></span></div>
 <div id="st">Not started</div>
 <pre id="log"></pre>
 <script>
@@ -142,7 +143,7 @@ async function endTone() { onData = () => {}; await send(new Uint8Array([0, DLE,
 // ---- the relay (pppd and DCNet run there) ----
 function openRelay(dial) {
   return new Promise((res, rej) => {
-    const w = new WebSocket("ws://" + location.host + "/ws"); w.binaryType = "arraybuffer";
+    const w = new WebSocket($("relay").value.trim()); w.binaryType = "arraybuffer";
     w.onopen = () => w.send(dial);
     w.onerror = () => rej(new Error("cannot reach dc-modemd --relay"));
     w.onclose = () => { if (ws === w && ws.onover) ws.onover(); };
@@ -240,6 +241,14 @@ async function run() {
   await closePort();
   $("go").disabled = false; $("stop").disabled = true; $("mode").disabled = false;
   status("Stopped");
+}
+// the relay: this page's own server when dc-modemd serves it, else the address you give (a local ws://127.0.0.1:8099/ws, or a wss:// bridge)
+{
+  const own = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)/.test(location.host);
+  const saved = (() => { try { return localStorage.getItem("dc-relay"); } catch (e) { return null; } })();
+  $("relay").value = new URLSearchParams(location.search).get("relay") || saved || (own ? "ws://" + location.host + "/ws" : "ws://127.0.0.1:8099/ws");
+  $("relay").onchange = () => { try { localStorage.setItem("dc-relay", $("relay").value.trim()); } catch (e) {} };
+  $("relayhint").textContent = own ? "(this computer's dc-modemd)" : "";
 }
 $("go").onclick = run;
 if (!("serial" in navigator)) status("this browser has no Web Serial: use Chrome or Edge on a desktop");

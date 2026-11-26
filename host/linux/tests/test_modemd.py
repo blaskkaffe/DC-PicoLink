@@ -313,6 +313,27 @@ check("cable: OK for ATZ0", b"OK" in r1)
 check("cable: CONNECT after ATDT", b"CONNECT 33600" in r2)
 check("cable: pppd started", os.path.exists(os.path.join(tmp, "pppd.args")) and "PPP is over" in cout)
 
+# ---- a public DCNet-only bridge ----
+rp = subprocess.Popen([sys.executable, PATH, "--relay", "--relay-port", str(RP + 1), "--dcnet-only", "--relay-origin", "https://user.github.io",
+                       "--dns-file", ""], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+for _ in range(50):
+    try: socket.create_connection(("127.0.0.1", RP + 1), 1).close(); break
+    except OSError: time.sleep(0.1)
+RP0, RP = RP, RP + 1
+c = http("/ws", "https://user.github.io", True); c.recv(1000)
+c.sendall(wsframe(1, b"dial 0642542154")); op, d, buf = wsread(c, b"")
+check("bridge: Capcom (a PPP number) is refused", d.startswith(b"unsupported capcom"))
+c.close(); time.sleep(0.3)
+c = http("/ws", "https://user.github.io", True); c.recv(1000)
+c.sendall(wsframe(1, b"dial 5551234")); op, d, buf = wsread(c, b"")
+check("bridge: any number goes to DCNet, from an allowed origin", d == b"ok dcnet 0")
+c.close()
+check("bridge: another origin refused", b"403" in readall(http("/ws", "https://evil.example", True)))
+c = http("/ws", "https://user.github.io", True); c.recv(1000)
+c.sendall(wsframe(1, b"dial -")); op, d, buf = wsread(c, b"")
+check("bridge: serial-cable PPP refused", d.startswith(b"unsupported ppp"))
+c.close(); rp.terminate(); rp.communicate(timeout=10); RP = RP0
+
 import shutil
 if shutil.which("node"):
     nj = subprocess.run(["node", os.path.join(HERE, "test_page.js")], capture_output=True, text=True)

@@ -619,7 +619,7 @@ def run_ppp(modem, args, why):
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WEB_DIRS = (os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"), "/usr/local/share/dc-modemd/web")
-relay_lock = threading.Lock()
+relay_lock = threading.BoundedSemaphore(1)   # replaced in relay_main
 
 
 class Ws:
@@ -694,11 +694,12 @@ def relay_decide(args, text):
         return "error bad request", None, ""
     number, prefix = f[1], len(f) > 2 and f[2] == "prefix"
     if number == "-":                       # the serial cable's Dreamcast: PPP without a number
+        if args.dcnet_only: return "unsupported ppp (this relay only does DCNet)", None, ""
         return "ok ppp 0", "ppp", ""
     kind = classify(number)
-    if kind == "capcom": return "ok capcom 0", "capcom", number
+    if kind == "capcom" and not args.dcnet_only: return "ok capcom 0", "capcom", number
     if kind == "ppp":
-        via, num = dcnet_wanted(args.dcnet, number, prefix)
+        via, num = dcnet_wanted("always" if args.dcnet_only else args.dcnet, number, prefix)
         if via: return "ok dcnet 0", "dcnet", num
         return "ok ppp %g" % args.answer_delay, "ppp", number
     return "unsupported %s" % kind, None, number
@@ -807,6 +808,8 @@ def relay_client(c, args):
 
 
 def relay_main(args):
+    global relay_lock
+    relay_lock = threading.BoundedSemaphore(args.max_sessions or (20 if args.dcnet_only else 1))
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((args.relay_host, args.relay_port))
@@ -1004,6 +1007,8 @@ def main():
     ap.add_argument("--relay-host", default="127.0.0.1", help="address to listen on (default this computer only)")
     ap.add_argument("--relay-port", type=int, default=8099)
     ap.add_argument("--relay-origin", action="append", default=[], help="another page address allowed to use the relay (repeat)")
+    ap.add_argument("--dcnet-only", action="store_true", help="relay: carry DCNet calls only (no pppd, NAT or DNS), for a public bridge: the only place it connects to is DCNet's own servers")
+    ap.add_argument("--max-sessions", type=int, default=0, help="relay: calls at once (default 1; 20 with --dcnet-only)")
     ap.add_argument("--pppd", default="pppd")
     ap.add_argument("--our-ip", default="192.168.98.1")
     ap.add_argument("--dc-ip", default="192.168.98.2")

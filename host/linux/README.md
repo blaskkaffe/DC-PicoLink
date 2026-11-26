@@ -29,6 +29,19 @@ network connections, so that half cannot move into the page. The relay refuses p
 sites (Origin check); to use it from another computer, listen with `--relay-host` and add that
 page's address with `--relay-origin`: it then has no login, so keep it on a trusted network.
 
+### No install at all?
+
+The page is a static file (`web/index.html`) and `.github/workflows/pages.yml` publishes it to GitHub
+Pages (switch on Settings, Pages, Source: GitHub Actions). Load the URL, press Connect, pick the
+modem or cable: Web Serial needs nothing installed. What a page can never do is open raw TCP/UDP,
+so the Internet side needs a relay to talk to, set in the page's Relay box (or `?relay=wss://...`):
+
+* `ws://127.0.0.1:8099/ws`: `dc-modemd --relay` on your own computer (needs `--relay-origin https://<you>.github.io`): full PPP, NAT, DNS, DCNet.
+* a public bridge someone hosts: `dc-modemd --relay --dcnet-only --relay-host 0.0.0.0 --relay-origin https://<you>.github.io` behind a TLS proxy
+  (the page is https, so it needs `wss://`). It only ever connects to DCNet's own servers (no pppd, NAT or open proxy), so visitors need no software, only DCNet calls work.
+
+What the page alone can do with no relay at all (modem answers, serial console, SD image over WebUSB) is not built yet.
+
 ## What is covered, compared with the ESP32
 
 | Feature | Here |
