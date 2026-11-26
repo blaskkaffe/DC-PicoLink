@@ -1,0 +1,12 @@
+[Unit]
+Description=Dreamcast dial-up server for a USB voice modem (DC-PicoLink)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env python3 /usr/local/sbin/dc-modemd $DC_MODEMD_ARGS
+EnvironmentFile=-/etc/dc-modemd.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

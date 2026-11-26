@@ -19,6 +19,7 @@ done
 if [ -z "${1:-}" ]; then   # once per CI run: the first call has no build dir
 if gcc -fsyntax-only -Wall -I../tools/dctest/stub ../tools/dctest/dctest.c 2> "$out/dc.log"; then echo "PASS dctest KOS-path syntax"; else echo "FAIL dctest syntax"; cat "$out/dc.log"; fail=1; fi
 if python3 -I ../tools/dctest/dctest.py selftest --log "$out/dctest.log" --tmp "$out" > "$out/dctest.out" 2>&1; then echo "PASS dctest selftest: $(grep -m1 'tests,' "$out/dctest.out" | sed 's/^\[[^]]*\] //')"; else echo "FAIL dctest selftest"; tail -20 "$out/dctest.out"; fail=1; fi
+if python3 -I ../host/linux/tests/test_modemd.py > "$out/modemd.log" 2>&1; then echo "PASS dc-modemd (fake modem on a pty): $(grep -c '^ok' "$out/modemd.log") checks"; else echo "FAIL dc-modemd"; tail -20 "$out/modemd.log"; fail=1; fi
 fi
 if [ -n "${1:-}" ]; then
     hdr="$1/w5500_spi.pio.h"
