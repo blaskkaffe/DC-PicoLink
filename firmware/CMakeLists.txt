@@ -3,6 +3,9 @@ include(pico_sdk_import.cmake)
 project(dc_picolink C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 pico_sdk_init()
+if(DC_SINGLE)
+    add_subdirectory(single)
+endif()
 
 # Version shown in the first log line: git describe (e.g. v0.8.0-3-gabc1234), or -DDC_VERSION=...
 if(NOT DC_VERSION)

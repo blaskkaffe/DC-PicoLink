@@ -35,7 +35,10 @@ if [ -n "${1:-}" ]; then
     if gcc -O1 -Wall -DPICO_NO_HARDWARE=1 -I. -I"$1" tests/test_pio_reloc.c -o "$out/test_pio_reloc" && "$out/test_pio_reloc" > "$out/reloc.log"; then
         echo "PASS test_pio_reloc: $(tail -1 "$out/reloc.log")"; else echo "FAIL test_pio_reloc"; cat "$out/reloc.log"; fail=1; fi
     # the build's .uf2 written the way the ESP32 writes it over USB must give the .bin back
-    if [ -f "$1/dc_usb_serial.uf2" ] && [ -f "$1/dc_usb_serial.bin" ]; then
+    # (not for an RP2350 build: the cable update over the ESP32's USB is for the RP2040 stack)
+    if grep -q "^PICO_PLATFORM:STRING=rp2350" "$1/CMakeCache.txt" 2>/dev/null; then
+        echo "SKIP cable update of this build (RP2350 build: single chip, no ESP32 USB update)"
+    elif [ -f "$1/dc_usb_serial.uf2" ] && [ -f "$1/dc_usb_serial.bin" ]; then
         if gcc -O1 -Wall tests/test_uf2.c -o "$out/test_uf2r" && "$out/test_uf2r" "$1/dc_usb_serial.uf2" "$1/dc_usb_serial.bin" > "$out/uf2r.log"; then
             echo "PASS cable update of this build: $(grep 'the real' "$out/uf2r.log" | cut -c6-)"; else echo "FAIL cable update of this build"; cat "$out/uf2r.log"; fail=1; fi
     fi
