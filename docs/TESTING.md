@@ -92,6 +92,9 @@ address (`-v` prints every frame).
 ## 4. USB modem (Dreamcast modem -> phone cord -> USB voice modem on the ESP32)
 
 - [ ] Modem plugged in: `USB modem vvvv:pppp plugged in`, `dial tone on`.
+- [ ] Per modem model (not only the first one): the line `USB modem ... says it is: ...`, and
+      `voice mode set with AT+VSM=...` (first call); note modems that fail with their log lines.
+- [ ] A USB device that is no modem (a stick, a keyboard): one line, no repeating, the port stays usable.
 - [ ] Dreamcast dials: `the Dreamcast dialled <number>; answering in 8 s`, `CONNECT ...`, PPP up.
 - [ ] Browser, PSO, Quake III master list; DCNow! online.
 - [ ] DCNet: `*69` before the number (or "every call"): `DCNet: connected`.

@@ -457,3 +457,12 @@ Lessons: check chip select in every clock wait; no flash writes while a core is 
   inputs would have turned MOSI into an input: it now covers GP0-2 only. `tests/test_pinmap.c`
   reads main.c and sdkconfig.zero-stack and checks hardware-SPI capability, uniqueness and the
   stack geometry.
+
+## USB modems other than the first one (2026-11-27)
+
+The modem driver only opened interface 0 by exact VID/PID, only knew `AT+VSM=1,8000` and said nothing
+about what it had found. Now: every openable interface 0-7 is tried and the one that answers `AT`
+is kept; voice mode comes from the modem's own `AT+VSM=?` list (`usbm_vsm_pick`, tested), with the
+usual codes (1, 128, with and without the extra fields) as fallbacks and `AT+FCLASS=8.0` after `8`;
+the log names the modem (`AT+GMI`/`AT+GMM`). Host-tested parsers and a firmware build only: no other
+modem was available, so modems with odd voice commands (e.g. USR) may still need a log from a user.

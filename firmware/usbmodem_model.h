@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
 
 #define USBM_DLE 0x10
 #define USBM_ETX 0x03
@@ -72,5 +73,57 @@ static inline bool usbm_data_byte(usbm_rx_t *r, uint8_t b) {
 static inline uint8_t usbm_tone_sample(const int16_t *sine, uint32_t i) {
     int v = 128 + (sine[(i * 35u) % USBM_TONE_N] * 40 + sine[(i * 44u) % USBM_TONE_N] * 40) / 32767;
     return (uint8_t)(v == USBM_DLE ? USBM_DLE + 1 : v);
+}
+/* ---- modems other than the one this was first written for ---- */
+
+/* Pick the voice mode from the answer to AT+VSM=? : 8-bit unsigned/linear samples at 8000 Hz (what the
+   dial tone table is). Conexant lists `1,"8-BIT UNSIGNED PCM",(8000),(0),(0)`, Rockwell-style modems
+   `128,"8-BIT LINEAR",(7200,8000,11025),(0),(0)`. Writes "AT+VSM=<mode>,8000"; false if no line fits. */
+static inline bool usbm_vsm_pick(const char *txt, char *out, size_t cap) {
+    int best = 0, bestmode = -1;
+    const char *p = txt;
+    while (*p) {
+        const char *e = p; while (*e && *e != '\r' && *e != '\n') e++;
+        char l[96]; size_t n = (size_t)(e - p); if (n >= sizeof l) n = sizeof l - 1;
+        memcpy(l, p, n); l[n] = 0;
+        p = *e ? e + 1 : e;
+        char *q = l; while (*q == ' ') q++;
+        if (*q < '0' || *q > '9') continue;
+        int mode = 0; while (*q >= '0' && *q <= '9') { mode = mode * 10 + (*q++ - '0'); if (mode > 9999) break; }
+        if (*q != ',' || mode > 9999) continue;
+        char *a = strchr(q, '"'), *b = a ? strchr(a + 1, '"') : NULL;
+        if (!b) continue;
+        *b = 0;
+        char name[64]; size_t k = 0;
+        for (const char *c = a + 1; *c && k < sizeof name - 1; c++) name[k++] = (*c >= 'a' && *c <= 'z') ? (char)(*c - 32) : *c;
+        name[k] = 0;
+        if (!strstr(b + 1, "8000")) continue;
+        if (!strstr(name, "8-BIT") && !strstr(name, "8 BIT")) continue;
+        if (strstr(name, "16") || strstr(name, "ADPCM") || strstr(name, "LAW")) continue;
+        int score = strstr(name, "UNSIGNED") ? 3 : strstr(name, "LINEAR") ? 2 : strstr(name, "PCM") ? 1 : 0;
+        if (strstr(name, "SIGNED") && !strstr(name, "UNSIGNED")) score = 0;
+        if (score > best) { best = score; bestmode = mode; }
+    }
+    if (bestmode < 0) return false;
+    int w = snprintf(out, cap, "AT+VSM=%d,8000", bestmode);
+    return w > 0 && (size_t)w < cap;
+}
+
+/* The first useful line of an answer (not the echo, not OK/ERROR). Empty if none. */
+static inline void usbm_first_line(const char *txt, char *out, size_t cap) {
+    if (!cap) return;
+    out[0] = 0;
+    const char *p = txt;
+    while (*p) {
+        const char *e = p; while (*e && *e != '\r' && *e != '\n') e++;
+        size_t n = (size_t)(e - p);
+        bool echo = n >= 2 && (p[0] == 'A' || p[0] == 'a') && (p[1] == 'T' || p[1] == 't');
+        if (n && !echo && !(n == 2 && !strncmp(p, "OK", 2)) && !(n == 5 && !strncmp(p, "ERROR", 5))) {
+            if (n >= cap) n = cap - 1;
+            memcpy(out, p, n); out[n] = 0;
+            return;
+        }
+        p = *e ? e + 1 : e;
+    }
 }
 #endif

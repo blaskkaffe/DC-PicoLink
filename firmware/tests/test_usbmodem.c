@@ -36,6 +36,20 @@ int main(void) {
     got[g] = 0;
     CHECK(!strcmp(got, "51#"));
 
+    /* voice mode choice from AT+VSM=? */
+    char vc[32];
+    CHECK(usbm_vsm_pick("\r\n1,\"8-BIT UNSIGNED PCM\",(8000),(0),(0)\r\n4,\"4-BIT ADPCM\",(8000),(0),(0)\r\n5,\"16-BIT LINEAR\",(8000),(0),(0)\r\nOK\r\n", vc, sizeof vc) && !strcmp(vc, "AT+VSM=1,8000"));
+    CHECK(usbm_vsm_pick("AT+VSM=?\r\n128,\"8-BIT LINEAR\",(7200,8000,11025),(0),(0)\r\n129,\"16-BIT LINEAR\",(8000),(0),(0)\r\n130,\"8-BIT ALAW\",(8000),(0),(0)\r\nOK\r\n", vc, sizeof vc) && !strcmp(vc, "AT+VSM=128,8000"));
+    CHECK(usbm_vsm_pick("128,\"8-BIT LINEAR\",(8000),(0),(0)\r\n129,\"8-BIT UNSIGNED\",(8000),(0),(0)\r\n", vc, sizeof vc) && !strcmp(vc, "AT+VSM=129,8000"));
+    CHECK(!usbm_vsm_pick("1,\"8-BIT UNSIGNED PCM\",(11025),(0),(0)\r\nERROR\r\n", vc, sizeof vc));       /* wrong rate */
+    CHECK(!usbm_vsm_pick("ERROR\r\n", vc, sizeof vc) && !usbm_vsm_pick("", vc, sizeof vc));
+    CHECK(!usbm_vsm_pick("2,\"8-BIT SIGNED PCM\",(8000),(0),(0)\r\n", vc, sizeof vc));
+    CHECK(!usbm_vsm_pick("1,\"8-BIT UNSIGNED PCM\",(8000),(0),(0)\r\n", vc, 8));                  /* too small a buffer */
+    char fl[40];
+    usbm_first_line("ATI3\r\r\nCONEXANT V.92 11.22\r\nOK\r\n", fl, sizeof fl); CHECK(!strcmp(fl, "CONEXANT V.92 11.22"));
+    usbm_first_line("\r\nERROR\r\n", fl, sizeof fl); CHECK(!fl[0]);
+    usbm_first_line("\r\nLONGLONGLONGLONGLONG\r\n", fl, 8); CHECK(!strcmp(fl, "LONGLON"));
+
     /* data: NO CARRIER inside PPP bytes, also after a lone CR; not without the line ends */
     usbm_init(&r);
     const char *d = "~\x7d#\r\r\nNO CARRIER\r\n";

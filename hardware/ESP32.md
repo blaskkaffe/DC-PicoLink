@@ -283,7 +283,14 @@ to a USB voice modem by a phone cord (plus a line voltage inducer if your Dreamc
 as with a DreamPi; the USB modem plugs into the ESP32's USB-C socket through an OTG adapter.
 
 - VPN: the Dreamcast Live profiles are built in (`esp32/vpn/`); the VPN is on by default.
-- The modem must be a USB CDC-ACM voice modem (the Conexant-based ones used with DreamPi).
+- The modem must be a USB **voice** modem (one that does `AT+FCLASS=8`, as the Conexant-based ones
+  used with DreamPi); the vendor and product ID do not matter. The firmware tries each USB interface
+  (0-7) that can be opened and uses the one that answers `AT`; it asks the modem for its voice modes
+  (`AT+VSM=?`) and picks the 8-bit, 8000 Hz one (mode 1 on Conexant, 128 on Rockwell-style chips).
+  The log shows who the modem says it is (`AT+GMI`/`AT+GMM`) and which command set voice mode. A
+  modem without voice mode (most plain data modems) cannot hear the Dreamcast dial and is refused
+  with a log line naming its answers. Only tested on hardware with one modem so far: if yours does
+  not work, send the `USB modem ...` log lines.
 - The socket has to give the modem 5 V: feed the stack through the 5V pin and check that 5 V
   appears on the socket (some boards have a diode in the way; bridge it or power the modem
   through a Y-cable).

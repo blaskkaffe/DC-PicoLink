@@ -65,6 +65,11 @@ static StreamBufferHandle_t nlq;             /* modem -> netlink.c */
 static volatile bool carrier;                /* the two modems are connected */
 static volatile bool dcd_seen, dcd;          /* the modem reports DCD (serial state) */
 static uint32_t stream_drop;
+static char capbuf[400];                     /* the modem's raw answer to a query (AT+VSM=?, AT+GMM ...) */
+static volatile size_t caplen;
+static volatile bool capturing;
+static char vsm_cmd[24];                     /* the voice-mode command that worked with this modem */
+static uint8_t usb_intf;                     /* the USB interface the modem answered on */
 static int64_t prefix_ms = -100000;          /* when "*69" was last dialled on its own */
 
 #define say say_line
@@ -77,6 +82,11 @@ static bool data_cb(const uint8_t *d, size_t n, void *arg) {
     (void)arg;
     cnt.bytes_in += (uint32_t)n;
     size_t i = 0;
+    if (capturing && phase == PH_CMD) {
+        size_t c = caplen;
+        for (size_t k = 0; k < n && c < sizeof capbuf - 1; k++) capbuf[c++] = (char)d[k];
+        capbuf[c] = 0; caplen = c;
+    }
     if (phase == PH_CMD) {
         for (; i < n && phase == PH_CMD; i++) {
             int e = usbm_line_byte(&rx, d[i]);
@@ -162,6 +172,14 @@ static bool cmd(const char *c, int want, int ms) {
 
 static void pause_ms(int ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
+/* send a command and keep the modem's whole answer (for lists and names); "" if it did not answer */
+static const char *query(const char *c, int ms) {
+    caplen = 0; capbuf[0] = 0; capturing = true;
+    cmd(c, USBM_OK, ms);
+    capturing = false;
+    return capbuf;
+}
+
 /* back to command mode and on-hook, whatever the modem was doing */
 static void hang_up(void) {
     phase = PH_CMD; to_data = false; to_stream = false; carrier = false;
@@ -216,6 +234,28 @@ static bool modem_reset(void) {
 
 static void dcnet_done(void) { push(EV_CALL_OVER, 0); }
 
+/* Voice mode on and the line open for the dial tone. Modems differ: the class may be 8 or 8.0, and the 8-bit
+   8000 Hz mode is 1 on Conexant, 128 on Rockwell-style chips; the modem's own list (AT+VSM=?) decides, and
+   the first command that worked is kept for the next call. */
+static bool voice_start(void) {
+    if (!cmd("AT+FCLASS=8", USBM_OK, 2000) && !cmd("AT+FCLASS=8.0", USBM_OK, 2000)) return false;
+    cmd("AT+VLS=1", USBM_OK, 2000);                       /* a modem without it may still do VTX */
+    if (!vsm_cmd[0] || !cmd(vsm_cmd, USBM_OK, 2000)) {
+        vsm_cmd[0] = 0;
+        char tries[5][24]; int nt = 0;
+        if (usbm_vsm_pick(query("AT+VSM=?", 2000), tries[nt], sizeof tries[0])) nt++;
+        static const char *const fb[] = { "AT+VSM=1,8000", "AT+VSM=128,8000", "AT+VSM=1,8000,0,0", "AT+VSM=128,8000,0,0" };
+        for (size_t i = 0; i < 4 && nt < 5; i++) strlcpy(tries[nt++], fb[i], sizeof tries[0]);
+        for (int i = 0; i < nt && !vsm_cmd[0]; i++) {
+            if (gone) return false;
+            if (cmd(tries[i], USBM_OK, 2000)) strlcpy(vsm_cmd, tries[i], sizeof vsm_cmd);
+        }
+        if (!vsm_cmd[0]) return false;
+        say("USB modem %s: voice mode set with %s", usb_id, vsm_cmd);
+    }
+    return cmd("AT+VTX", USBM_CONNECT, 3000);
+}
+
 /* one round: dial tone, hear the Dreamcast dial, answer, PPP until the call ends */
 static void one_call(void) {
     phase = PH_CMD; to_data = false;
@@ -228,11 +268,16 @@ static void one_call(void) {
     }
     if (gone) return;
     static bool said_voice;
-    if (!(cmd("AT+FCLASS=8", USBM_OK, 2000) && cmd("AT+VLS=1", USBM_OK, 2000) &&
-          cmd("AT+VSM=1,8000", USBM_OK, 2000) && cmd("AT+VTX", USBM_CONNECT, 3000))) {
+    if (!voice_start()) {
         if (gone) return;
         state = "this modem has no voice mode (needed to hear the Dreamcast dial)";
-        if (!said_voice) say("USB modem: %s; a Conexant-based modem as for DreamPi works", state);
+        if (!said_voice) {
+            char who[48], vs[48];
+            usbm_first_line(query("AT+GMM", 2000), who, sizeof who);
+            usbm_first_line(query("AT+VSM=?", 2000), vs, sizeof vs);
+            say("USB modem %s: %s. It said \"%s\" to AT+GMM and \"%s\" to AT+VSM=?; the modem must do voice (AT+FCLASS=8, 8-bit 8000 Hz samples), as Conexant-based modems do",
+                usb_id, state, who, vs);
+        }
         said_voice = true;
         cmd("ATH0", USBM_OK, 2000);
         pause_ms(10000);
@@ -355,15 +400,38 @@ static void modem_task(void *arg) {
            again for every try, and a modem opened with its status endpoint just before the cable
            took its channels is closed and opened again without it. */
         esp_err_t oe = ESP_FAIL;
+        int opened = 0;
         opening = true;
-        for (int t = 0; t < 4; t++) {
-            if (t) pause_ms(700);
-            cfg.no_notification = usbport_cable();
-            oe = cdc_acm_host_open(vid, pid, 0, &cfg, &h);
-            if (oe != ESP_OK) continue;
-            if (yielding) { cdc_acm_host_close(h); h = NULL; break; }        /* the cable needs the channels: offered again after it */
-            if (!cfg.no_notification && usbport_cable()) { cdc_acm_host_close(h); h = NULL; oe = ESP_FAIL; continue; }
-            break;
+        /* Interface 0 is the normal place for a CDC-ACM modem. Composite modems and serial chips with
+           a vendor interface have the AT port elsewhere: every interface that can be opened is tried
+           in turn, and the one that answers AT is the modem. */
+        for (uint8_t intf = 0; intf < 8 && !h; intf++) {
+            esp_err_t e = ESP_FAIL;
+            for (int t = 0; t < (intf ? 1 : 4); t++) {
+                if (t) pause_ms(700);
+                cfg.no_notification = usbport_cable();
+                e = cdc_acm_host_open(vid, pid, intf, &cfg, &h);
+                if (e != ESP_OK) { h = NULL; continue; }
+                if (yielding) { cdc_acm_host_close(h); h = NULL; break; }        /* the cable needs the channels: offered again after it */
+                if (!cfg.no_notification && usbport_cable()) { cdc_acm_host_close(h); h = NULL; e = ESP_FAIL; continue; }
+                break;
+            }
+            if (yielding) break;
+            if (intf == 0 || e != ESP_ERR_NOT_FOUND) oe = e;
+            if (e != ESP_OK || !h) { h = NULL; continue; }
+            opened++;
+            /* does it answer AT? (a stuck modem gets a second try) */
+            xSemaphoreTake(devlk, portMAX_DELAY); dev = h; xSemaphoreGive(devlk);
+            cdc_acm_host_set_control_line_state(h, true, true);
+            phase = PH_CMD; gone = false; usbm_init(&rx); xQueueReset(evq);
+            bool at = cmd("AT", USBM_OK, 1500) || cmd("AT", USBM_OK, 2500);
+            if (!at) {
+                xSemaphoreTake(devlk, portMAX_DELAY); dev = NULL; xSemaphoreGive(devlk);
+                cdc_acm_host_close(h); h = NULL;
+                if (intf == 0) oe = ESP_ERR_TIMEOUT;
+                continue;
+            }
+            usb_intf = intf;
         }
         opening = false;
         if (yielding && !h) {
@@ -372,22 +440,29 @@ static void modem_task(void *arg) {
             state = "reopening next to the cable";
             continue;
         }
-        if (oe != ESP_OK || !h) {
+        if (!h) {
             if (usbport_cable()) {
                 char bus[80];
                 usbport_bus_text(bus, sizeof bus);
                 say("USB: modem %s does not fit next to the DC-PicoLink cable (%s): the ESP32's USB host has 8 channels, each hub takes 2, the cable 3, the modem 3. On the bus: %s", usb_id,
                     oe == ESP_ERR_NOT_SUPPORTED ? "no channel left" : esp_err_to_name(oe), bus);
             }
+            else if (opened)
+                say("USB: device %s opened (%d USB interface%s) but none answered AT; it is not a modem, or it needs a driver this firmware does not have", usb_id, opened, opened == 1 ? "" : "s");
             else
-                say("USB: device %s is plugged in but is not a modem this firmware can use (%s; it needs a USB CDC-ACM modem)", usb_id, esp_err_to_name(oe));
+                say("USB: device %s is plugged in but has no serial (CDC-ACM or bulk) interface this firmware can open (%s)", usb_id, esp_err_to_name(oe));
             state = usbport_cable() ? "plugged in, but no USB channels left next to the cable" : "a USB device is plugged in, but not a usable modem";
             continue;
         }
-        xSemaphoreTake(devlk, portMAX_DELAY); dev = h; xSemaphoreGive(devlk);
-        cdc_acm_host_set_control_line_state(h, true, true);
         present = true; gone = false;
         xQueueReset(evq);
+        vsm_cmd[0] = 0;
+        {   /* who is it: shows in the log, for a modem that does not work */
+            char mk[40], md[40];
+            usbm_first_line(query("AT+GMI", 1500), mk, sizeof mk);
+            usbm_first_line(query("AT+GMM", 1500), md, sizeof md);
+            if (mk[0] || md[0]) say("USB modem %s says it is: %s %s (USB interface %u)", usb_id, mk, md, (unsigned)usb_intf);
+        }
         say("USB modem %s plugged in%s", usb_id, cfg.no_notification ? " (next to the DC-PicoLink cable: without its status endpoint, to fit the USB host's 8 channels)" : "");
         while (!gone) one_call();
         present = false;
