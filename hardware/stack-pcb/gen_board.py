@@ -24,7 +24,8 @@ XB0, XB1 = (WC - WB) / 2, (WC + WB) / 2     # body edges, 3 .. 21
 XL, XR = WC / 2 - 3 * P, WC / 2 + 3 * P     # the two pin columns, 15.24 mm apart (4.38 / 19.62)
 CARD = 22.0         # card end: how deep the adapter takes a card (32 mm card - ~12 mm sticking out) + 2 mm
 YH = CARD + 2.0     # ribbon-cable row
-YS0, YS1 = YH + 1.9, YH + 1.9 + 17.4        # microSD socket zone
+YW = YH + P         # W5500 row, under the ribbon row
+YS0, YS1 = YW + 1.9, YW + 1.9 + 17.4        # microSD socket zone
 Y9 = YS1 + 1.9      # the Zero's bottom row (GP8 .. GP14) = position 9 of the side columns
 L = Y9 + 8 * P + 1.3                        # USB end: 1.3 mm past position 1
 
@@ -52,7 +53,7 @@ ds.m_HoleToHoleMin = mm(0.25)
 ds.m_CopperEdgeClearance = mm(0.3)
 ds.m_MinSilkTextHeight = mm(0.6)      # small labels: 18 mm is narrow (fabs print 0.6 mm, a little soft)
 dflt = ds.m_NetSettings.m_DefaultNetClass
-dflt.SetTrackWidth(mm(0.3)); dflt.SetClearance(mm(0.2)); dflt.SetViaDiameter(mm(0.7)); dflt.SetViaDrill(mm(0.35))
+dflt.SetTrackWidth(mm(0.25)); dflt.SetClearance(mm(0.2)); dflt.SetViaDiameter(mm(0.7)); dflt.SetViaDrill(mm(0.35))
 
 nets = {}
 
@@ -193,13 +194,16 @@ def npth(fp, x, y, d):
 # ---- the stack holes. Seen from the top, USB at the bottom: the Zero's 5V..GP15 side is on the right,
 # GP0..GP7 on the left, and its bottom edge (GP8 GP9 GP10 GP11 GP12 GP13 GP14, left to right in this
 # view) is one row whose two ends are the side columns' position 9.
-ZR = ["+5V", "GND", "+3V3", "GP29", "GP28", "GP27", "GP26", "GP15", "GP14"]
-ZL = ["GP0", "GP1", "GP2", "GP3_HS", "GP4_MISO", "GP5_CS", "GP6_SCK", "GP7_MOSI", "GP8_DR"]
+ZR = ["+5V", "GND", "+3V3", "GP29", "GP28", "W_MOSI", "GP26", "GP15", "GP14"]
+ZL = ["W_CS", "W_MISO", "W_SCLK", "GP3_HS", "GP4_MISO", "GP5_CS", "GP6_SCK", "GP7_MOSI", "GP8_DR"]
+# The W5500 runs on four ESP32 pins that reach this board where the Zero has nothing: IO43 (CS),
+# IO44 (MISO), IO1 (SCLK) under the Zero's unused GP0-GP2, IO11 (MOSI) under its unused GP27.
+TOP_LABEL = {"W_CS": "W5500", "W_MISO": "W5500", "W_SCLK": "W5500", "W_MOSI": "W5500"}
 BOT = ["GP9", "GP10", "GP11", "GP12", "GP13"]                 # x = XL + 1..5 pitches
 # F = one long pin through all three boards, Z = Zero to this board only (cut flush underneath),
-# O = optional (ESP32 console), - = no pin.  The five bottom-row pins GP9-GP13 are all Z.
-FIT_R = ["F", "F", "Z", "Z", "Z", "-", "Z", "Z", "Z"]
-FIT_L = ["O", "O", "-", "F", "F", "F", "F", "F", "F"]
+# E = ESP32 to this board only (cut flush on top; no Zero pin). The bottom row GP9-GP13 is all Z.
+FIT_R = ["F", "F", "Z", "Z", "Z", "E", "Z", "Z", "Z"]
+FIT_L = ["E", "E", "E", "F", "F", "F", "F", "F", "F"]
 ESP_R = ["5V", "GND", "3V3", "IO13", "IO12", "IO11", "IO10", "IO9", "IO8"]
 ESP_L = ["IO43", "IO44", "IO1", "IO2", "IO3", "IO4", "IO5", "IO6", "IO7"]
 
@@ -236,6 +240,12 @@ RIB = [("GP11", "RXD", "4"), ("GP9", "CTS", "7"), ("DC_3V3", "3V3", "10"), ("GND
 rib = new_fp("J5", "Dreamcast serial: ribbon cable / 5 V in", WC / 2, YH)
 for k, (n, lab, dcpin) in enumerate(RIB):
     tht_pad(rib, str(k + 1), XL + k * P, YH, n, square=(k == 0))
+# W5500 row: wire a module with six jumper wires (the common blue module has its own 3.3 V regulator
+# and is fed from 5 V; its RST, INT and 3V3 pins stay unconnected: the firmware polls)
+WROW = [("W_CS", "CS"), ("W_SCLK", "SCK"), ("W_MISO", "MISO"), ("GND", "GND"), ("+5V", "5V"), ("W_MOSI", "MOSI")]
+wrow = new_fp("J6", "W5500 module (jumper wires)", WC / 2, YW)
+for k, (n, lab) in enumerate(WROW):
+    tht_pad(wrow, str(k + 1), XL + k * P, YW, n, square=(k == 0))
 VIA_Y = 8.4
 for num, dx in SDX.items():
     x = WC / 2 + dx
@@ -251,7 +261,7 @@ x3, x6 = WC / 2 + SDX["3"], WC / 2 + SDX["6"]
 track([(x3, VIA_Y), (x3, 10.4), (x6, 10.4), (x6, VIA_Y)], "GND", 0.5, pcbnew.B_Cu)
 
 # ---- microSD socket: TF-01A push-push (Korean Hroparts, LCSC C91145, about 0.10-0.20 USD), on the
-# bottom face, its opening at the right edge. Land pattern as in Bus Pirate 5's TF-01A_C91145. Pins 1-8
+# bottom face, its opening at the left edge (its pins face the Zero's GP14-GP29 side). Land pattern as in Bus Pirate 5's TF-01A_C91145. Pins 1-8
 # are the microSD contacts (DAT2, CS, CMD, VDD, CLK, VSS, DAT0, DAT1), 9 the card switch (not used),
 # 11 the shell.
 TF_PADS = [(str(i + 1), 2.185 - 1.1 * i, -14.85, 0.7, 1.3) for i in range(9)] + [
@@ -261,14 +271,14 @@ TF_HOLES = [(-4.95, -4.01), (3.05, -4.01)]
 TF_CY = -9.575                                   # midway between the contact row and the front pads
 TF_NETS = {"1": "SD_DAT2", "2": "GP14", "3": "GP15", "4": "+3V3", "5": "GP26", "6": "GND", "7": "GP28",
            "8": "SD_DAT1", "11": "GND"}
-SX = XB1 - 0.4 - (-4.3 - TF_CY + 1.0)            # front pads' outer edge 0.4 mm inside the right edge
+SX = XB0 + 0.4 + (-4.3 - TF_CY + 1.0)            # front pads' outer edge 0.4 mm inside the left edge
 SY = (YS0 + YS1) / 2
 
 
 def tf_xy(lx, ly):
     # The part's own top view (looking at it, as mounted, from below the board) has its opening at +y.
-    # Seen from the top through the board, that view is mirrored; turned so the opening points to +x.
-    return SX + (ly - TF_CY), SY + lx
+    # Seen from the top through the board, that view is mirrored; turned so the opening points to -x.
+    return SX - (ly - TF_CY), SY - lx
 
 
 sd = new_fp("J4", "TF-01A microSD (LCSC C91145)", SX, SY)
@@ -277,9 +287,9 @@ for (num, lx, ly, w, h) in TF_PADS:
     smd_pad(sd, num, x, y, h, w, TF_NETS.get(num), back=True).SetLocalClearance(mm(0.15))  # maker's pattern
 for (lx, ly) in TF_HOLES:
     npth(sd, *tf_xy(lx, ly), 1.0)
-bx0 = SX - 6.6
-for (a, b) in (((bx0, SY - 8.7), (XB1 - 0.2, SY - 8.7)), ((bx0, SY + 8.7), (XB1 - 0.2, SY + 8.7)),
-               ((bx0, SY - 8.7), (bx0, SY + 8.7))):
+bx1 = SX + 6.6
+for (a, b) in (((XB0 + 0.2, SY - 8.7), (bx1, SY - 8.7)), ((XB0 + 0.2, SY + 8.7), (bx1, SY + 8.7)),
+               ((bx1, SY - 8.7), (bx1, SY + 8.7))):
     add_line(a[0], a[1], b[0], b[1], pcbnew.B_SilkS, 0.12)
 
 # ---- the small parts, on the top face of the socket zone (no module above them)
@@ -289,20 +299,20 @@ C0805 = ("Capacitor_SMD", "C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
 # two data lines SPI mode leaves unused (they must not float)
 PULL = [("R3", "GP14"), ("R4", "GP15"), ("R5", "GP28"), ("R6", "SD_DAT1"), ("R7", "SD_DAT2")]
 for i, (ref, n) in enumerate(PULL):
-    r = load(*R0805, ref, 5.4 + 2.3 * i, YS0 + 2.9, rot=90, value="10k")
+    r = load(*R0805, ref, 10.6 + 2.2 * i, YS0 + 2.9, rot=90, value="10k")
     setnets(r, {"1": n, "2": "+3V3"})
-c1 = load(*C0805, "C1", 5.4, YS0 + 8.3, rot=90, value="10uF")
+c1 = load(*C0805, "C1", 12.8, YS0 + 8.3, rot=90, value="10uF")
 setnets(c1, {"1": "+3V3", "2": "GND"})
-c2 = load(*C0805, "C2", 7.7, YS0 + 8.3, rot=90, value="100nF")
+c2 = load(*C0805, "C2", 15.0, YS0 + 8.3, rot=90, value="100nF")
 setnets(c2, {"1": "+3V3", "2": "GND"})
 # R1 1k: GP13 (the cable's RTS out) to GP9 (DC CTS / clock sense)
-r1 = load(*R0805, "R1", 10.0, YS0 + 8.3, rot=90, value="1k")
+r1 = load(*R0805, "R1", 17.2, YS0 + 8.3, rot=90, value="1k")
 setnets(r1, {"1": "GP9", "2": "GP13"})
 # R2 10k: GP29 (power sense) to the Dreamcast's 3.3 V (SD contact 4)
-r2 = load(*R0805, "R2", 12.3, YS0 + 8.3, rot=90, value="10k")
+r2 = load(*R0805, "R2", 19.4, YS0 + 8.3, rot=90, value="10k")
 setnets(r2, {"1": "GP29", "2": "DC_3V3"})
 # D1 B5819W (SOD-123, 1 A Schottky): 5 V in (ribbon hole 5) -> the stack's 5V; pad 1 = cathode (band)
-d1 = load("Diode_SMD", "D_SOD-123", "D1", 9.0, YS0 + 13.6, rot=0, value="B5819W")
+d1 = load("Diode_SMD", "D_SOD-123", "D1", 16.6, YS0 + 13.6, rot=0, value="B5819W")
 setnets(d1, {"1": "+5V", "2": "VIN"})
 
 
@@ -350,26 +360,32 @@ add_text("1.6 mm ENIG", WC / 2, 15.9, 0.8)
 add_text("cut here for a ribbon cable", WC / 2, CARD - 1.2, 0.7)
 add_line(0.6, CARD - 0.4, WC - 0.6, CARD - 0.4, pcbnew.F_SilkS, 0.15)
 for k, (n, lab, dcpin) in enumerate(RIB):
-    add_text(lab, XL + k * P, YH + 1.45, 0.6)
-    add_text(dcpin, XL + k * P, YH + 1.45, 0.6, layer=pcbnew.B_SilkS, mirror=True)
-add_text("DC serial pin no.", WC / 2, YH - 1.5, 0.6, layer=pcbnew.B_SilkS, mirror=True)
-add_text("R3-R7 10k", 10.0, YS0 + 0.55, 0.6)
-add_text("C1   C2   R1   R2", 8.85, YS0 + 10.7, 0.6)
-add_text("D1", 5.8, YS0 + 13.6, 0.7)
-for k, line in enumerate(("Zero", "face up", "", "z cut under", "x no pin", "o optional")):
+    add_text(dcpin, XL + k * P, YH - 1.45, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+add_text("DC serial pin no.", WC / 2, YH - 2.6, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+# names between the rows: Dreamcast row above, W5500 row below; on the bottom face the W5500 names
+for k, ((n, lab, dcpin), wl) in enumerate(zip(RIB, [w[1] for w in WROW] + [""])):
+    add_text(lab, XL + k * P, YH + P / 2, 0.6)
+    if wl:
+        add_text(wl, XL + k * P, YW + 1.45, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+for k, (n, wl) in enumerate(WROW):                   # W5500 names under its row on the top face too
+    add_text(wl, XL + k * P, YW + 1.45, 0.6)
+add_text("R3-R7 10k", 15.0, YS0 + 0.55, 0.6)
+add_text("C1  C2  R1  R2", 16.1, YS0 + 10.7, 0.6)
+add_text("D1", 13.4, YS0 + 13.6, 0.7)
+for k, line in enumerate(("Zero", "face up", "", "z cut under", "e ESP32 pin,", "cut on top")):
     if line:
         add_text(line, WC / 2, ypos(8) + 1.27 + k * 1.6, 0.8 if k < 2 else 0.6, bold=(k == 0))
 add_text("USB end", WC / 2, L - 1.4, 0.7)
 for i in range(8):                                   # position 9 is the bottom row, numbered below
-    add_text(ZR[i].replace("+", ""), XR - 2.9, ypos(i + 1), 0.6)
-    add_text(ZL[i].split("_")[0], XL + 2.9, ypos(i + 1), 0.6)
+    add_text(TOP_LABEL.get(ZR[i], ZR[i].replace("+", "")), XR - 2.9, ypos(i + 1), 0.6)
+    add_text(TOP_LABEL.get(ZL[i], ZL[i].split("_")[0]), XL + 2.9, ypos(i + 1), 0.6)
 for k, n in enumerate(["GP8"] + BOT + ["GP14"]):
     add_text(n[2:], XL + k * P, Y9 - 1.45, 0.6)
 # bottom face (mirrored text)
 for k, line in enumerate(("ESP32", "face down")):
     add_text(line, WC / 2, ypos(7) + k * 1.6, 0.8, layer=pcbnew.B_SilkS, mirror=True, bold=(k == 0))
-add_text("microSD", SX - 1.2, SY, 0.9, layer=pcbnew.B_SilkS, mirror=True, rot=90)
-add_text("card in from here >", SX + 2.4, SY, 0.6, layer=pcbnew.B_SilkS, mirror=True, rot=90)
+add_text("microSD", SX + 1.2, SY, 0.9, layer=pcbnew.B_SilkS, mirror=True, rot=90)
+add_text("< card in from here", SX - 2.4, SY, 0.6, layer=pcbnew.B_SilkS, mirror=True, rot=90)
 for i in range(8):
     add_text(ESP_R[i], XR - 3.0, ypos(i + 1), 0.6, layer=pcbnew.B_SilkS, mirror=True)
     add_text(ESP_L[i], XL + 3.0, ypos(i + 1), 0.6, layer=pcbnew.B_SilkS, mirror=True)
@@ -378,10 +394,10 @@ for num, dx in SDX.items():
 # a small mark beside every hole that is not a full pin: z = cut under, x = no pin, o = optional
 for fits, x in ((FIT_R, XR), (FIT_L, XL)):
     for i, f in enumerate(fits[:8]):                 # position 9 is marked with the bottom row
-        if f in "Z-O":
+        if f in "ZE":
             xm = x - 1.27 if x > WC / 2 else x + 1.27
             for layer, mir in ((pcbnew.F_SilkS, False), (pcbnew.B_SilkS, True)):
-                add_text({"Z": "z", "-": "x", "O": "o"}[f], xm, ypos(i + 1), 0.6, layer=layer, mirror=mir)
+                add_text({"Z": "z", "E": "e"}[f], xm, ypos(i + 1), 0.6, layer=layer, mirror=mir)
 for k in range(1, 7):                                # GP9-GP14 of the bottom row: all Zero-only
     for layer, mir in ((pcbnew.F_SilkS, False), (pcbnew.B_SilkS, True)):
         add_text("z", XL + k * P - 1.1, Y9 + 1.25, 0.6, layer=layer, mirror=mir)

@@ -1,0 +1,8 @@
+# DC-PicoLink stack PCB (hardware/stack-pcb): its W5500 row is wired to the four ESP32 pins that reach
+# the board where the Zero has no pin: IO43 (CS), IO44 (MISO), IO1 (SCLK), IO11 (MOSI). No INT line:
+# the firmware polls the module every 5 ms. Use after sdkconfig.zero-stack (and sdkconfig.modem).
+CONFIG_DCL_W5500_SCLK=1
+CONFIG_DCL_W5500_MOSI=11
+CONFIG_DCL_W5500_MISO=44
+CONFIG_DCL_W5500_CS=43
+CONFIG_DCL_W5500_INT=-1

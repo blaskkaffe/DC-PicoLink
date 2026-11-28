@@ -1,0 +1,5 @@
+# Stack PCB with the USB modem build: the modem build puts the console on UART0 (GPIO43/44), which
+# the stack PCB gives to the W5500. No serial console then; the log is on the web page as always.
+# Use last: sdkconfig.defaults;sdkconfig.zero-stack;sdkconfig.modem;sdkconfig.stack-pcb;sdkconfig.stack-pcb-modem
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_NONE=y

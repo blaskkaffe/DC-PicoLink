@@ -87,7 +87,7 @@ there, moved to GPIO9-13):
 | GP29 | optional: 10k to the Dreamcast's 3.3 V (sense wire) |
 
 **Wired Ethernet (optional, in the firmware, not yet tried on hardware):** a W5500 module on
-the ESP32's own pins, all on the row next to 3V3 and GND:
+the ESP32's own pins, all on the row next to 3V3 and GND (on the stack PCB it uses other pins: IO43/IO44/IO1/IO11, `sdkconfig.stack-pcb`, see [stack-pcb/README.md](stack-pcb/README.md)):
 
 | ESP32-S3 | W5500 module |
 |---|---|

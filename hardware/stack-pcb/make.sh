@@ -7,19 +7,25 @@ B=${1:-build}
 mkdir -p "$B"
 python3 gen_board.py "$B/unrouted.kicad_pcb"
 python3 -c "import sys,pcbnew; pcbnew.ExportSpecctraDSN(pcbnew.LoadBoard(sys.argv[1]), sys.argv[2])" "$B/unrouted.kicad_pcb" "$B/board.dsn"
-# power nets into the Power class (0.5 mm), the rest stays 0.3 mm
+# the 5 V nets in their own class for the router: 0.4 mm tracks, 0.8 mm vias (the rest 0.25 mm)
 python3 - "$B/board.dsn" <<'PY'
 import re, sys
 f = sys.argv[1]; s = open(f).read()
-power = ["+3V3", "+5V", "GND", "VIN"]
+power = ["+5V", "VIN"]          # the 5 V path from the ribbon hole (the stack can draw ~1 A)
+m = re.search(r'\(class kicad_default ""(.*?)\(circuit', s, re.S)
+names = m.group(1).split()
 for n in power:
-    s = re.sub(r'(\(class kicad_default ""[^(]*?)\s' + re.escape(n) + r'(?=\s)', r'\1', s, count=1)
-s = s.replace("(class Power\n", "(class Power " + " ".join(power) + "\n", 1)
-s = s.replace("(width 600)\n        (clearance 250.1)", "(width 500)\n        (clearance 200.1)")
+    if n in names:
+        names.remove(n)
+s = s[:m.start(1)] + " " + " ".join(names) + "\n      " + s[m.end(1):]
+cls = ('    (class Power ' + " ".join(power) + '\n      (circuit\n        (use_via Via[0-1]_800:400_um)\n      )\n'
+       '      (rule\n        (width 400)\n        (clearance 200.1)\n      )\n    )\n')
+i = s.index("    (class kicad_default")
+s = s[:i] + cls + s[i:]
 open(f, "w").write(s)
 PY
 rm -f "$B/board.ses"
-xvfb-run -a java -jar "${FREEROUTING:?set FREEROUTING to freerouting-1.9.0.jar}" -de "$B/board.dsn" -do "$B/board.ses" -mp 80 >"$B/freerouting.log" 2>&1
+timeout 600 xvfb-run -a java -jar "${FREEROUTING:?set FREEROUTING to freerouting-1.9.0.jar}" -de "$B/board.dsn" -do "$B/board.ses" -mp 60 >"$B/freerouting.log" 2>&1
 python3 ses_import.py "$B/unrouted.kicad_pcb" "$B/board.ses" dc-picolink-stack.kicad_pcb
 # board rules live in the project file in KiCad 7: 0.15 mm minimum (the socket's own pattern), 0.6 mm text
 python3 - <<'PY'
