@@ -230,8 +230,9 @@ for num, dx in SDX.items():
 
 # ---- ribbon-cable row right behind the card end: the same signals in the contacts' order, so the card
 # end is wired straight into it (fixed tracks) and can be cut off.
-RIB = [("GP11", "RXD", "4"), ("GND", "GND", "3"), ("GP9", "CTS", "7"), ("DC_3V3", "3V3", "10"),
-       ("GP10", "TXD", "5"), ("GP12", "RTS", "6"), ("VIN", "5V", "1")]
+# power in the middle, ground between 3.3 V and 5 V
+RIB = [("GP11", "RXD", "4"), ("GP9", "CTS", "7"), ("DC_3V3", "3V3", "10"), ("GND", "GND", "3"),
+       ("VIN", "5V", "1"), ("GP10", "TXD", "5"), ("GP12", "RTS", "6")]
 rib = new_fp("J5", "Dreamcast serial: ribbon cable / 5 V in", WC / 2, YH)
 for k, (n, lab, dcpin) in enumerate(RIB):
     tht_pad(rib, str(k + 1), XL + k * P, YH, n, square=(k == 0))
@@ -239,13 +240,13 @@ VIA_Y = 8.4
 for num, dx in SDX.items():
     x = WC / 2 + dx
     track([(x, 6.3), (x, VIA_Y)], SDN[num], 0.5, pcbnew.B_Cu)
-    if num != "3":                                   # contact 3 stays underneath (joined to 6 below)
+    if num != "6":                                   # contact 6 stays underneath (joined to 3 below)
         via(x, VIA_Y, SDN[num])
-HOLE_FOR = {"7": 0, "6": 1, "5": 2, "4": 3, "2": 4, "1": 5}
+HOLE_FOR = {"7": 0, "5": 1, "4": 2, "3": 3, "2": 5, "1": 6}   # ribbon hole 5 (5 V) has no contact
 for num, k in HOLE_FOR.items():
     x, xh = WC / 2 + SDX[num], XL + k * P
     track([(x, VIA_Y), (x, YH - 4.6), (xh, YH - 2.2), (xh, YH)], SDN[num], 0.5 if SDN[num] == "GND" else 0.3)
-# the second ground contact (3) joins the first (6) underneath
+# the second ground contact (6) joins the first (3) underneath
 x3, x6 = WC / 2 + SDX["3"], WC / 2 + SDX["6"]
 track([(x3, VIA_Y), (x3, 10.4), (x6, 10.4), (x6, VIA_Y)], "GND", 0.5, pcbnew.B_Cu)
 
@@ -300,7 +301,7 @@ setnets(r1, {"1": "GP9", "2": "GP13"})
 # R2 10k: GP29 (power sense) to the Dreamcast's 3.3 V (SD contact 4)
 r2 = load(*R0805, "R2", 12.3, YS0 + 8.3, rot=90, value="10k")
 setnets(r2, {"1": "GP29", "2": "DC_3V3"})
-# D1 B5819W (SOD-123, 1 A Schottky): 5 V in (ribbon hole 7) -> the stack's 5V; pad 1 = cathode (band)
+# D1 B5819W (SOD-123, 1 A Schottky): 5 V in (ribbon hole 5) -> the stack's 5V; pad 1 = cathode (band)
 d1 = load("Diode_SMD", "D_SOD-123", "D1", 9.0, YS0 + 13.6, rot=0, value="B5819W")
 setnets(d1, {"1": "+5V", "2": "VIN"})
 

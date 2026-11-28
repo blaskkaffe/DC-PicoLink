@@ -17,11 +17,12 @@ On the board:
   (SPI over the serial port: TXD = MOSI, RXD = MISO, RTS = CS, CTS = SCK; [../WIRING.md](../WIRING.md)):
   contact 1 (CS) GP12 = DC RTS, 2 (CMD) GP10 = DC TXD, 3 and 6 GND, 4 the Dreamcast's 3.3 V,
   5 (CLK) GP9 = DC CTS, 7 (DAT0) GP11 = DC RXD.
-* **Ribbon-cable row** (7 holes, 2.54 mm) right behind it, with the same signals: RXD, GND, CTS, 3V3,
-  TXD, RTS, 5V (the Dreamcast serial pin numbers 4, 3, 7, 10, 5, 6, 1 are printed on the back).
+* **Ribbon-cable row** (7 holes, 2.54 mm) right behind it, with the same signals: RXD, CTS, 3V3, GND,
+  5V, TXD, RTS (power together, ground between the two supplies; the Dreamcast serial pin numbers
+  4, 7, 10, 3, 1, 5, 6 are printed on the back).
   The card end is wired straight into these holes, so it can be **cut off along the printed line**
   and the stack wired to a serial plug with a ribbon cable instead.
-* **5 V in**: the last ribbon hole, through D1 into the stack's 5V. The SD slot has no 5 V (its
+* **5 V in**: ribbon hole 5, through D1 into the stack's 5V. The SD slot has no 5 V (its
   3.3 V is the Dreamcast's, sized for an SD card, and is only used for sensing here): power the stack
   through this hole (the Dreamcast's serial pin 1, or a charger) or a USB port. See [../ESP32.md#power](../ESP32.md#power).
 * R1 1 kΩ GP13 → GP9 (flow control), R2 10 kΩ GP29 → the Dreamcast's 3.3 V (power sense).
