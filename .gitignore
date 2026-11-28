@@ -9,3 +9,6 @@ esp32/sdkconfig
 esp32/sdkconfig.old
 esp32/managed_components/
 esp32/dependencies.lock
+hardware/stack-pcb/logs/
+*.kicad_prl
+fp-info-cache

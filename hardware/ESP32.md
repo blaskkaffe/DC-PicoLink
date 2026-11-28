@@ -61,7 +61,7 @@ Minimum: 5V, GND and the six link pins (right, 4-9: one straight run GP3..GP8 ov
 header through both boards, **every position that has a header pin is joined**: fit pins only
 where the table says solder (or pull/clip the others), never at 3-9 on the left.
 Corners: 5V/GND top left, GP0/GP1 top right, GP14 bottom left, the SPI pins bottom right.
-The **stripboard layout** ([STRIPBOARD.md](STRIPBOARD.md)) uses exactly the same pin map: only the
+A **PCB** between the two modules, with an SD-card plug for the DC SD adapter's slot and the microSD socket under the ESP32: [stack-pcb/README.md](stack-pcb/README.md). The **stripboard layout** ([STRIPBOARD.md](STRIPBOARD.md)) uses exactly the same pin map: only the
 physical joining differs (strips instead of a stack), so one firmware and one `sdkconfig` serve both.
 
 **Insulate between the boards.** The two backs face each other: the SuperMini's back has about
