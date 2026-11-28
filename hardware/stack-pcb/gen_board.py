@@ -246,19 +246,18 @@ WROW = [("W_CS", "CS"), ("W_SCLK", "SCK"), ("W_MISO", "MISO"), ("GND", "GND"), (
 wrow = new_fp("J6", "W5500 module (jumper wires)", WC / 2, YW)
 for k, (n, lab) in enumerate(WROW):
     tht_pad(wrow, str(k + 1), XL + k * P, YW, n, square=(k == 0))
-VIA_Y = 8.4
-for num, dx in SDX.items():
-    x = WC / 2 + dx
-    track([(x, 6.3), (x, VIA_Y)], SDN[num], 0.5, pcbnew.B_Cu)
-    if num != "6":                                   # contact 6 stays underneath (joined to 3 below)
-        via(x, VIA_Y, SDN[num])
+# Contacts to ribbon holes on the contact face itself (the holes go through), no vias. Only the second
+# ground contact (6) needs one: it sits between RXD and CTS, so it crosses over on the top face.
 HOLE_FOR = {"7": 0, "5": 1, "4": 2, "3": 3, "2": 5, "1": 6}   # ribbon hole 5 (5 V) has no contact
 for num, k in HOLE_FOR.items():
     x, xh = WC / 2 + SDX[num], XL + k * P
-    track([(x, VIA_Y), (x, YH - 4.6), (xh, YH - 2.2), (xh, YH)], SDN[num], 0.5 if SDN[num] == "GND" else 0.3)
-# the second ground contact (6) joins the first (3) underneath
-x3, x6 = WC / 2 + SDX["3"], WC / 2 + SDX["6"]
-track([(x3, VIA_Y), (x3, 10.4), (x6, 10.4), (x6, VIA_Y)], "GND", 0.5, pcbnew.B_Cu)
+    track([(x, 6.3), (x, YH - 4.6), (xh, YH - 2.2), (xh, YH)], SDN[num], 0.5 if SDN[num] == "GND" else 0.3,
+          pcbnew.B_Cu)
+VIA_Y = 8.4
+x6 = WC / 2 + SDX["6"]
+track([(x6, 6.3), (x6, VIA_Y)], "GND", 0.5, pcbnew.B_Cu)
+via(x6, VIA_Y, "GND")
+track([(x6, VIA_Y), (x6, YH - 6.0), (XL + 3 * P, YH - 1.4), (XL + 3 * P, YH)], "GND", 0.5)
 
 # ---- microSD socket: TF-01A push-push (Korean Hroparts, LCSC C91145, about 0.10-0.20 USD), on the
 # bottom face, its opening at the left edge (its pins face the Zero's GP14-GP29 side). Land pattern as in Bus Pirate 5's TF-01A_C91145. Pins 1-8
@@ -335,15 +334,14 @@ def keepout(x1, y1, x2, y2, layers, tracks=True, vias=True):
 # slide; the rest of the card end carries only the fixed tracks to the ribbon row (the router keeps out).
 keepout(0, 0, WC, 5.6, [pcbnew.B_Cu], tracks=True, vias=True)
 keepout(0, 0, WC, 7.4, [pcbnew.F_Cu], tracks=False, vias=True)
-keepout(0, 11.2, WC, CARD, [pcbnew.B_Cu], tracks=True, vias=True)
 # for the autorouter only (make.sh removes it after routing): nothing else on the card end's top face
 ko = pcbnew.ZONE(board)
 ko.SetIsRuleArea(True); ko.SetZoneName("router_only")
 ko.SetDoNotAllowTracks(True); ko.SetDoNotAllowVias(True); ko.SetDoNotAllowPads(False)
 ko.SetDoNotAllowCopperPour(True); ko.SetDoNotAllowFootprints(False)
-_ls = pcbnew.LSET(); _ls.AddLayer(pcbnew.F_Cu); ko.SetLayerSet(_ls)
+_ls = pcbnew.LSET(); _ls.AddLayer(pcbnew.F_Cu); _ls.AddLayer(pcbnew.B_Cu); ko.SetLayerSet(_ls)
 _o = ko.Outline(); _o.NewOutline()
-for (x, y) in ((0, 9.4), (WC, 9.4), (WC, CARD + 0.6), (0, CARD + 0.6)):
+for (x, y) in ((0, 5.6), (WC, 5.6), (WC, CARD + 0.6), (0, CARD + 0.6)):
     _o.Append(mm(x), mm(y))
 board.Add(ko)
 # (the router is kept off the card end by make.sh's check instead: a keepout here would also flag the
@@ -360,8 +358,8 @@ add_text("1.6 mm ENIG", WC / 2, 15.9, 0.8)
 add_text("cut here for a ribbon cable", WC / 2, CARD - 1.2, 0.7)
 add_line(0.6, CARD - 0.4, WC - 0.6, CARD - 0.4, pcbnew.F_SilkS, 0.15)
 for k, (n, lab, dcpin) in enumerate(RIB):
-    add_text(dcpin, XL + k * P, YH - 1.45, 0.6, layer=pcbnew.B_SilkS, mirror=True)
-add_text("DC serial pin no.", WC / 2, YH - 2.6, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+    add_text(dcpin, XL + k * P, YH + P / 2, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+add_text("ribbon row: Dreamcast serial pin no.", WC / 2, 17.2, 0.6, layer=pcbnew.B_SilkS, mirror=True)
 # names between the rows: Dreamcast row above, W5500 row below; on the bottom face the W5500 names
 for k, ((n, lab, dcpin), wl) in enumerate(zip(RIB, [w[1] for w in WROW] + [""])):
     add_text(lab, XL + k * P, YH + P / 2, 0.6)
@@ -385,7 +383,13 @@ for k, n in enumerate(["GP8"] + BOT + ["GP14"]):
 for k, line in enumerate(("ESP32", "face down")):
     add_text(line, WC / 2, ypos(7) + k * 1.6, 0.8, layer=pcbnew.B_SilkS, mirror=True, bold=(k == 0))
 add_text("microSD", SX + 1.2, SY, 0.9, layer=pcbnew.B_SilkS, mirror=True, rot=90)
-add_text("< card in from here", SX - 2.4, SY, 0.6, layer=pcbnew.B_SilkS, mirror=True, rot=90)
+# an arrow at the edge where the card goes in (the left edge seen from the top, the right edge from below)
+ax = XB0 + 1.0
+add_line(ax, SY, ax + 3.2, SY, pcbnew.B_SilkS, 0.2)                 # pointing into the socket
+add_line(ax + 3.2, SY, ax + 2.2, SY - 1.0, pcbnew.B_SilkS, 0.2)
+add_line(ax + 3.2, SY, ax + 2.2, SY + 1.0, pcbnew.B_SilkS, 0.2)
+add_text("card", ax + 1.6, SY - 1.6, 0.6, layer=pcbnew.B_SilkS, mirror=True)
+add_text("in", ax + 1.6, SY + 1.6, 0.6, layer=pcbnew.B_SilkS, mirror=True)
 for i in range(8):
     add_text(ESP_R[i], XR - 3.0, ypos(i + 1), 0.6, layer=pcbnew.B_SilkS, mirror=True)
     add_text(ESP_L[i], XL + 3.0, ypos(i + 1), 0.6, layer=pcbnew.B_SilkS, mirror=True)

@@ -20,7 +20,8 @@ On the board:
 * **Ribbon-cable row** (7 holes, 2.54 mm) right behind it, with the same signals: RXD, CTS, 3V3, GND,
   5V, TXD, RTS (power together, ground between the two supplies; the Dreamcast serial pin numbers
   4, 7, 10, 3, 1, 5, 6 are printed on the back).
-  The card end is wired straight into these holes, so it can be **cut off along the printed line**
+  The card end is wired straight into these holes on the contact face (one via, for the second
+  ground contact), so it can be **cut off along the printed line**
   and the stack wired to a serial plug with a ribbon cable instead.
 * **5 V in**: ribbon hole 5, through D1 into the stack's 5V. The SD slot has no 5 V (its
   3.3 V is the Dreamcast's, sized for an SD card, and is only used for sensing here): power the stack
@@ -34,8 +35,8 @@ On the board:
   on the web page as always).
 * R1 1 kΩ GP13 → GP9 (flow control), R2 10 kΩ GP29 → the Dreamcast's 3.3 V (power sense).
 * **microSD socket** for the slot card ([../SD-SLOT.md](../SD-SLOT.md): GP26 SCK, GP15 MOSI, GP28 MISO,
-  GP14 CS) between the card end and the stack, on the ESP32's face, the card going in from the left
-  edge (away from both USB ports). With 10 µF + 100 nF and 10 kΩ pull-ups on CS, MOSI, MISO, DAT1 and DAT2.
+  GP14 CS) between the card end and the stack, on the ESP32's face, the card going in from the right
+  edge seen from the blue (ESP32) side, which faces up (away from both USB ports). With 10 µF + 100 nF and 10 kΩ pull-ups on CS, MOSI, MISO, DAT1 and DAT2.
 
 Same pin map and firmware as the soldered stack: cable `-DDC_BOARD=zero-stack`, ESP32 `sdkconfig.zero-stack`.
 
