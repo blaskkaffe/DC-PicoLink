@@ -68,6 +68,9 @@ def main(inp, ses, out):
             via.SetWidth(pcbnew.FromMM(dia / 1000)); via.SetDrill(pcbnew.FromMM(drill / 1000))
             via.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); via.SetNet(net)
             b.Add(via); nv += 1
+    for z in list(b.Zones()):                    # the router-only keepouts go
+        if z.GetZoneName() == "router_only":
+            b.Remove(z)
     b.Save(out)
     print(f"{nw} track segments, {nv} vias -> {out}")
 
